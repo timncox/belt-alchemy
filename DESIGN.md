@@ -72,7 +72,7 @@ that did not fit the panel, each 0–100. Page 1 **FIRMWARE**: the SD picker
 | **B2 HARMONIES** | hold | mute the harmony voices while held (`harm_level` 0, pot value restored after) |
 | | tap | latch the mute |
 | **B3 SETUP** | hold | the SETUP page |
-| B2 + B3 | hold 2 s | Settings (SDK) |
+| B2 + B3 | hold 2 s | Settings (SDK). B2 stands down while B3 is held, so the chord neither mutes nor latches |
 
 Both use one gesture: effective state = latch XOR held, a tap (released
 within 300 ms) flips the latch. J3 ORs into HARD.

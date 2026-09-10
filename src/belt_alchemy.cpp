@@ -467,7 +467,13 @@ static void OnPoll(uint32_t now)
         return;
     }
     const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed(), now) || g_gate_state;
-    const bool mute = tg_mute.Poll(hw.buttons[kButtonB2].Pressed(), now);
+    /* B2 stands down while B3 is held: B2+B3 held two seconds is the
+     * Settings chord, and B2's own gesture would mute the harmonies on the
+     * way in and, if B3 landed inside the tap window, flip the latch. */
+    const bool b3   = hw.buttons[kButtonB3].Pressed();
+    if (b3) tg_mute.Reset();
+    const bool mute = b3 ? tg_mute.latch
+                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed(), now);
     apply_hard(hard);
     apply_mute(mute);
 }
