@@ -1,0 +1,86 @@
+# belt-alchemy
+
+**Belt** — live vocal processor: pitch correction, four diatonic harmony
+voices, a doubler and a formant control — for the
+[Hermetic Modular Alchemy Lab V2](https://hermeticmodular.com/modules/alchemy-lab),
+built on the [Alchemy SDK](https://github.com/hermetic-modular/alchemy-sdk).
+
+Same C engine as [schwung-belt](https://github.com/timncox/schwung-belt) for
+the Ableton Move, recompiled for six pots on two pages, three buttons, six
+CV jacks and 102 LEDs. Sing into J1/J2; the module corrects you to the KEY
+and SCALE at the RETUNE speed and stacks up to four harmonies that walk the
+scale from what you sing. The KEY ring is a tuner.
+
+**Status: v0.1.0 builds and passes its native tests. Nothing has been heard
+yet.** See `DESIGN.md` for the control map, what is verified and what is not.
+The open question is CPU: seven pitch-shifting voices on one Cortex-M7 has
+not been measured.
+
+## Build
+
+Requires `arm-none-eabi-gcc`, `make`, `dfu-util`.
+
+```sh
+git clone --recurse-submodules <this repo>
+cd belt-alchemy
+make libdaisy        # once
+make                 # build/belt_alchemy.bin
+make test            # native tests, no hardware
+```
+
+## Flash
+
+Front USB-C with the factory bootloader: hold B3 during the ~2 s boot
+window (rings spin a warm-white comet), the rings switch to a slow breathe,
+then:
+
+```sh
+make program-dfu
+```
+
+or the [web programmer](https://hermeticmodular.com/program). Once this
+firmware is running on the front port, `make program-live` reboots and
+flashes without touching the module.
+
+Bench setup (Hermetic's intdfu bootloader on the Seed's micro-USB): same
+gesture on the micro-USB port; build with `BENCH_USB=1` if you want HostLink
+there too.
+
+## Firmware on the SD card
+
+Put `.bin` files built for the Alchemy Lab bootloader in a folder named
+`alchemy` on a FAT32 card. Hold B2+B3 for two seconds, tap B1 to the
+Firmware page, pick a file with the top-left pot, then turn the top-right
+pot down and all the way up. It writes, verifies, and reboots into the
+chosen firmware. Every firmware in this family (Smack, Mark, Belt) carries
+the same page, so the card is the module's library and any of them can
+hand the module to any other.
+
+## Files on the card over USB
+
+`tools/hostlink-fs.mjs` speaks HostLink's filesystem block, so images reach
+the card without pulling it:
+
+```sh
+node tools/hostlink-fs.mjs info
+node tools/hostlink-fs.mjs ls /alchemy
+node tools/hostlink-fs.mjs put build/belt_alchemy.bin /alchemy/belt_alchemy.bin --overwrite
+```
+
+The picker lists files in on-disk order, one dot each, so the order you
+upload them is the order the FILE pot walks.
+
+## Family
+
+`smack-alchemy`, `mark-alchemy` and this repository share, by copy, the
+picker, the SDRAM allocator, the linker script, the card tool and the shape
+of the Makefile and main file. A fix in one belongs in all three.
+
+## Not a Hermetic Modular product
+
+Custom firmware. Hermetic Modular did not write, test or endorse it; ask
+here, not there.
+
+## License
+
+MIT (this firmware). The vendored engine is Tim Cox's; see the file headers.
