@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Belt for Alchemy Lab</title>
+<meta name="description" content="Operation manual for Belt on the Hermetic Modular Alchemy Lab: live vocal pitch correction, four diatonic harmony voices, a doubler and a formant control, with the KEY ring as a tuner and firmware swapping from the SD card.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='34' fill='none' stroke='%23c2470c' stroke-width='14' stroke-dasharray='170 44' stroke-dashoffset='-55'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- This one constant feeds every source / issues link on the page. -->
+<script>const REPO = "https://github.com/timncox/belt-alchemy";</script>
+<style>
+/*
+  Belt for Alchemy Lab — operation manual.
+
+  Belt keeps the identity its Move manual has: cream paper, ink, burnt
+  orange, a slab masthead with a doubler's echo behind it, the look of a
+  seventies pedal manual. The module itself is drawn on a dark plate inside
+  that page, because the LEDs only make sense against the dark, and every
+  ring colour in the drawing is the firmware's own constant
+  (src/belt_alchemy.cpp, src/picker.cpp). One committed look; no theme
+  switch. Red is kept for things that are actually wrong.
+*/
+:root{
+  --bg:#f3ead8; --panel:#ece1cb; --panel2:#e4d7bc; --panel3:#dccdae;
+  --ink:#1d1a17; --dim:#6f665c; --soft:#413a34;
+  --line:rgba(29,26,23,.16); --line2:rgba(29,26,23,.08);
+  --acc:#c2470c; --acc-soft:rgba(194,71,12,.12); --warn:#a3140f;
+  --plate:#14121a; --plate-ink:#ece7f3; --plate-dim:#9a92a2;
+
+  /* PLAY page rings */
+  --c-key:#ff9020; --c-scale:#ffc060; --c-inscale:#301c08; --c-retune:#40c0ff; --c-amount:#60ffc0;
+  --c-harm:#c060ff; --c-fmtup:#ff60a0; --c-fmtdown:#60a0ff; --c-notch:#ffffff;
+  /* SETUP page rings */
+  --c-v1:#c060ff; --c-v2:#ff60c0; --c-v3:#60c0ff; --c-v4:#60ffc0; --c-double:#ffff80; --c-spread:#80ffff;
+  --c-dimled:#181818; --c-setup:#30104a;
+  /* button pairs */
+  --s-idle:#000030; --s-amber:#ff8000; --s-red:#ff0000; --s-green:#00ff00; --s-white:#ffffff; --s-grey:#606060; --s-purple:#8000c0;
+  /* the picker */
+  --k-file:#40ff60; --k-arm:#ff6000; --k-erase:#ffa000; --k-write:#2060ff; --k-verify:#20ff60; --k-done:#ffffff; --k-dfu:#c020ff;
+
+  --disp:"Alfa Slab One","Rockwell Extra Bold","Roboto Slab",Georgia,serif;
+  --body:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;color-scheme:light}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.6;overflow-x:hidden}
+/* paper grain */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+  background-image:radial-gradient(rgba(29,26,23,.06) .6px,transparent .7px);background-size:5px 5px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+a{color:var(--acc);text-decoration:none;border-bottom:1px solid rgba(194,71,12,.35)}
+a:hover{border-bottom-color:var(--acc)}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+code,kbd{font-family:var(--mono);font-size:.82em;background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:.08em .4em;white-space:nowrap}
+b{font-weight:600}
+em{font-style:italic}
+
+nav{position:sticky;top:0;z-index:50;background:rgba(243,234,216,.9);backdrop-filter:blur(10px);border-bottom:2px solid var(--ink)}
+nav .wrap{display:flex;align-items:center;gap:16px;height:54px;overflow-x:auto;scrollbar-width:none}
+nav .wrap::-webkit-scrollbar{display:none}
+nav .logo{font-family:var(--disp);font-size:18px;letter-spacing:.02em;color:var(--ink);border:none;flex:none}
+nav .logo em{color:var(--acc);font-style:normal}
+nav a.s{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;color:var(--dim);border:none;flex:none;text-transform:uppercase}
+nav a.s:hover{color:var(--ink)}
+nav a.s.git{margin-left:auto;color:var(--acc);padding-left:18px}
+
+header{padding:64px 0 44px;border-bottom:2px solid var(--ink)}
+.hero{display:grid;grid-template-columns:1.25fr .75fr;gap:44px;align-items:center}
+@media(max-width:820px){.hero{grid-template-columns:1fr}.hero .heroplate{max-width:300px;margin:0 auto}}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--acc);margin-bottom:16px}
+h1.title{font-family:var(--disp);font-weight:400;font-size:clamp(54px,9.5vw,118px);line-height:.92;letter-spacing:-.01em;text-wrap:balance;
+  text-shadow:3px 3px 0 rgba(194,71,12,.38),6px 6px 0 rgba(194,71,12,.16)}
+h1.title em{font-style:normal;display:block;font-family:var(--body);font-size:.38em;font-weight:500;letter-spacing:.01em;color:var(--dim);margin-top:.4em;text-shadow:none}
+.tagline{font-family:var(--disp);font-size:clamp(18px,2.4vw,24px);color:var(--soft);margin-top:22px;text-wrap:balance;line-height:1.3}
+.heroplate{position:relative}
+.heroplate .frame{background:var(--plate);border-radius:4px;padding:14px;box-shadow:0 18px 40px rgba(29,26,23,.35)}
+.heroplate svg{width:100%;height:auto;display:block;overflow:visible}
+.heroplate .cap{font-family:var(--mono);font-size:10.5px;color:var(--dim);letter-spacing:.06em;text-align:center;margin-top:14px}
+
+.note{margin-top:30px;border:1px solid rgba(194,71,12,.45);border-left:4px solid var(--acc);
+  background:linear-gradient(90deg,rgba(194,71,12,.10),rgba(194,71,12,.03) 60%,transparent);padding:20px 24px;border-radius:2px}
+.note h3{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--acc);margin-bottom:9px;font-weight:600}
+.note p{font-size:15.5px;max-width:74ch}
+.note p+p{margin-top:9px}
+.note.warn{border-color:rgba(163,20,15,.5);border-left-color:var(--warn);background:linear-gradient(90deg,rgba(163,20,15,.10),rgba(163,20,15,.03) 60%,transparent)}
+.note.warn h3{color:var(--warn)}
+
+section{padding:72px 0;border-bottom:1px solid var(--line)}
+h2.sh{font-family:var(--disp);font-weight:400;font-size:clamp(30px,4.6vw,46px);letter-spacing:-.01em;line-height:1.05;margin-bottom:8px;text-wrap:balance}
+.sub{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-bottom:28px}
+.lede{font-size:18px;max-width:68ch;margin-bottom:26px;color:var(--soft);text-wrap:pretty}
+p{max-width:70ch;text-wrap:pretty}
+p+p{margin-top:14px}
+h3.h{font-family:var(--disp);font-weight:400;font-size:25px;letter-spacing:-.005em;margin:40px 0 8px}
+h3.h+.sub{margin-bottom:18px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:20px 22px}
+.card h4{font-family:var(--disp);font-weight:400;font-size:20px;letter-spacing:0;margin-bottom:7px}
+.card .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);margin-bottom:10px}
+.card p{font-size:14.5px;color:var(--soft)}
+
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:14.5px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:500}
+td:first-child{font-family:var(--mono);font-size:13px;color:var(--ink);white-space:nowrap}
+tbody tr:hover{background:rgba(194,71,12,.05)}
+/* LED swatches sit on a dark chip so the firmware's colours read on paper */
+.sw{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:7px;vertical-align:-1px;background:currentColor;box-shadow:0 0 0 2px #14121a,0 0 6px currentColor}
+.num{font-variant-numeric:tabular-nums}
+
+pre{background:var(--plate);color:#c9c2d4;border-left:3px solid var(--acc);border-radius:3px;
+  padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.7}
+pre b{color:#ffb070;font-weight:500}
+pre i{color:#ece7f3;font-style:normal}
+
+.drawing{display:grid;grid-template-columns:minmax(280px,400px) 1fr;gap:38px;align-items:start}
+@media(max-width:820px){.drawing{grid-template-columns:1fr}}
+.plate{background:var(--plate);border-radius:4px;padding:18px;position:relative;box-shadow:0 12px 30px rgba(29,26,23,.25)}
+.plate svg{width:100%;height:auto;display:block;overflow:visible}
+.hole{cursor:pointer}
+.hole .hit{fill:transparent;stroke:transparent;stroke-width:1.2;transition:stroke .15s}
+.hole:hover .hit,.hole.sel .hit{stroke:#ff9020}
+.plabel{font-family:var(--mono);font-size:2.05px;fill:var(--plate-dim);letter-spacing:.04em;text-anchor:middle;pointer-events:none}
+.plabel.lit{fill:var(--plate-ink)}
+.jlabel{font-family:var(--mono);font-size:1.75px;fill:var(--plate-dim);letter-spacing:.03em;text-anchor:middle;pointer-events:none}
+.legend{font-family:var(--mono);font-size:2.2px;fill:#c9c2d4;letter-spacing:.12em;text-anchor:middle;pointer-events:none}
+
+.readout{position:sticky;top:78px}
+.readout .rk{font-family:var(--mono);font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--acc);margin-bottom:8px}
+.readout h3{font-family:var(--disp);font-weight:400;font-size:clamp(30px,4.4vw,42px);line-height:1;letter-spacing:0;margin-bottom:6px}
+.readout .rs{font-family:var(--mono);font-size:12px;color:var(--dim);margin-bottom:16px}
+.readout .rd{font-size:15.5px;color:var(--soft);min-height:7.5em}
+.readout .meta{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--dim);display:grid;gap:5px}
+.readout .meta b{color:var(--ink);font-weight:500}
+.hint{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:14px;line-height:1.55}
+
+.toggles{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+.tg{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:var(--panel2);border:1px solid var(--line);border-radius:2px;padding:7px 12px;cursor:pointer;transition:.16s}
+.tg:hover{color:var(--ink);border-color:rgba(194,71,12,.5)}
+.tg[aria-pressed="true"]{color:var(--acc);border-color:var(--acc);background:var(--acc-soft)}
+.tg[data-page="1"][aria-pressed="true"]{color:#6a2fa8;border-color:#6a2fa8;background:rgba(106,47,168,.12)}
+.tgcap{font-family:var(--mono);font-size:10.5px;color:var(--dim);letter-spacing:.04em}
+
+/* ---------- the voices ---------- */
+.choir{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:24px;margin-top:8px;display:grid;grid-template-columns:200px 1fr;gap:28px;align-items:start}
+@media(max-width:760px){.choir{grid-template-columns:1fr}}
+.choir .ringbox{background:var(--plate);border-radius:4px;padding:14px}
+.choir .ringbox svg{width:100%;height:auto;display:block;overflow:visible}
+.choir .ringcap{font-family:var(--mono);font-size:10.5px;color:var(--dim);text-align:center;margin-top:10px;letter-spacing:.04em}
+.ctl{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 20px}
+.ctl .two{grid-column:span 2}
+@media(max-width:560px){.ctl{grid-template-columns:repeat(2,1fr)}}
+.ctl label{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.ctl label b{color:var(--ink);font-weight:500;float:right;letter-spacing:0;text-transform:none}
+.ctl select{width:100%;font-family:var(--mono);font-size:12.5px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:2px;padding:7px 8px}
+.ctl .wide{grid-column:1/-1}
+input[type=range]{width:100%;accent-color:var(--acc);margin:6px 0 4px}
+.sung{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:20px}
+.sung .cell{background:var(--bg);border:1px solid var(--line2);border-radius:3px;padding:12px 14px}
+.sung .ck{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.sung .cv{font-family:var(--disp);font-size:26px;line-height:1.15;margin-top:4px;font-variant-numeric:tabular-nums}
+.sung .cs{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:2px}
+.sung .cell.on .cv{color:var(--acc)}
+.sung .cell.off{opacity:.45}
+.choirsay{margin-top:16px;font-size:14.5px;color:var(--soft);min-height:2.6em}
+
+/* ---------- ring simulator ---------- */
+.sim{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:26px;display:grid;grid-template-columns:180px 1fr;gap:28px;align-items:center}
+@media(max-width:640px){.sim{grid-template-columns:1fr}}
+.sim .ringbox{background:var(--plate);border-radius:4px;padding:10px}
+.sim svg{width:100%;height:auto;display:block;overflow:visible}
+.simval{font-family:var(--disp);font-size:42px;line-height:1;font-variant-numeric:tabular-nums}
+.simcap{font-family:var(--mono);font-size:11.5px;color:var(--dim);letter-spacing:.05em}
+.verdict{margin-top:14px;font-size:15px;min-height:3em;color:var(--soft)}
+
+.fam{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:8px}
+.fam a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:16px 18px;transition:.18s}
+.fam a:hover{border-color:var(--acc);background:var(--panel2);transform:translateY(-1px)}
+.fam .fn{font-family:var(--disp);font-size:20px;color:var(--ink);line-height:1.1}
+.fam .fd{font-size:13px;color:var(--dim);margin-top:6px;line-height:1.45}
+.fam .fh{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--acc);margin-top:9px}
+
+footer{padding:54px 0 70px;color:var(--dim);font-size:14px;border-top:2px solid var(--ink)}
+footer .fl{font-family:var(--disp);font-size:24px;color:var(--ink);margin-bottom:12px}
+footer a{color:var(--dim);border-bottom-color:rgba(111,102,92,.35)}
+footer a:hover{color:var(--acc)}
+footer p{max-width:70ch}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="logo" href="#top">BELT<em>·</em>ALCHEMY LAB</a>
+  <a class="s" href="#what">What</a>
+  <a class="s" href="#panel">Panel</a>
+  <a class="s" href="#sing">Singing</a>
+  <a class="s" href="#voices">Voices</a>
+  <a class="s" href="#setup">Setup</a>
+  <a class="s" href="#tuner">Tuner</a>
+  <a class="s" href="#cv">CV</a>
+  <a class="s" href="#card">Card</a>
+  <a class="s" href="#build">Build</a>
+  <a class="s" href="#install">Install</a>
+  <a class="s" href="#built">Built</a>
+  <a class="s" href="#family">Family</a>
+  <a class="s git" href="#" data-repo="">Source ↗</a>
+</div></nav>
+
+<header id="top"><div class="wrap">
+  <div class="hero">
+    <div>
+      <div class="eyebrow">Custom firmware · Hermetic Modular Alchemy Lab V2 · v0.1.0</div>
+      <h1 class="title">Belt<em>for Alchemy Lab</em></h1>
+      <div class="tagline">Sing into a Eurorack case. Come out in tune, in four parts.</div>
+
+      <div class="note">
+        <h3>Built. Not yet heard.</h3>
+        <p>v0.1.0 compiles for the module and passes its native test: at the module's 48 kHz a
+          440 Hz sine reads as A4 to a hundredth of a semitone, and hard-tune in C major pulls a
+          note 35 cents sharp back to 440.0 Hz. <b>Nothing has been heard through it yet</b>, and
+          the one number that decides this port, how much of the processor seven pitch-shifting
+          voices take, is unmeasured until the first rack power-up. Every claim below about how it
+          sounds is a claim about the same engine on the Ableton Move, where it has been sung
+          through.</p>
+      </div>
+    </div>
+    <div class="heroplate">
+      <div class="frame"><svg id="heroSvg" viewBox="-4 -4 69 137" role="img" aria-label="Belt for Alchemy Lab panel, lit while a voice sings an A in C major"></svg></div>
+      <div class="cap">12 HP · 6 pots · 3 buttons · 10 jacks · 102 LEDs · drawn at true scale</div>
+    </div>
+  </div>
+</div></header>
+
+<section id="what"><div class="wrap">
+  <h2 class="sh">What it does</h2>
+  <div class="sub">01 — The idea</div>
+  <p class="lede">A voice goes in on J1. What comes out on J9 and J10 is that voice corrected to a
+    key and scale, at a speed from transparent to robot, with up to four harmony voices that walk
+    the scale from whatever note you sing, a stereo doubler, and a formant control that changes
+    the size of the singer without changing the pitch.</p>
+  <div class="cols">
+    <div class="card"><div class="k">One analysis</div><h4>Seven voices from one listen</h4>
+      <p>The engine finds your pitch once per 5 ms and lays down a train of pitch marks. Every
+        output voice reads the same marks and re-fires them at its own spacing, so four harmonies
+        and a doubler cost little more than one.</p></div>
+    <div class="card"><div class="k">The KEY ring</div><h4>A tuner in the panel</h4>
+      <p>The ring around the KEY pot shows the scale's notes as dim dots and the note you are
+        singing as a bright one: <span class="sw" style="color:var(--s-green)"></span>green within
+        a quarter tone of a scale note, <span class="sw" style="color:var(--s-amber)"></span>orange
+        outside it. Thirteen LEDs beat four.</p></div>
+    <div class="card"><div class="k">Two buttons</div><h4>HARD, and the harmonies</h4>
+      <p>Hold B1 and correction goes instant and total, the robot. Tap it and that latches. B2
+        does the same for muting the harmony voices. A gate on J3 punches HARD from a
+        sequencer.</p></div>
+  </div>
+  <p style="margin-top:26px">It is the same C engine as <a href="https://timncox.github.io/schwung-belt/">Belt</a>
+    for the Ableton Move, recompiled for the Alchemy Lab: six pots on two pages, three settings
+    knobs, three buttons, six CV jacks that read independently of the pots, and 102 LEDs. Fixed
+    latency of 24 milliseconds, with the dry path delayed to match so the wet and dry stay in
+    phase. It also brings <a href="#card">firmware swapping from the SD card</a>, so this module
+    can carry several firmwares and change between them from a settings page.</p>
+</div></section>
+
+<section id="panel"><div class="wrap">
+  <h2 class="sh">The panel</h2>
+  <div class="sub">02 — Drawn at true scale · click any control</div>
+  <p class="lede">Every hole sits where it sits on an Alchemy Lab. The coordinates come from the
+    SDK's own KiCad front-panel template, not from a photo, and the drawing is generated from
+    them. The PLAY page is what you reach for while singing; the SETUP page, the four voices,
+    appears while B3 is held.</p>
+
+  <div class="toggles">
+    <button class="tg" id="tgPlay" data-page="0" aria-pressed="true">Play page</button>
+    <button class="tg" id="tgSetup" data-page="1" aria-pressed="false">Setup page · hold B3</button>
+    <span class="tgcap" id="tgCap">rings as the firmware draws them</span>
+  </div>
+
+  <div class="drawing">
+    <div class="plate">
+      <svg id="panelSvg" viewBox="-4 -4 69 137" role="img" aria-label="Interactive Alchemy Lab panel diagram"></svg>
+    </div>
+    <div class="readout" id="ro">
+      <div class="rk" id="roK">Select a control</div>
+      <h3 id="roT">The panel</h3>
+      <div class="rs" id="roS">6 pots × 2 pages · 3 buttons · 10 jacks · 102 LEDs</div>
+      <div class="rd" id="roD">Hover or click anything on the drawing. Audio in and out, the
+        front USB-C and the light rings are fixed Alchemy Lab hardware; everything else is what
+        this firmware makes of them.</div>
+      <div class="meta" id="roM">
+        <div>plate <b>60.96 × 128.5 mm</b> · 12 HP</div>
+        <div>pot pitch <b>35 mm</b> across, <b>28 mm</b> down · rings <b>16 LEDs</b>, 13 in the arc</div>
+        <div>source <b>KiCad template, parsed</b></div>
+      </div>
+      <div class="hint">J1/J2 sit under the IN legend, J9/J10 under OUT. The six CV jacks between
+        them are numbered here in reading order, which the template does not state: the numbers
+        printed on your panel are the authority.</div>
+    </div>
+  </div>
+</div></section>
+
+<section id="sing"><div class="wrap">
+  <h2 class="sh">Singing through it</h2>
+  <div class="sub">03 — Five steps to a choir</div>
+  <pre><b>1</b>  Bring a voice up to line level and patch it to <i>J1</i>. J2 too if you have it;
+   the engine listens to the two summed and keeps the dry path stereo.
+<b>2</b>  Set <i>KEY</i> and <i>SCALE</i>. The ring around KEY lights the scale's notes;
+   sing, and your note appears on it, green when you are on one.
+<b>3</b>  <i>RETUNE</i> is the speed. 0 is the robot. Start around a quarter of the way up.
+<b>4</b>  Hold <i>B3</i>. <i>P1</i> and <i>P2</i> are the first two voices' intervals:
+   a third and a fifth above out of the box. Let go.
+<b>5</b>  Bring up <i>HARMONY</i>. Sing a scale.</pre>
+  <p style="margin-top:22px"><b>Hold B1 for HARD</b>: correction instant and total, whatever RETUNE
+    and AMOUNT say, for as long as you hold. <b>Tap B1 to latch it</b>; tap again to release. The
+    B1 light goes white while HARD is on and is the tuner's colour otherwise. <b>B2 works the same
+    way for the harmonies</b>: hold to mute them, tap to latch the mute. Both buttons stand down
+    while B3 is held, so reaching for Settings never fires either.</p>
+  <p><b>FORMANT</b> resizes the singer without moving the pitch: left is bigger, right is smaller,
+    the centre is you. Half an octave each way. <b>AMOUNT</b> is how far towards the scale note the
+    correction goes; at 100 it lands on it. The three engine parameters that did not fit the
+    panel, FLEX, HUMANIZE and WET, are knobs in the Settings pages, and they are the ones to reach
+    for if it sounds too corrected: FLEX leaves singing that is far from any scale note alone,
+    HUMANIZE keeps your vibrato through the correction and gives each harmony voice a slow wander
+    of its own.</p>
+
+  <div class="note" style="margin-top:26px">
+    <h3>What it needs from the signal</h3>
+    <p>A single voice, at line level, reasonably clean. The pitch finder tracks one fundamental
+      between about 92 Hz and 1 kHz, low F2 to high B5, and gates on level: below about −56 dBFS
+      the voices duck and the correction holds its last offset, so breaths and room do not get a
+      harmony. A chord in, or a voice with a loud reverb already on it, gives it two pitches to
+      choose from and it will pick one.</p>
+    <p>The lowest trackable note is a few hertz higher than on the Move, a consequence of running
+      the same analysis window at 48 kHz instead of 44.1; the latency is two milliseconds
+      shorter for the same reason.</p>
+  </div>
+</div></section>
+
+<section id="voices"><div class="wrap">
+  <h2 class="sh">What the voices sing</h2>
+  <div class="sub">04 — The engine's scale walk, run for real</div>
+  <p class="lede">A harmony voice does not add a fixed interval. It takes your corrected note,
+    finds its degree in the scale, and walks that many degrees up or down the scale, so a third
+    above C in C major is E, and a third above D is F. This is the engine's own arithmetic on the
+    page: pick a key, a scale and four intervals, then drag the note you are singing.</p>
+
+  <div class="choir">
+    <div>
+      <div class="ringbox"><svg id="keyRing" viewBox="-13 -13 26 26" role="img" aria-label="the KEY ring as a tuner"></svg></div>
+      <div class="ringcap">the KEY ring · P1</div>
+    </div>
+    <div>
+      <div class="ctl">
+        <div class="two"><label for="cKey">Key <b id="cKeyV"></b></label><select id="cKey"></select></div>
+        <div class="two"><label for="cScale">Scale <b id="cScaleV"></b></label><select id="cScale"></select></div>
+        <div><label for="cV1">Voice 1 <b id="cV1V"></b></label><select id="cV1"></select></div>
+        <div><label for="cV2">Voice 2 <b id="cV2V"></b></label><select id="cV2"></select></div>
+        <div><label for="cV3">Voice 3 <b id="cV3V"></b></label><select id="cV3"></select></div>
+        <div><label for="cV4">Voice 4 <b id="cV4V"></b></label><select id="cV4"></select></div>
+        <div class="wide"><label for="cNote">You sing <b id="cNoteV"></b></label><input type="range" id="cNote" min="4800" max="8400" value="6935" step="5"></div>
+      </div>
+      <div class="sung" id="sung"></div>
+      <div class="choirsay" id="choirSay"></div>
+    </div>
+  </div>
+
+  <p style="margin-top:26px"><b>Chromatic is the exception</b>: with no scale to walk, the
+    intervals become fixed semitones, a third is four of them, a fifth seven. <b>Octaves are
+    always twelve semitones</b>, whatever the scale. <b>Unison</b> is a voice on your own note,
+    which with HUMANIZE up and SPREAD wide is a second singer. The engine's targets carry half of
+    your vibrato; the doubler is a pair of streams ten cents either side of the corrected lead,
+    panned hard.</p>
+  <p>Each voice also has a static detune of a few cents and a slow random wander, both scaled by
+    HUMANIZE, so four voices do not sound like one singer copied. With HUMANIZE at zero they lock
+    to the grid and sound like a keyboard, which is sometimes what you want.</p>
+</div></section>
+
+<section id="setup"><div class="wrap">
+  <h2 class="sh">The second page, and the settings</h2>
+  <div class="sub">05 — What B3 and the Settings chord buy back</div>
+  <p class="lede">Belt has sixteen parameters and the panel has six pots. The four voices and the
+    doubler live on the SETUP page, held on B3; the three you set once and leave, FLEX, HUMANIZE
+    and WET, are knobs in the Settings pages.</p>
+
+  <h3 class="h">SETUP — hold B3</h3>
+  <div class="sub">The choir</div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Pot</th><th>Parameter</th><th>Range</th><th>Ring</th></tr></thead>
+    <tbody>
+      <tr><td>P1</td><td><b>VOICE 1</b> interval</td><td rowspan="4">Off · −Oct · −6th · −5th · −4th · −3rd · Unison · +3rd · +4th · +5th · +6th · +Oct</td><td><span class="sw" style="color:var(--c-v1)"></span>12 dots</td></tr>
+      <tr><td>P2</td><td><b>VOICE 2</b> interval</td><td><span class="sw" style="color:var(--c-v2)"></span>12 dots</td></tr>
+      <tr><td>P3</td><td><b>VOICE 3</b> interval</td><td><span class="sw" style="color:var(--c-v3)"></span>12 dots</td></tr>
+      <tr><td>P4</td><td><b>VOICE 4</b> interval</td><td><span class="sw" style="color:var(--c-v4)"></span>12 dots</td></tr>
+      <tr><td>P5</td><td><b>DOUBLER</b>, a pair of detuned copies of the corrected lead, panned wide</td><td class="num">0–100%</td><td><span class="sw" style="color:var(--c-double)"></span>level</td></tr>
+      <tr><td>P6</td><td><b>SPREAD</b>, how wide the harmony voices sit in the stereo field</td><td class="num">0–100%</td><td><span class="sw" style="color:var(--c-spread)"></span>level</td></tr>
+    </tbody>
+  </table></div>
+  <p style="margin-top:20px"><b>Opening the page to look cannot change anything.</b> The SDK's pot
+    catch runs on the way in and on the way out: a SETUP pot only takes effect once you turn it
+    through the value it already holds, and letting go of B3 hands the pots back to the PLAY page
+    without jumping anything. The six SETUP values are saved to flash a few seconds after you
+    stop moving them and come back at the next power-up. The PLAY page always comes up honest: at
+    boot, whatever a pot points at is what the module does.</p>
+  <p>First boot after flashing seeds the page with a third and a fifth above, the other two
+    voices off, no doubler, spread 70%.</p>
+
+  <h3 class="h">Settings — hold B2 + B3 for two seconds</h3>
+  <div class="sub">The SDK's own settings layer; B1 steps through its pages, B2 or B3 leaves</div>
+  <div class="cols">
+    <div class="card"><div class="k">Page 1</div><h4>Brightness · flex · presets · humanize · wet</h4>
+      <p><b>P1</b> ring brightness. <b>P2</b> FLEX: how far from any scale note the singing may
+        stray before correction lets go of it; 0 corrects everything. <b>P3 / P4</b> preset slot
+        and action, sixteen slots. <b>P5</b> HUMANIZE: vibrato kept through the correction, and
+        the voices' wander. <b>P6</b> WET: corrected lead against the dry voice; the harmonies
+        and doubler add on top either way.</p></div>
+    <div class="card"><div class="k">Page 2</div><h4>Firmware</h4>
+      <p>The SD card picker: <b>P1</b> file, <b>P2</b> flash, <b>P3</b> DFU. <a href="#card">The
+        card section</a> is about it.</p></div>
+  </div>
+</div></section>
+
+<section id="tuner"><div class="wrap">
+  <h2 class="sh">Reading the rings</h2>
+  <div class="sub">06 — 96 LEDs around the pots, 6 beside the buttons</div>
+  <p class="lede">The SDK draws every pot's value on its ring in the colour of the page you are
+    on. On top of that the firmware adds the tuner, three button lights and a report at boot.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Where</th><th>Shows</th></tr></thead>
+    <tbody>
+      <tr><td>KEY ring</td><td>The SDK's 12-zone selector, one dot per key with the chosen one bright, plus the tuner: the scale's other notes as <span class="sw" style="color:#7a4a18"></span>dim dots, and the note you are singing as a <span class="sw" style="color:var(--s-green)"></span>green pip within 25 cents of its target or an <span class="sw" style="color:var(--s-amber)"></span>orange one outside. The pip sits on the dot the pot would select for that note.</td></tr>
+      <tr><td>Other rings</td><td>A bar for continuous pots, one dot per step for stepped ones, two arms from a white pivot for FORMANT. SETUP colours appear while B3 is held.</td></tr>
+      <tr><td>B1 · HARD / tuner</td><td><span class="sw" style="color:var(--s-white)"></span>white while HARD is on · else <span class="sw" style="color:var(--s-green)"></span>green in tune · <span class="sw" style="color:var(--s-amber)"></span>orange off it · <span class="sw" style="color:#3050ff"></span>dim blue when nothing voiced is coming in</td></tr>
+      <tr><td>B2 · HARMONIES</td><td><span class="sw" style="color:var(--s-purple)"></span>purple while any voice has an interval and is not muted · <span class="sw" style="color:#909090"></span>grey muted · dim when no voice is on · <span class="sw" style="color:var(--s-red)"></span><b>red = the audio callback is above 80%</b></td></tr>
+      <tr><td>B3 · SETUP</td><td>A dim violet tint while the PLAY page is up; the SDK lights it in the page colour while SETUP is held.</td></tr>
+      <tr><td>P1 ring, first 2.5 s</td><td>Last session's worst CPU load, as a bar. See below.</td></tr>
+      <tr><td>All three buttons red</td><td>The engine could not allocate its buffers. It needs 137 KB of a 1 MB pool, so this should be impossible; it fails loudly rather than running silently broken.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 class="h">The boot report</h3>
+  <div class="sub">The one number this port is waiting on</div>
+  <p class="lede">Seven pitch-shifting voices on a 480 MHz Cortex-M7 is the open question. You
+    cannot watch a status light while singing, so the module measures its own worst-case load and
+    shows it on the P1 ring for the first two and a half seconds of the <em>next</em> power-up.</p>
+  <div class="sim">
+    <div class="ringbox"><svg id="simRing" viewBox="-13 -13 26 26" role="img" aria-label="P1 ring showing the boot CPU report"></svg></div>
+    <div>
+      <label for="cpu" class="simcap">Drag: last session's peak CPU load</label>
+      <input type="range" id="cpu" min="0" max="100" value="0" step="1">
+      <div class="simval" id="cpuVal">no data</div>
+      <div class="simcap" id="cpuCap">first boot after flashing</div>
+      <div class="verdict" id="cpuVerdict"></div>
+    </div>
+  </div>
+  <p style="margin-top:22px">A single dim blue LED means it has not measured anything yet. Green is
+    under 75%, amber under 90%, red means it did not fit. On a laptop the engine ran sixty-five
+    times faster than real time with all seven voices, and the Move's processor was estimated at
+    ten to fifteen percent; this chip is several times slower per core at this kind of arithmetic.
+    If it does not fit, the fallbacks are known and in order: faster float maths on the engine,
+    fewer voices on by default, then the engine's buffers moved into faster internal RAM.</p>
+</div></section>
+
+<section id="cv"><div class="wrap">
+  <h2 class="sh">Every knob under CV</h2>
+  <div class="sub">07 — J4 to J8, independent of the pots, and a gate on J3</div>
+  <p class="lede">The Alchemy Lab reads pots and jacks separately and the SDK adds them in software,
+    per page and per pot. Five jacks modulate the PLAY page; the sixth is a gate.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Jack</th><th>Drives</th><th>Page</th></tr></thead>
+    <tbody>
+      <tr><td>J3</td><td><b>HARD gate</b> — high is HARD, as if B1 were held</td><td>—</td></tr>
+      <tr><td>J4</td><td><b>KEY</b>, twelve zones across the CV range; not volt per octave</td><td>PLAY P1</td></tr>
+      <tr><td>J5</td><td><b>RETUNE</b></td><td>PLAY P3</td></tr>
+      <tr><td>J6</td><td><b>AMOUNT</b></td><td>PLAY P4</td></tr>
+      <tr><td>J7</td><td><b>HARMONY</b> level</td><td>PLAY P5</td></tr>
+      <tr><td>J8</td><td><b>FORMANT</b></td><td>PLAY P6</td></tr>
+    </tbody>
+  </table></div>
+  <p style="margin-top:20px">A slow LFO into J8 is the obvious first patch: the singer's size
+    breathing while the pitch stays put. A sequencer into J3 makes HARD rhythmic. J4 steps the key
+    from a sequencer, which changes what every harmony voice sings on the spot.</p>
+  <p><b>J3 is read raw in the audio callback</b>, not through the SDK's 20 Hz pot filter, which
+    would round a gate's edges into a swell. It fires on the <em>magnitude</em> of the swing away
+    from the jack's calibrated zero, 1.5 V to assert and 0.5 V to release, so a gate counts
+    whichever way the front end signs it. Unheard.</p>
+  <p>Volt-per-octave into the harmony target, so a keyboard or sequencer decides what the voices
+    sing instead of the scale, is in Belt's engine on the Move as a branch not yet merged. When it
+    lands there it is the obvious v0.2 here.</p>
+</div></section>
+
+<section id="card"><div class="wrap">
+  <h2 class="sh">Firmware on the card</h2>
+  <div class="sub">08 — Carry several firmwares, change between them from the panel</div>
+  <p class="lede">Hermetic's firmware treats the SD card as a place for presets and files. This one
+    also reads <code>.bin</code> files from it, and can write one into the module's firmware slot,
+    verify it, and reboot into it, from a settings page, with the module on and in the rack. Smack
+    and Mark for the Alchemy Lab carry the same page, so any of the three can hand the module to
+    any other.</p>
+
+  <div class="cols">
+    <div class="card"><div class="k">Prepare the card</div><h4>FAT32, a folder named alchemy</h4>
+      <p>32 GB or under, MBR partition table, FAT32. Make a folder called <code>alchemy</code> in
+        the root and put firmware images in it: any <code>.bin</code> built for the Alchemy Lab
+        bootloader, this one included. On a Mac, run <code>dot_clean</code> on the card before
+        ejecting so the picker does not list resource forks as files.</p></div>
+    <div class="card"><div class="k">Or over USB</div><h4>Without pulling the card</h4>
+      <p>Files reach the card over USB while the module runs: the web programmer's file panel,
+        or the repository's <code>tools/hostlink-fs.mjs</code>, which makes the folder and puts
+        the images in it from a terminal. Uploads are staged and renamed onto their final name
+        only after the firmware has checked the CRC.</p></div>
+  </div>
+
+  <h3 class="h">The gesture</h3>
+  <div class="sub">Hold B2 + B3 two seconds · tap B1 to the Firmware page</div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Pot</th><th>Does</th><th>Ring</th></tr></thead>
+    <tbody>
+      <tr><td>P1 · FILE</td><td>Picks a file. One dot per <code>.bin</code> in the folder, the chosen one bright; turn to move the choice.</td>
+        <td><span class="sw" style="color:var(--k-file)"></span>green dots · <span class="sw" style="color:#c00000"></span>red: no card · <span class="sw" style="color:#c04800"></span>orange: no folder, or no files</td></tr>
+      <tr><td>P2 · FLASH</td><td>Writes the chosen file. <b>Turn it down below 85%, then all the way up.</b> The dip arms it, so a pot that happens to be parked at maximum cannot fire on entry.</td>
+        <td><span class="sw" style="color:var(--k-erase)"></span>orange erasing · <span class="sw" style="color:var(--k-write)"></span>blue writing · <span class="sw" style="color:var(--k-verify)"></span>green verifying · <span class="sw" style="color:var(--k-done)"></span>white, then reboot · <span class="sw" style="color:var(--k-arm)"></span><b>blinking red: failed, nothing booted; turn down to try again</b></td></tr>
+      <tr><td>P3 · DFU</td><td>Same gesture. Reboots into the bootloader's update mode and stays there for a USB flash: the escape hatch for a firmware that has no picker of its own.</td>
+        <td><span class="sw" style="color:var(--k-dfu)"></span>violet arming bar</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note" style="margin-top:26px">
+    <h3>What it refuses, and what it never touches</h3>
+    <p>It checks the image's first eight bytes before erasing anything and refuses one that is
+      not bootable from SRAM. The largest file it will take is the app slot up to the calibration
+      sector, so the board's calibration record and the preset store are never in the erase
+      path. If a write fails, the module blinks red and boots nothing; the bootloader is intact,
+      and hold-B3-at-power-on still gets you a USB flash.</p>
+    <p><b>What has and has not run.</b> The card side is proven with this same code in Smack: a
+      card in the module has been written and read back byte-identical over USB, through the
+      mount and buffers the picker uses. The picker's own path, listing the folder and writing
+      the slot, has not yet run in any of the three firmwares.</p>
+  </div>
+</div></section>
+
+<section id="build"><div class="wrap">
+  <h2 class="sh">Build it</h2>
+  <div class="sub">09 — No release yet; the source is the download</div>
+  <p class="lede">There is no packaged release of v0.1.0, because nothing has been heard through it.
+    Building takes a few minutes with the ARM toolchain installed.</p>
+  <pre>git clone --recurse-submodules <i data-repo-text></i>
+cd belt-alchemy
+make libdaisy        <b># once</b>
+make                 <b># build/belt_alchemy.bin, ~312 KB</b>
+make test            <b># the engine on the SDRAM pool, and the 48 kHz tuner proof</b></pre>
+  <p style="margin-top:20px">Needs <code>arm-none-eabi-gcc</code>, <code>make</code> and
+    <code>dfu-util</code>. libDaisy has nested submodules, so the clone must be recursive or the
+    HAL is missing. <code>make BENCH_USB=1 BUILD_DIR=build-bench</code> builds a variant with
+    HostLink on the Daisy Seed's own micro-USB, for a module out of its case on a bench bootloader;
+    it is not the one to rack.</p>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2 class="sh">Installing</h2>
+  <div class="sub">10 — Through the front USB-C, and getting back to stock</div>
+  <p class="lede">The Alchemy Lab's bootloader serves DFU on the front-panel USB-C, so the module
+    stays in the rack. Once this firmware is on it, so does every update after.</p>
+  <div class="cols">
+    <div class="card"><div class="k">First time</div><h4>Hold B3 at power-on</h4>
+      <p>During the two-second boot window the rings run a warm-white comet. Hold B3 through it
+        and they switch to a slow breathe with the B3 lights on: update mode. Then flash the
+        <code>.bin</code> with Hermetic's <a href="https://hermeticmodular.com/program">web
+        programmer</a>, or from the repository:</p>
+      <pre style="margin-top:12px">make program-dfu</pre></div>
+    <div class="card"><div class="k">Every time after</div><h4>Live</h4>
+      <p>With Belt running, the module can be asked to reboot into update mode over HostLink and
+        flashed in the same breath, no button held:</p>
+      <pre style="margin-top:12px">make program-live</pre>
+      <p style="margin-top:12px">Or put the new <code>.bin</code> on the card and use <a href="#card">the
+        picker</a>.</p></div>
+    <div class="card"><div class="k">Back to stock</div><h4>Same door</h4>
+      <p>Flashing any Alchemy Lab firmware, Hermetic's own included, the same way returns the
+        module to it. Presets in the slots survive; this firmware's own working preset is
+        schema-guarded, so another firmware will not read it as its own.</p></div>
+  </div>
+  <div class="note warn" style="margin-top:30px">
+    <h3>Before you flash it</h3>
+    <p>It is custom firmware. Hermetic Modular did not write it, did not test it and cannot
+      support it, so <b>please do not contact them about it</b>. And as of v0.1.0 it has not been
+      heard by anyone, its author included. If you run it before that changes, the two things
+      worth reporting are what the boot report reads after a few minutes of singing with all
+      four voices on, and whether the tuner pip lands on the note you sang.</p>
+  </div>
+</div></section>
+
+<section id="built"><div class="wrap">
+  <h2 class="sh">How it is built</h2>
+  <div class="sub">11 — The parts worth knowing about</div>
+  <p class="lede">The engine's C file was not touched. Everything below is the layer between it and
+    the Alchemy SDK, and the handful of decisions that shaped that layer.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Piece</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>The engine, at 48 kHz</td><td>Belt's engine, byte-identical to the Move build's, with one edit in its header: the sample rate, because libDaisy offers no 44.1 kHz. Left at 44.1 it would have read every note a semitone and a half flat and tuned the singer to a scale that much sharp. A native test holds the retarget: 440 Hz reads note 69.00.</td></tr>
+      <tr><td>The analysis</td><td>YIN pitch detection on the input decimated to 24 kHz, every 256 samples, with a tracking mode that keeps the lag search near the last period. A three-point median kills octave blips. One analysis feeds every voice.</td></tr>
+      <tr><td>The voices</td><td>Time-domain pitch-synchronous overlap-add: two-period Hann grains fired at the target spacing into one stereo accumulator. Formant is the grain content resampled, independent of the spacing, so pitch and size are separate controls.</td></tr>
+      <tr><td>Two pages, one layer</td><td>The SDK's Pager makes SETUP a held layer on B3 with pot catch on the way in and out. Nothing on the PLAY page can jump because you looked at the other one.</td></tr>
+      <tr><td>Working preset</td><td>Slot 1 is the live state: both pages, the Settings knobs and the CPU peak. It autosaves five seconds after the last change with hands off the buttons, one 4 KB sector per save.</td></tr>
+      <tr><td>The picker</td><td>Three Custom slots on a Settings page: a file scanner, a state machine that erases, writes and verifies one step per frame, and a DFU hand-off. Shared, by copy, with Smack and Mark.</td></tr>
+      <tr><td>SDRAM allocator</td><td>A bump pool in external RAM, 137 KB of 1 MB, so the engine's five <code>calloc</code>s land there with no engine edits. Moving them into internal RAM is the last of the three CPU fallbacks.</td></tr>
+      <tr><td>HostLink</td><td>Product "Belt", both pages, ten jacks, three buttons, a manual and the SD filesystem, over the front USB-C.</td></tr>
+      <tr><td>Budget</td><td>~312 KB image. SRAM 65%, DTCM 57%, SDRAM 1.1 MB. CPU: unmeasured, and the open question.</td></tr>
+    </tbody>
+  </table></div>
+  <p style="margin-top:24px">Found something, or want it to do something it doesn't?
+    <a href="#" data-repo="/issues">Open an issue</a>. A report from someone singing through it is
+    worth more than anything measurable on a laptop.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2 class="sh">Specifications</h2>
+  <div class="sub">Appendix</div>
+  <div class="cols">
+    <div class="card"><div class="k">Platform</div><h4>Alchemy Lab V2</h4><p>Daisy Seed2 DFM: STM32H750 at 480 MHz, 64 MB SDRAM. 12 HP. Hermetic Modular's Alchemy SDK, beta.</p></div>
+    <div class="card"><div class="k">Audio</div><h4>48 kHz · 128 · 24 ms</h4><p>Stereo in on J1/J2, summed to mono for analysis; stereo out on J9/J10; fixed 24 ms latency, dry path matched.</p></div>
+    <div class="card"><div class="k">Range</div><h4>92 Hz – 1 kHz</h4><p>The pitch tracker's range, low F2 to high B5. Twelve keys, nine scales.</p></div>
+    <div class="card"><div class="k">Voices</div><h4>1 + 4 + 2</h4><p>The corrected lead, four harmony voices at scale intervals from an octave below to an octave above, and a stereo doubler.</p></div>
+    <div class="card"><div class="k">Controls</div><h4>6 × 2 · 3 · 6</h4><p>Six pots on two pages, three Settings knobs, three buttons, five CV inputs and a gate, 102 LEDs.</p></div>
+    <div class="card"><div class="k">Storage</div><h4>16 slots + card</h4><p>Sixteen preset slots in QSPI flash; firmware images and files on a FAT32 microSD.</p></div>
+  </div>
+</div></section>
+
+<section id="family"><div class="wrap">
+  <h2 class="sh">The rest of them</h2>
+  <div class="sub">12 — The same engine, and its siblings</div>
+  <p class="lede">Belt started on the Ableton Move under
+    <a href="https://github.com/charlesvestal/schwung">Schwung</a>. This is its second body, and
+    one of three firmwares for this module that share the picker, the allocator and the shape of
+    the code.</p>
+  <div class="fam">
+    <a href="https://timncox.github.io/schwung-belt/">
+      <div class="fn">Belt</div>
+      <div class="fd">The vocal processor on the Move, in chain slots and as a live-input instrument. Sung through and shipped; where this engine came from.</div>
+      <div class="fh">the parent</div>
+    </a>
+    <a href="https://timncox.github.io/mark-alchemy/">
+      <div class="fn">Mark for Alchemy Lab</div>
+      <div class="fd">The five-track looper on the same module. Patch Belt into it and loop the choir.</div>
+      <div class="fh">sibling firmware</div>
+    </a>
+    <a href="https://timncox.github.io/smack-alchemy/">
+      <div class="fn">Smack for Alchemy Lab</div>
+      <div class="fd">Live loop capture and seeded per-slice glitch on the same module. The first of the three, and where the picker was written.</div>
+      <div class="fh">sibling firmware</div>
+    </a>
+    <a href="https://timncox.github.io/schwung-mark/">
+      <div class="fn">Mark</div>
+      <div class="fd">The five-track looper on the Move.</div>
+      <div class="fh">move</div>
+    </a>
+    <a href="https://timncox.github.io/schwung-smack/">
+      <div class="fn">Smack</div>
+      <div class="fd">Quantized loop capture, auto-slicing and seeded glitch effects on the Move.</div>
+      <div class="fh">move</div>
+    </a>
+    <a href="https://timncox.github.io/schwung-work/">
+      <div class="fn">Work</div>
+      <div class="fd">Twenty-six machines: twenty-one effects and five sample sources.</div>
+      <div class="fh">move</div>
+    </a>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <div class="fl">Belt for Alchemy Lab</div>
+  <p style="margin-bottom:14px">Custom firmware. Hermetic Modular did not write it, did not review it and
+    cannot support it; <b style="color:var(--ink)">please do not contact them about it</b>. Alchemy Lab is
+    their product and this project is not affiliated with or endorsed by them.</p>
+  <p>Engine from <a href="https://github.com/timncox/schwung-belt">Belt</a>. Built on the
+    <a href="https://github.com/hermetic-modular/alchemy-sdk">Alchemy SDK</a> and
+    <a href="https://github.com/electro-smith/libDaisy">libDaisy</a>. MIT licensed ·
+    <a href="#" data-repo="">source</a></p>
+</div></footer>
+
+<script>
+/* == BEGIN GENERATED GEOMETRY -- tools/emit_panel_geometry.py == */
+const PANEL = {
+ "source": "lib/alchemy-sdk/panel/front-panel-template.kicad_pcb",
+ "units": "mm, front view, origin top-left of the plate, y down",
+ "plate": {
+  "w": 60.96,
+  "h": 128.5,
+  "hp": 12.0
+ },
+ "mount": [
+  {
+   "x": 4.537,
+   "y": 1.297,
+   "w": 5.1,
+   "h": 3.4,
+   "r": 1.7
+  },
+  {
+   "x": 51.312,
+   "y": 1.311,
+   "w": 5.1,
+   "h": 3.4,
+   "r": 1.7
+  },
+  {
+   "x": 4.537,
+   "y": 123.8,
+   "w": 5.1,
+   "h": 3.4,
+   "r": 1.7
+  },
+  {
+   "x": 51.323,
+   "y": 123.812,
+   "w": 5.1,
+   "h": 3.4,
+   "r": 1.7
+  }
+ ],
+ "rails": [
+  7.23,
+  122.18
+ ],
+ "pots": [
+  {
+   "id": "P1",
+   "x": 12.758,
+   "y": 21.304,
+   "hole": 3.6
+  },
+  {
+   "id": "P2",
+   "x": 47.758,
+   "y": 21.304,
+   "hole": 3.6
+  },
+  {
+   "id": "P3",
+   "x": 12.758,
+   "y": 49.304,
+   "hole": 3.6
+  },
+  {
+   "id": "P4",
+   "x": 47.758,
+   "y": 49.304,
+   "hole": 3.6
+  },
+  {
+   "id": "P5",
+   "x": 12.758,
+   "y": 77.304,
+   "hole": 3.6
+  },
+  {
+   "id": "P6",
+   "x": 47.758,
+   "y": 77.304,
+   "hole": 3.6
+  }
+ ],
+ "ring": {
+  "r": 10.09,
+  "leds": 16,
+  "start_hour": 7.5,
+  "step_hours": 0.75,
+  "arc_leds": 13
+ },
+ "buttons": [
+  {
+   "id": "B1",
+   "x": 30.257,
+   "y": 21.31,
+   "hole": 3.1,
+   "halo": 4.0
+  },
+  {
+   "id": "B2",
+   "x": 30.257,
+   "y": 49.312,
+   "hole": 3.1,
+   "halo": 4.0
+  },
+  {
+   "id": "B3",
+   "x": 30.257,
+   "y": 77.32,
+   "hole": 3.1,
+   "halo": 4.0
+  }
+ ],
+ "usb": {
+  "x": 25.317,
+  "y": 89.274,
+  "w": 10.034,
+  "h": 4.044,
+  "r": 2.022
+ },
+ "jacks": [
+  {
+   "id": "J1",
+   "x": 6.699,
+   "y": 100.093,
+   "hole": 3.2
+  },
+  {
+   "id": "J2",
+   "x": 6.699,
+   "y": 113.053,
+   "hole": 3.2
+  },
+  {
+   "id": "J3",
+   "x": 18.51,
+   "y": 100.119,
+   "hole": 3.2
+  },
+  {
+   "id": "J4",
+   "x": 30.286,
+   "y": 100.119,
+   "hole": 3.2
+  },
+  {
+   "id": "J5",
+   "x": 42.014,
+   "y": 100.119,
+   "hole": 3.2
+  },
+  {
+   "id": "J6",
+   "x": 18.51,
+   "y": 113.056,
+   "hole": 3.2
+  },
+  {
+   "id": "J7",
+   "x": 30.286,
+   "y": 113.056,
+   "hole": 3.2
+  },
+  {
+   "id": "J8",
+   "x": 42.014,
+   "y": 113.056,
+   "hole": 3.2
+  },
+  {
+   "id": "J9",
+   "x": 53.901,
+   "y": 100.126,
+   "hole": 3.2
+  },
+  {
+   "id": "J10",
+   "x": 53.889,
+   "y": 113.036,
+   "hole": 3.2
+  }
+ ],
+ "jack_order_assumed": "J3..J8 in reading order; the printed panel is the authority",
+ "labels": {
+  "knob_dy": 14.0,
+  "button_dy": 10.63,
+  "in": [
+   5.556,
+   120.642
+  ],
+  "out": [
+   51.53,
+   120.642
+  ]
+ }
+};
+/* == END GENERATED GEOMETRY == */
+
+/* ---------- what the firmware makes of each hole ---------- */
+const C = {
+  key:"#ff9020", scale:"#ffc060", inscale:"#301c08", retune:"#40c0ff", amount:"#60ffc0", harm:"#c060ff",
+  fmtup:"#ff60a0", fmtdown:"#60a0ff", notch:"#ffffff",
+  v1:"#c060ff", v2:"#ff60c0", v3:"#60c0ff", v4:"#60ffc0", dbl:"#ffff80", spread:"#80ffff",
+  dim:"#181818", setup:"#30104a",
+  idle:"#000030", amber:"#ff8000", red:"#ff0000", green:"#00ff00", white:"#ffffff", grey:"#606060", purple:"#8000c0",
+};
+
+/* ---------- the engine's scale arithmetic (belt_core.c), ported ---------- */
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const SCALE_NAMES = ["Chromatic","Major","Minor","Harm Minor","Dorian","Mixolydian","Maj Pent","Min Pent","Blues"];
+const SCALE_LEN = [12,7,7,7,7,7,5,5,6];
+const SCALE_DEG = [
+  [0,1,2,3,4,5,6,7,8,9,10,11],[0,2,4,5,7,9,11],[0,2,3,5,7,8,10],[0,2,3,5,7,8,11],
+  [0,2,3,5,7,9,10],[0,2,4,5,7,9,10],[0,2,4,7,9],[0,3,5,7,10],[0,3,5,6,7,10],
+];
+const ITV_NAMES = ["Off","−Oct","−6th","−5th","−4th","−3rd","Unison","+3rd","+4th","+5th","+6th","+Oct"];
+const ITV_STEPS  = [0,0,-5,-4,-3,-2,0,2,3,4,5,0];
+const ITV_CHROMA = [0,-12,-9,-7,-5,-4,0,4,5,7,9,12];
+const ITV_OCT    = [0,-1,0,0,0,0,0,0,0,0,0,1];
+function inScale(pc, key, scale) { const deg = SCALE_DEG[scale]; pc = ((pc - key) % 12 + 12) % 12; return deg.includes(pc); }
+function quantizeNote(note, key, scale) {
+  const base = Math.floor(note); let best = base, bestd = 1e9;
+  for (let cand = base - 9; cand <= base + 9; cand++) {
+    if (!inScale(cand, key, scale)) continue;
+    const d = Math.abs(cand - note); if (d < bestd) { bestd = d; best = cand; }
+  }
+  return best;
+}
+function degreeShift(note, key, scale, steps) {
+  const deg = SCALE_DEG[scale], n = SCALE_LEN[scale];
+  const rn = Math.round(note), rel = rn - key;
+  let oct = Math.floor(rel / 12); const pc = ((rel % 12) + 12) % 12;
+  let idx = 0, bestd = 99;
+  for (let i = 0; i < n; i++) { const d = Math.abs(deg[i] - pc); if (d < bestd) { bestd = d; idx = i; } }
+  let j = idx + steps;
+  while (j < 0) { j += n; oct--; }
+  while (j >= n) { j -= n; oct++; }
+  return key + oct * 12 + deg[j] + (note - rn);
+}
+function harmTarget(q, itv, key, scale) {
+  if (itv === 0) return null;
+  if (ITV_OCT[itv]) return q + 12 * ITV_OCT[itv];
+  if (itv === 6) return q;
+  if (scale === 0) return q + ITV_CHROMA[itv];
+  return degreeShift(q, key, scale, ITV_STEPS[itv]);
+}
+const noteName = n => { const r = Math.round(n); return NOTE_NAMES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1); };
+const noteHz = n => 440 * Math.pow(2, (n - 69) / 12);
+
+/* the tuner state the KEY ring draws from: what is being sung */
+const TUNER = { note:69.0, voiced:true };
+
+const PAGES = [
+  { name:"PLAY", color:"#ff9020", pots:[
+    { id:"P1", name:"KEY", ring:{style:"key", c:C.key, n:12}, v:.5/12, sub:"C · C# · D … B · CV on J4",
+      d:"The key the correction pulls towards. Its ring is also the tuner: the scale's notes as dim dots, the note you are singing as a green pip within a quarter tone of a scale note, orange outside.",
+      meta:["engine <b>key</b>","ring <b>12 dots + tuner</b>","CV <b>J4</b>"] },
+    { id:"P2", name:"SCALE", ring:{style:"sel", c:C.scale, n:9}, v:1.5/9, sub:"Chromatic · Major · Minor · Harm Minor · Dorian · Mixolydian · Maj Pent · Min Pent · Blues",
+      d:"Which notes of the key are allowed. The harmonies walk this scale; in Chromatic they become fixed semitones instead.",
+      meta:["engine <b>scale</b>","ring <b>9 dots</b>","default <b>Major</b>"] },
+    { id:"P3", name:"RETUNE", ring:{style:"level", c:C.retune}, v:.25, sub:"0–100 · 0 = instant · CV on J5",
+      d:"How fast the correction moves your pitch to the note: 0 is the hard-tune robot, higher is slower and more natural. HARD overrides it to 0 while held.",
+      meta:["engine <b>retune</b>","ring <b>level</b>","CV <b>J5</b>"] },
+    { id:"P4", name:"AMOUNT", ring:{style:"level", c:C.amount}, v:1, sub:"0–100% · CV on J6",
+      d:"How far towards the scale note the correction goes. At 100 it lands on it; at 50 it goes halfway. HARD overrides it to 100 while held.",
+      meta:["engine <b>amount</b>","ring <b>level</b>","CV <b>J6</b>"] },
+    { id:"P5", name:"HARMONY", ring:{style:"level", c:C.harm}, v:.8, sub:"0–100% · CV on J7",
+      d:"The level of the four harmony voices together. B2 mutes them; the pot's value comes back when it is released.",
+      meta:["engine <b>harm_level</b>","ring <b>level</b>","CV <b>J7</b>"] },
+    { id:"P6", name:"FORMANT", ring:{style:"bipolar", pos:C.fmtup, neg:C.fmtdown}, v:.5, sub:"bigger ← you → smaller · CV on J8",
+      d:"The size of the singer, half an octave either way, without moving the pitch. The centre is a white LED at the top of the ring and is exactly you.",
+      meta:["engine <b>formant</b>","ring <b>bipolar</b>","CV <b>J8</b>"] },
+  ]},
+  { name:"SETUP", color:"#c060ff", pots:[
+    { id:"P1", name:"VOICE 1", ring:{style:"sel", c:C.v1, n:12}, v:7.5/12, sub:"Off … Unison … +Oct",
+      d:"The first harmony voice's interval, walked along the scale from your corrected note. A third above out of the box.",
+      meta:["engine <b>harm1</b>","ring <b>12 dots</b>","default <b>+3rd</b>"] },
+    { id:"P2", name:"VOICE 2", ring:{style:"sel", c:C.v2, n:12}, v:9.5/12, sub:"Off … Unison … +Oct",
+      d:"The second voice. A fifth above out of the box; with voice 1 that is a triad.",
+      meta:["engine <b>harm2</b>","ring <b>12 dots</b>","default <b>+5th</b>"] },
+    { id:"P3", name:"VOICE 3", ring:{style:"sel", c:C.v3, n:12}, v:.5/12, sub:"Off … Unison … +Oct",
+      d:"The third voice, off by default. An octave below fills out a chorus.",
+      meta:["engine <b>harm3</b>","ring <b>12 dots</b>","default <b>Off</b>"] },
+    { id:"P4", name:"VOICE 4", ring:{style:"sel", c:C.v4, n:12}, v:.5/12, sub:"Off … Unison … +Oct",
+      d:"The fourth voice, off by default.",
+      meta:["engine <b>harm4</b>","ring <b>12 dots</b>","default <b>Off</b>"] },
+    { id:"P5", name:"DOUBLER", ring:{style:"level", c:C.dbl}, v:0, sub:"0–100%",
+      d:"Two copies of the corrected lead, ten cents either side, panned hard left and right. The thickening a second take gives.",
+      meta:["engine <b>double_amt</b>","ring <b>level</b>","default <b>0</b>"] },
+    { id:"P6", name:"SPREAD", ring:{style:"level", c:C.spread}, v:.7, sub:"0–100%",
+      d:"How wide the harmony voices sit: at zero they stack in the middle with the lead, at full they take the sides.",
+      meta:["engine <b>spread</b>","ring <b>level</b>","default <b>70%</b>"] },
+  ]},
+];
+
+const BUTTONS = [
+  { id:"B1", name:"HARD", sub:"hold · tap",
+    d:"Hold for hard-tune: correction instant and total for as long as you hold. Tap to latch it; tap again to release. A gate on J3 does the same. Its light is white while HARD is on and the tuner's colour otherwise.",
+    meta:["light <b>HARD / tuner</b>","tap <b>under 300 ms</b>","gate <b>J3</b>"] },
+  { id:"B2", name:"HARMONIES", sub:"hold · tap",
+    d:"Hold to mute the harmony voices; tap to latch the mute. Its light is purple while voices are on, grey while muted, red if the CPU is over 80%. Stands down while B3 is held.",
+    meta:["light <b>voices</b>","tap <b>under 300 ms</b>","with B3 <b>Settings, after 2 s</b>"] },
+  { id:"B3", name:"SETUP", sub:"hold",
+    d:"Shows the SETUP page on the pots while held, with catch both ways so nothing jumps. During the boot window it is the bootloader's update-mode button instead.",
+    meta:["page <b>SETUP</b>","boot <b>DFU</b>","with B2 <b>Settings, after 2 s</b>"] },
+];
+
+const JACKS = {
+  J1:{ name:"IN L",  sub:"audio in, left",  d:"The voice. Summed with J2 for the pitch analysis; kept stereo on the dry path.", meta:["kind <b>codec in</b>"] },
+  J2:{ name:"IN R",  sub:"audio in, right", d:"Right channel in, summed with J1 for analysis.", meta:["kind <b>codec in</b>"] },
+  J3:{ name:"HARD GATE", sub:"gate in", d:"High is HARD, as if B1 were held. Read raw in the audio callback on the magnitude of the swing from the calibrated zero. Unheard.", meta:["assert <b>1.5 V</b>","release <b>0.5 V</b>","acts as <b>B1 held</b>"] },
+  J4:{ name:"CV → KEY",     sub:"±5 V, summed with PLAY P1", d:"Steps the key across twelve zones. Not volt-per-octave: a zone is about 0.8 V.", meta:["drives <b>PLAY P1</b>"] },
+  J5:{ name:"CV → RETUNE",  sub:"±5 V, summed with PLAY P3", d:"Adds to the RETUNE pot's value.", meta:["drives <b>PLAY P3</b>"] },
+  J6:{ name:"CV → AMOUNT",  sub:"±5 V, summed with PLAY P4", d:"Adds to the AMOUNT pot's value.", meta:["drives <b>PLAY P4</b>"] },
+  J7:{ name:"CV → HARMONY", sub:"±5 V, summed with PLAY P5", d:"Adds to the HARMONY level.", meta:["drives <b>PLAY P5</b>"] },
+  J8:{ name:"CV → FORMANT", sub:"±5 V, summed with PLAY P6", d:"Adds to the FORMANT pot: a slow LFO here breathes the singer's size.", meta:["drives <b>PLAY P6</b>"] },
+  J9:{ name:"OUT L", sub:"audio out, left",  d:"Left channel out: the corrected lead against the dry voice at WET, plus the harmonies and doubler.", meta:["kind <b>codec out</b>"] },
+  J10:{name:"OUT R", sub:"audio out, right", d:"Right channel out.", meta:["kind <b>codec out</b>"] },
+};
+const USB = { name:"USB-C", sub:"HostLink · DFU", d:"Firmware updates, presets, settings and the SD card's files, from the front, with the module racked. Hold B3 at power-on and the bootloader serves DFU here.", meta:["bootloader <b>DFU</b>","running <b>HostLink</b>"] };
+
+/* ---------- drawing ---------- */
+const NS = "http://www.w3.org/2000/svg";
+function el(n, a, parent) {
+  const e = document.createElementNS(NS, n);
+  for (const k in a) e.setAttribute(k, a[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function hourXY(cx, cy, r, hour) {
+  const a = hour / 12 * Math.PI * 2;
+  return [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+}
+/* LED colours for one ring, 16 entries, index = arc position from 7.5 h clockwise.
+   `tuner` feeds the "key" style: {key, scale, note, voiced}. */
+function ringColours(ring, v, tuner) {
+  const g = PANEL.ring, N = g.arc_leds, out = new Array(g.leds).fill(null);
+  const zoneLed = (q, n) => Math.round(q * (N - 1) / (n - 1));
+  if (ring.style === "level") {
+    const n = Math.round(v * N);
+    for (let i = 0; i < N; i++) out[i] = i < n ? ring.c : C.dim;
+  } else if (ring.style === "sel" || ring.style === "key") {
+    /* the SDK's default selector: one LED per zone spread across the arc,
+       the current zone bright, the others in the dim inactive colour */
+    const z = Math.min(ring.n - 1, Math.floor(v * ring.n));
+    for (let q = 0; q < ring.n; q++) out[zoneLed(q, ring.n)] = (q === z) ? ring.c : C.dim;
+    if (ring.style === "key" && tuner) {
+      /* the firmware's KeyOverdraw: in-scale dots, then the sung note */
+      for (let n = 0; n < 12; n++) if (n !== z && inScale(n, z, tuner.scale)) out[zoneLed(n, 12)] = C.inscale;
+      if (tuner.voiced) {
+        const q = quantizeNote(tuner.note, z, tuner.scale), cents = (tuner.note - q) * 100;
+        const n = ((Math.round(tuner.note) % 12) + 12) % 12;
+        out[zoneLed(n, 12)] = Math.abs(cents) <= 25 ? C.green : C.amber;
+      }
+    }
+  } else if (ring.style === "bipolar") {
+    const mid = (N - 1) / 2, s = v * 2 - 1;
+    for (let i = 0; i < N; i++) out[i] = C.dim;
+    out[mid] = C.notch;
+    if (s < -0.06) { const k = Math.round(-s * mid); for (let i = mid - 1; i >= mid - k; i--) out[i] = ring.neg; }
+    else if (s > 0.06) { const k = Math.round(s * mid); for (let i = mid + 1; i <= mid + k; i++) out[i] = ring.pos; }
+  } else if (ring.style === "boot") {
+    for (let i = 0; i < N; i++) out[i] = C.dim;
+    if (v <= 0) out[0] = "#2040c0";
+    else { const c = v >= .9 ? C.red : v >= .75 ? C.amber : C.green; const n = Math.round(v * N); for (let i = 0; i < n; i++) out[i] = c; }
+  }
+  return out;
+}
+function drawRing(g, cx, cy, ring, v, tuner) {
+  const geo = PANEL.ring, cols = ringColours(ring, v, tuner);
+  for (let i = 0; i < geo.leds; i++) {
+    const hour = (geo.start_hour + geo.step_hours * i) % 12;
+    const [x, y] = hourXY(cx, cy, geo.r, hour);
+    const arc = i < geo.arc_leds;
+    const c = cols[i];
+    const lit = arc && c && c !== C.dim && c !== C.inscale;
+    if (lit) el("circle", { cx:x, cy:y, r:1.55, fill:c, opacity:.22 }, g);
+    el("circle", { cx:x, cy:y, r:.72, fill: arc ? (c || "#0e0d13") : "#101014", opacity: arc ? 1 : .6 }, g);
+  }
+}
+function drawKnob(g, cx, cy, v) {
+  el("circle", { cx, cy, r:6.2, fill:"#0f0e14", stroke:"rgba(255,255,255,.10)", "stroke-width":.25 }, g);
+  el("circle", { cx, cy, r:5.4, fill:"#1a1822" }, g);
+  const hour = PANEL.ring.start_hour + v * (PANEL.ring.step_hours * (PANEL.ring.arc_leds - 1));
+  const [x1, y1] = hourXY(cx, cy, 2.2, hour), [x2, y2] = hourXY(cx, cy, 5.0, hour);
+  el("line", { x1, y1, x2, y2, stroke:"#e8e2f0", "stroke-width":.7, "stroke-linecap":"round" }, g);
+}
+function drawButton(g, b, halo) {
+  if (halo && halo !== C.idle) el("circle", { cx:b.x, cy:b.y, r:b.halo + 1.6, fill:halo, opacity:.22 }, g);
+  el("circle", { cx:b.x, cy:b.y, r:b.halo, fill: halo || "#101018", opacity: halo ? .85 : 1 }, g);
+  el("circle", { cx:b.x, cy:b.y, r:b.hole, fill:"#0d0c12", stroke:"rgba(255,255,255,.14)", "stroke-width":.25 }, g);
+  el("circle", { cx:b.x, cy:b.y, r:2.2, fill:"#1c1a24" }, g);
+}
+function drawJack(g, j) {
+  el("circle", { cx:j.x, cy:j.y, r:3.9, fill:"#0f0e14", stroke:"rgba(255,255,255,.12)", "stroke-width":.25 }, g);
+  el("circle", { cx:j.x, cy:j.y, r:j.hole, fill:"#1b1923" }, g);
+  el("circle", { cx:j.x, cy:j.y, r:1.5, fill:"#050507" }, g);
+}
+const JACKLEGEND = { J1:"IN L", J2:"IN R", J3:"HARD", J4:"KEY", J5:"RETUNE", J6:"AMOUNT", J7:"HARM", J8:"FMT", J9:"OUT L", J10:"OUT R" };
+
+/* state: page index, values per page, button halos, the tuner */
+function drawPanel(svg, st, onHover) {
+  svg.textContent = "";
+  const P = PANEL, page = PAGES[st.page];
+  const plate = el("g", {}, svg);
+  el("rect", { x:0, y:0, width:P.plate.w, height:P.plate.h, rx:1.2, fill:"#1a1722", stroke:"rgba(236,231,243,.18)", "stroke-width":.3 }, plate);
+  for (const m of P.mount) el("rect", { x:m.x, y:m.y, width:m.w, height:m.h, rx:m.r, fill:"#0c0b11", stroke:"rgba(255,255,255,.12)", "stroke-width":.2 }, plate);
+  for (const y of P.rails) el("line", { x1:2, y1:y, x2:P.plate.w - 2, y2:y, stroke:"rgba(255,144,32,.25)", "stroke-width":.25 }, plate);
+  el("text", { x:P.plate.w / 2, y:P.rails[0] - 2.2, class:"legend" }, plate).textContent = "BELT";
+
+  const mk = (key) => {
+    const g = el("g", { class:"hole" + (st.sel === key ? " sel" : ""), "data-key":key }, svg);
+    if (onHover) {
+      g.addEventListener("mouseenter", () => onHover(key, false));
+      g.addEventListener("click", (e) => { e.stopPropagation(); onHover(key, true); });
+    }
+    return g;
+  };
+
+  const scaleIdx = Math.min(8, Math.floor(st.values[0][1] * 9));
+  P.pots.forEach((p, i) => {
+    const k = page.pots[i], v = st.values[st.page][i];
+    const g = mk("P" + (i + 1));
+    drawRing(g, p.x, p.y, k.ring, v, k.ring.style === "key" ? { scale:scaleIdx, note:TUNER.note, voiced:TUNER.voiced } : null);
+    drawKnob(g, p.x, p.y, v);
+    el("text", { x:p.x, y:p.y + P.labels.knob_dy, class:"plabel lit" }, g).textContent = k.name;
+    el("circle", { cx:p.x, cy:p.y, r:P.ring.r + 2.2, class:"hit" }, g);
+  });
+  P.buttons.forEach((b, i) => {
+    const g = mk("B" + (i + 1));
+    drawButton(g, b, st.halos[i]);
+    el("text", { x:b.x, y:b.y + P.labels.button_dy, class:"plabel" }, g).textContent = BUTTONS[i].name;
+    el("circle", { cx:b.x, cy:b.y, r:b.halo + 2.2, class:"hit" }, g);
+  });
+  { const u = P.usb, g = mk("USB");
+    el("rect", { x:u.x, y:u.y, width:u.w, height:u.h, rx:u.r, fill:"#08080b", stroke:"rgba(255,255,255,.16)", "stroke-width":.25 }, g);
+    el("rect", { x:u.x - 1, y:u.y - 1, width:u.w + 2, height:u.h + 2, rx:u.r + 1, class:"hit" }, g); }
+  const rows = [...new Set(P.jacks.map(j => Math.round(j.y)))].sort((a, b) => a - b);
+  P.jacks.forEach(j => {
+    const g = mk(j.id);
+    drawJack(g, j);
+    const top = Math.round(j.y) === rows[0];
+    el("text", { x:j.x, y:j.y + (top ? 6.9 : 7.6), class:"jlabel" }, g).textContent = JACKLEGEND[j.id];
+    el("circle", { cx:j.x, cy:j.y, r:5.2, class:"hit" }, g);
+  });
+  el("text", { x:P.labels.in[0] + 1.2, y:P.labels.in[1] + 3.2, class:"legend" }, plate).textContent = "IN";
+  el("text", { x:P.labels.out[0] - 1.2, y:P.labels.out[1] + 3.2, class:"legend" }, plate).textContent = "OUT";
+}
+
+const PLAYV  = PAGES[0].pots.map(k => k.v);
+const SETUPV = PAGES[1].pots.map(k => k.v);
+
+/* hero: C major, an A being sung in tune, two voices on */
+drawPanel(document.getElementById("heroSvg"), { page:0, values:[PLAYV, SETUPV], halos:[C.green, C.purple, C.setup], sel:null });
+
+/* the interactive one */
+const iv = { page:0, values:[PLAYV.slice(), SETUPV.slice()], halos:[C.green, C.purple, C.setup], sel:null };
+const psvg = document.getElementById("panelSvg");
+const ro = { k:document.getElementById("roK"), t:document.getElementById("roT"), s:document.getElementById("roS"), d:document.getElementById("roD"), m:document.getElementById("roM") };
+const roDefault = { k:ro.k.textContent, t:ro.t.textContent, s:ro.s.textContent, d:ro.d.textContent, m:ro.m.innerHTML };
+let pinned = null;
+
+function describe(key) {
+  if (!key) return null;
+  if (key[0] === "P") { const i = +key[1] - 1, k = PAGES[iv.page].pots[i];
+    return { k:`${key} · ${PAGES[iv.page].name} page`, t:k.name, s:k.sub, d:k.d, m:k.meta }; }
+  if (key[0] === "B") { const b = BUTTONS[+key[1] - 1]; return { k:key, t:b.name, s:b.sub, d:b.d, m:b.meta }; }
+  if (key === "USB") return { k:"front panel", t:USB.name, s:USB.sub, d:USB.d, m:USB.meta };
+  const j = JACKS[key]; return { k:key, t:j.name, s:j.sub, d:j.d, m:j.meta };
+}
+function showReadout(key) {
+  const x = describe(key);
+  if (!x) { ro.k.textContent = roDefault.k; ro.t.textContent = roDefault.t; ro.s.textContent = roDefault.s; ro.d.textContent = roDefault.d; ro.m.innerHTML = roDefault.m; return; }
+  ro.k.textContent = x.k; ro.t.textContent = x.t; ro.s.textContent = x.s; ro.d.textContent = x.d;
+  ro.m.innerHTML = x.m.map(s => `<div>${s}</div>`).join("");
+}
+function onHover(key, click) {
+  if (click) { pinned = (pinned === key) ? null : key; iv.sel = pinned; redraw(); }
+  showReadout(pinned || key);
+}
+function redraw() { drawPanel(psvg, iv, onHover); }
+psvg.addEventListener("mouseleave", () => showReadout(pinned));
+psvg.addEventListener("click", () => { pinned = null; iv.sel = null; redraw(); showReadout(null); });
+redraw();
+
+function setPage(p) {
+  iv.page = p;
+  iv.halos = p === 0 ? [C.green, C.purple, C.setup] : [C.green, C.purple, PAGES[1].color];
+  document.getElementById("tgPlay").setAttribute("aria-pressed", p === 0);
+  document.getElementById("tgSetup").setAttribute("aria-pressed", p === 1);
+  document.getElementById("tgCap").textContent = p === 0 ? "rings as the firmware draws them: C major, an A being sung, in tune" : "the same pots while B3 is held; B3 lights in the page colour";
+  redraw(); showReadout(pinned);
+}
+document.getElementById("tgPlay").addEventListener("click", () => setPage(0));
+document.getElementById("tgSetup").addEventListener("click", () => setPage(1));
+
+/* ---------- what the voices sing ---------- */
+const CH = { key:document.getElementById("cKey"), scale:document.getElementById("cScale"),
+  v:[1,2,3,4].map(i => document.getElementById("cV" + i)), note:document.getElementById("cNote") };
+NOTE_NAMES.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; CH.key.appendChild(o); });
+SCALE_NAMES.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; CH.scale.appendChild(o); });
+CH.v.forEach((sel, k) => { ITV_NAMES.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; sel.appendChild(o); }); sel.value = [7, 9, 0, 0][k]; });
+CH.key.value = 0; CH.scale.value = 1;
+const VCOL = [C.v1, C.v2, C.v3, C.v4];
+function renderChoir() {
+  const key = +CH.key.value, scale = +CH.scale.value, note = +CH.note.value / 100;
+  document.getElementById("cKeyV").textContent = NOTE_NAMES[key];
+  document.getElementById("cScaleV").textContent = SCALE_NAMES[scale];
+  CH.v.forEach((sel, k) => document.getElementById("cV" + (k + 1) + "V").textContent = ITV_NAMES[+sel.value]);
+  const q = quantizeNote(note, key, scale), cents = Math.round((note - q) * 100);
+  document.getElementById("cNoteV").textContent = `${noteName(note)} ${cents >= 0 ? "+" : "−"}${Math.abs(cents)} ¢ · ${noteHz(note).toFixed(1)} Hz`;
+  const cells = [
+    { k:"you sing", v:noteName(note), s:`${noteHz(note).toFixed(1)} Hz · ${cents >= 0 ? "+" : "−"}${Math.abs(cents)} cents from ${noteName(q)}`, cls:Math.abs(cents) <= 25 ? "on" : "" },
+    { k:"corrected to", v:noteName(q), s:`${noteHz(q).toFixed(1)} Hz · the nearest note of ${NOTE_NAMES[key]} ${SCALE_NAMES[scale]}`, cls:"on" },
+  ];
+  CH.v.forEach((sel, k) => {
+    const itv = +sel.value, t = harmTarget(q, itv, key, scale);
+    cells.push(t == null ? { k:`voice ${k + 1}`, v:"off", s:"no interval set", cls:"off" }
+                         : { k:`voice ${k + 1} · ${ITV_NAMES[itv]}`, v:noteName(t), s:`${noteHz(t).toFixed(1)} Hz · ${t - q >= 0 ? "+" : "−"}${Math.abs(Math.round(t - q))} semitones`, cls:"", col:VCOL[k] });
+  });
+  document.getElementById("sung").innerHTML = cells.map(c => `<div class="cell ${c.cls}"><div class="ck">${c.k}</div><div class="cv" ${c.col ? `style="color:${c.col}"` : ""}>${c.v}</div><div class="cs">${c.s}</div></div>`).join("");
+  const on = CH.v.filter(s => +s.value !== 0).length;
+  document.getElementById("choirSay").textContent =
+    Math.abs(cents) > 25 ? `The ring shows ${noteName(note)} in orange: more than a quarter tone from ${noteName(q)}. With FLEX up, correction would leave this alone; at zero it pulls it in.`
+    : on === 0 ? `In tune, green pip on ${NOTE_NAMES[((Math.round(note) % 12) + 12) % 12]}. No voices are on; hold B3 and turn P1 for a third.`
+    : `In tune. ${on} voice${on === 1 ? "" : "s"} walk${on === 1 ? "s" : ""} the ${NOTE_NAMES[key]} ${SCALE_NAMES[scale]} scale from ${noteName(q)}${scale === 0 ? ", as fixed semitones in Chromatic" : ""}.`;
+  /* the ring */
+  const svg = document.getElementById("keyRing");
+  svg.textContent = "";
+  el("circle", { cx:0, cy:0, r:12.2, fill:"#15131c" }, svg);
+  const g = el("g", {}, svg);
+  drawRing(g, 0, 0, { style:"key", c:C.key, n:12 }, (key + .5) / 12, { scale, note, voiced:true });
+  drawKnob(g, 0, 0, (key + .5) / 12);
+  el("text", { x:0, y:PANEL.labels.knob_dy - 2.6, class:"plabel lit", style:"font-size:2.2px" }, g).textContent = "KEY · " + NOTE_NAMES[key];
+  /* and the panel drawings follow the same singer */
+  TUNER.note = note;
+  iv.values[0][0] = (key + .5) / 12; iv.values[0][1] = (scale + .5) / 9;
+  redraw();
+}
+[CH.key, CH.scale, ...CH.v].forEach(e => e.addEventListener("input", renderChoir));
+CH.note.addEventListener("input", renderChoir);
+renderChoir();
+
+/* ---------- boot report simulator ---------- */
+const simSvg = document.getElementById("simRing"), cpu = document.getElementById("cpu");
+function renderCpu() {
+  const v = +cpu.value / 100;
+  simSvg.textContent = "";
+  el("circle", { cx:0, cy:0, r:12.2, fill:"#15131c" }, simSvg);
+  const g = el("g", {}, simSvg);
+  drawRing(g, 0, 0, { style:"boot" }, v, null);
+  drawKnob(g, 0, 0, PLAYV[0]);
+  el("text", { x:0, y:PANEL.labels.knob_dy - 2.6, class:"plabel lit", style:"font-size:2.2px" }, g).textContent = "P1 · KEY";
+  document.getElementById("cpuVal").textContent = v <= 0 ? "no data" : Math.round(v * 100) + "%";
+  document.getElementById("cpuCap").textContent = v <= 0 ? "first boot after flashing" : "shown for 2.5 s at power-up";
+  const say = v <= 0 ? "A single dim blue LED means the module has not measured anything yet. Sing for a few minutes with all four voices on, power-cycle, and look again."
+    : v < .75 ? `Green: ${Math.round(v*13)} of 13 LEDs. It fits, with room. Seven voices on one core, done.`
+    : v < .90 ? "Amber: it fits, without much room. The doubler and all four voices at once is the case that pushes it."
+    : "Red: the callback overran at some point. The B2 light would have gone red while it happened. Fewer voices, or the fallbacks in the text above.";
+  document.getElementById("cpuVerdict").textContent = say;
+}
+cpu.addEventListener("input", renderCpu);
+renderCpu();
+
+/* ---------- repo links ---------- */
+document.querySelectorAll("[data-repo]").forEach(a => { a.href = REPO + a.dataset.repo; });
+document.querySelectorAll("[data-repo-text]").forEach(e => { e.textContent = REPO + ".git"; });
+</script>
+</body>
+</html>
