@@ -863,13 +863,18 @@ int main(void)
         pager.SetStored(kPageSetup, kPotBottomRight, 0.7f,         phys); /* spread */
     }
 
-    /* The PLAY page comes up honest: whatever a pot points at is what the
-     * module does, no catch to cross first. Setup keeps its stored values.
-     * BootLoad() left the Pager a deferred re-arm for its first Update();
-     * that only re-runs InitCatch against phys (pager.cpp LockPage) and
-     * never touches the stored values, so these survive it. */
-    for (uint8_t p = 0; p < kNumPots; p++)
-        pager.SetStored(kPagePlay, p, phys[p], phys);
+    /* The PLAY page. With nothing saved (first boot after a flash) it
+     * adopts the pots, so whatever a pot points at is what the module
+     * does. With a saved state it keeps the saved values, and each pot
+     * must catch its value before it takes over: the pots are shared by
+     * every firmware on the card, so after a picker switch they point
+     * wherever the last firmware left them, and adopting them would
+     * overwrite this one's settings with another's. BootLoad() left the
+     * Pager a deferred re-arm for its first Update(), which arms the
+     * catch against phys without touching the stored values. */
+    if (!had_boot)
+        for (uint8_t p = 0; p < kNumPots; p++)
+            pager.SetStored(kPagePlay, p, phys[p], phys);
 
     /* Report last session's peak on the P1 ring, then start recording this
      * one. Audio is already passing through during the readout. */
