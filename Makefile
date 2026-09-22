@@ -105,6 +105,10 @@ include $(SYSTEM_FILES_DIR)/Makefile
 BELT_ENGINE_FLAGS = -ffast-math -fno-finite-math-only
 $(BUILD_DIR)/belt_core_alchemy.o: CFLAGS += $(BELT_ENGINE_FLAGS)
 
+# Relink when the linker script changes. libDaisy's rules do not list it,
+# and a stale link once left .belt_pool on top of the LED buffer's address.
+$(BUILD_DIR)/$(TARGET).elf: $(LDSCRIPT)
+
 .DEFAULT_GOAL := all
 
 # newlib-nano prints NOTHING for "%f" unless _printf_float is linked in, and
