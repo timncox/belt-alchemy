@@ -89,12 +89,21 @@ CPP_STANDARD = -std=gnu++17
 
 # -O3, not -Os: the audio callback is the one budget that can kill this
 # port -- seven TD-PSOLA voices on one Cortex-M7 is unmeasured until rack
-# power. No -ffast-math yet: the engine's tests were passed without it.
+# power. -ffast-math is applied to the engine's unit only, below.
 OPT = -O3
 
 # ── libDaisy core Makefile does the rest ────────────────────────────────────
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile
+
+# The engine (seven TD-PSOLA voices) is the one budget that matters, and it
+# overran: module 2 recorded a 100 % worst block on 2026-09-22 and the
+# control loop starved (the Settings chord became unreliable). -ffast-math
+# on this translation unit only -- libDaisy and the SDK keep strict IEEE.
+# The engine has no isnan/isinf guards; -fno-finite-math-only keeps NaN
+# comparisons honest anyway. test/Makefile builds the tuner test the same way.
+BELT_ENGINE_FLAGS = -ffast-math -fno-finite-math-only
+$(BUILD_DIR)/belt_core_alchemy.o: CFLAGS += $(BELT_ENGINE_FLAGS)
 
 .DEFAULT_GOAL := all
 

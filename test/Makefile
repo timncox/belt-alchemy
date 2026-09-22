@@ -11,7 +11,7 @@
 # upstream in ~/tim-os/belt (`make test`).
 
 CC     ?= cc
-CFLAGS  = -O2 -g -Wall -Wextra -I../src -I../src/vendor
+CFLAGS  = -O2 -g -Wall -Wextra -I../src -I../src/vendor -ffast-math -fno-finite-math-only
 BUILD   = ../build/test
 
 .PHONY: test clean
