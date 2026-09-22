@@ -22,12 +22,14 @@
 struct BeltExtras : public alchemy::Serializable
 {
     float cpu_peak = 0.0f;   /* 0..1; 0 == no data yet */
+    float cpu_avg  = 0.0f;   /* 0..1: worst smoothed load this session */
 
-    size_t SerializedSize() const override { return 4u; }
+    size_t SerializedSize() const override { return 8u; }
 
     void Serialize(uint8_t* out) const override
     {
         std::memcpy(out, &cpu_peak, 4u);
+        std::memcpy(out + 4u, &cpu_avg, 4u);
     }
 
     bool Deserialize(const uint8_t* in) override
@@ -38,9 +40,12 @@ struct BeltExtras : public alchemy::Serializable
          * catches layout changes, this catches garbage inside a valid one. */
         if (!(p >= 0.0f && p <= 1.0f)) p = 0.0f;
         cpu_peak = p;
+        std::memcpy(&p, in + 4u, 4u);
+        if (!(p >= 0.0f && p <= 1.0f)) p = 0.0f;
+        cpu_avg = p;
         return true;
     }
 
     /* 'BLT' + layout version. Bump the low byte when the layout changes. */
-    uint32_t SchemaHash() const override { return 0x424C5400u | 0x01u; }
+    uint32_t SchemaHash() const override { return 0x424C5400u | 0x02u; }
 };

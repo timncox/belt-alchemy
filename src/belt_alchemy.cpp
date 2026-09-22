@@ -83,7 +83,7 @@ static AlchemyLab          hw;
 static daisy::CpuLoadMeter cpu;
 
 /* Sized in versio_alloc.h so this and the native test cannot drift. */
-static uint8_t DSY_SDRAM_BSS g_pool[VERSIO_POOL_BYTES];
+static uint8_t __attribute__((section(".belt_pool"), aligned(32))) g_pool[VERSIO_POOL_BYTES];
 
 static belt_t*       B = nullptr;
 static host_api_v1_t HOST;
@@ -584,6 +584,13 @@ static void OnFrame(void)
         if (mx > 1.0f) mx = 1.0f;
         if (mx > extras.cpu_peak) extras.cpu_peak = mx;
         if (extras.cpu_peak > g_saved_peak + 0.05f) mark_dirty(now);
+
+        /* The worst SMOOTHED load this session: one heavy block and a
+         * callback that is always near the limit read the same on the peak,
+         * and only this tells them apart. Read over HostLink (getlive). */
+        float av = cpu.GetAvgCpuLoad();
+        if (av > 1.0f) av = 1.0f;
+        if (av > extras.cpu_avg) extras.cpu_avg = av;
     }
 
     /* A visit to Settings is worth saving (brightness, flex, humanize, wet). */
@@ -902,6 +909,7 @@ int main(void)
      * one. Audio is already passing through during the readout. */
     g_boot_peak      = extras.cpu_peak;
     extras.cpu_peak  = 0.0f;
+    extras.cpu_avg   = 0.0f;
     g_saved_peak     = 0.0f;
     g_readout_until  = System::GetNow() + 2500u;
 

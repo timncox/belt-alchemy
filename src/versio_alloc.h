@@ -30,7 +30,10 @@
  * rings could live in AXI SRAM instead, which is a CPU experiment for later
  * if the seven voices turn out to need it.
  */
-#define VERSIO_POOL_BYTES (1u * 1024u * 1024u)
+/* Belt's engine takes 137,552 B (test/test_tuner.c prints it); the pool
+ * lives in D2 SRAM (belt_alchemy.lds .belt_pool), 256 KB, so it is sized
+ * to the engine with room, not to SDRAM. */
+#define VERSIO_POOL_BYTES (160u * 1024u)
 
 #ifdef __cplusplus
 extern "C" {

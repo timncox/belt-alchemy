@@ -112,6 +112,18 @@ SECTIONS
 		PROVIDE(__sram1_bss_end__ = _esram1_bss);
 	} > RAM_D2_DMA
 
+	/* .belt_pool -- the engine's allocation pool (versio_alloc), in D2 SRAM
+	 * rather than SDRAM: the TD-PSOLA rings are read at scattered offsets by
+	 * seven voices every sample, and from SDRAM the callback overran (module
+	 * 2, 2026-09-22). NOLOAD; versio_calloc zeroes what it hands out. */
+	.belt_pool (NOLOAD) :
+	{
+		. = ALIGN(32);
+		*(.belt_pool)
+		*(.belt_pool*)
+		. = ALIGN(32);
+	} > RAM_D2
+
 	.data :
 	{
 		. = ALIGN(4);
