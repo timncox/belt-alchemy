@@ -37,7 +37,8 @@ LIBDAISY_DIR = lib/libDaisy
 CPP_SOURCES = \
     src/belt_alchemy.cpp \
     src/picker.cpp \
-    src/launchpad.cpp
+    src/launchpad.cpp \
+    src/usb_shared.cpp
 
 # belt_core_alchemy.c #includes vendor/belt_core.c with calloc/free
 # redirected to SDRAM. Never list vendor/belt_core.c here as well —
