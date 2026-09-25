@@ -541,6 +541,65 @@ static void lp_poll(uint32_t now)
     }
 }
 
+/* ---- Launch Control XL -----------------------------------------------------
+ *
+ *   faders 1-4    RETUNE, AMOUNT, HARMONY, FORMANT (the PLAY knobs)
+ *   faders 5-6    DOUBLER, SPREAD (SETUP)
+ *   top knobs 1-4 VOICE 1-4 intervals (SETUP)
+ *   middle knobs  1 KEY, 2 SCALE
+ *   upper row     1 HARD, 2 MUTE: the same tap/hold gestures as B1/B2
+ * All through the pages' stored values, so the pots catch and it saves.
+ */
+static void mark_dirty(uint32_t now);
+static bool g_xl_hard_down = false, g_xl_mute_down = false;
+
+static void xl_frame(uint32_t now)
+{
+    if (!xl::Connected()) return;
+    float phys[kNumPots];
+    for (uint8_t p = 0; p < kNumPots; p++) phys[p] = hw.pots[p].Value();
+    uint8_t v;
+    static const uint8_t kFaderPage[6] = {kPagePlay, kPagePlay, kPagePlay, kPagePlay, kPageSetup, kPageSetup};
+    static const uint8_t kFaderPot[6]  = {kPotMiddleLeft, kPotMiddleRight, kPotBottomLeft,
+                                          kPotBottomRight, kPotBottomLeft, kPotBottomRight};
+    for (uint8_t c = 0; c < 6; c++)
+        if (xl::Fader(c, &v))
+        {
+            pager.SetStored(kFaderPage[c], kFaderPot[c], (float)v / 127.0f, phys);
+            mark_dirty(now);
+        }
+    static const uint8_t kVoicePot[4] = {kPotTopLeft, kPotTopRight, kPotMiddleLeft, kPotMiddleRight};
+    for (uint8_t c = 0; c < 4; c++)
+        if (xl::Knob(0, c, &v))
+        {
+            pager.SetStored(kPageSetup, kVoicePot[c], (float)v / 127.0f, phys);
+            mark_dirty(now);
+        }
+    if (xl::Knob(1, 0, &v)) { pager.SetStored(kPagePlay, kPotTopLeft, (float)v / 127.0f, phys);  mark_dirty(now); }
+    if (xl::Knob(1, 1, &v)) { pager.SetStored(kPagePlay, kPotTopRight, (float)v / 127.0f, phys); mark_dirty(now); }
+
+    xl::Button b;
+    const bool live = !settings.IsActive();
+    while (xl::PopButton(&b))
+    {
+        if (b.row != 0) continue;
+        if (b.col == 0) g_xl_hard_down = b.down && live;
+        if (b.col == 1) g_xl_mute_down = b.down && live;
+    }
+
+    for (uint8_t c = 0; c < 8; c++)
+    {
+        uint8_t up = xl::kOff;
+        if (c == 0) up = G_HARD ? xl::kRed : xl::kRedDim;
+        if (c == 1) up = G_MUTED ? xl::kAmber : xl::kAmberDim;
+        xl::SetButtonLed(0, c, up);
+        xl::SetButtonLed(1, c, xl::kOff);
+        xl::SetKnobLed(0, c, c < 4 ? (((G_MASK >> c) & 1) ? xl::kGreen : xl::kGreenDim) : xl::kOff);
+        xl::SetKnobLed(1, c, c < 2 ? xl::kAmberDim : xl::kOff);
+        xl::SetKnobLed(2, c, xl::kOff);
+    }
+}
+
 static void lp_paint(void)
 {
     if (!lp::Connected()) return;
@@ -630,7 +689,7 @@ static void OnPoll(uint32_t now)
         apply_mute(tg_mute.latch);
         return;
     }
-    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed() || g_lp_hard_down, now)
+    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed() || g_lp_hard_down || g_xl_hard_down, now)
                       || g_gate_state;
     /* B2 stands down while B3 is held: B2+B3 held two seconds is the
      * Settings chord, and B2's own gesture would mute the harmonies on the
@@ -638,7 +697,7 @@ static void OnPoll(uint32_t now)
     const bool b3   = hw.buttons[kButtonB3].Pressed();
     if (b3) tg_mute.Reset();
     const bool mute = b3 ? tg_mute.latch
-                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed() || g_lp_mute_down, now);
+                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed() || g_lp_mute_down || g_xl_mute_down, now);
     apply_hard(hard);
     apply_mute(mute);
 }
@@ -759,7 +818,7 @@ static void OnFrame(void)
      * poll is paused for the duration. The epsilons above are the wear
      * limiter; this is a ceiling on write frequency, not a write rate.
      */
-    if (g_lp_mode) { lp_paint(); lp_write_report(now); }
+    if (g_lp_mode) { lp_paint(); xl_frame(now); lp_write_report(now); }
 
     /* The USB port only takes effect at power-up, so a change is saved as
      * soon as Settings closes -- nobody should have to wait before cycling. */
