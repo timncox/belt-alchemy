@@ -36,14 +36,16 @@ LIBDAISY_DIR = lib/libDaisy
 # ── App sources ─────────────────────────────────────────────────────────────
 CPP_SOURCES = \
     src/belt_alchemy.cpp \
-    src/picker.cpp
+    src/picker.cpp \
+    src/launchpad.cpp
 
 # belt_core_alchemy.c #includes vendor/belt_core.c with calloc/free
 # redirected to SDRAM. Never list vendor/belt_core.c here as well —
 # that would define every engine symbol twice.
 C_SOURCES = \
     src/versio_alloc.c \
-    src/belt_core_alchemy.c
+    src/belt_core_alchemy.c \
+    src/usbh_hub_midi.c
 
 # ── Alchemy SDK, compiled straight from the submodule ───────────────────────
 CPP_SOURCES += $(sort $(shell find $(ALCHEMY_DIR)/framework/src -name '*.cpp'))

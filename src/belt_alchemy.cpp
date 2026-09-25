@@ -46,6 +46,8 @@
 
 #include "extras.h"
 #include "picker.h"
+#include "launchpad.h"
+#include "ff.h"
 #include "versio_alloc.h"
 
 /* versio_alloc.h first, then the engine inside extern "C" -- see the note in
@@ -466,8 +468,158 @@ static void apply_mute(bool on)
     set_param_int("harm_level", on ? 0 : (k_harm.last < 0 ? 0 : k_harm.last));
 }
 
+/* ---- Launchpad Mini MK3 -----------------------------------------------------
+ *
+ *   rows 1-2   KEY, laid out as a keyboard (sharps above: C# D# . F# G# A#,
+ *              naturals below: C D E F G A B). The key's root is bright
+ *              blue, in-scale notes dim blue, and the sung note is green
+ *              within 25 cents, orange outside -- the KEY ring as pads.
+ *              Press a pad to set KEY.
+ *   rows 4-5   SCALE (9 pads, the current one bright)
+ *   row 7      harmony voices 1-4: lit where an interval is set, bright
+ *              while singing
+ *   row 8      tuner: where the sung note sits, flat on the left, sharp on
+ *              the right, green in the middle four when within 25 cents
+ *   top 1      HARD tune, top 2  harmony MUTE: the same gestures as B1/B2
+ *              (hold for momentary, tap to latch), sharing their latches
+ *
+ * USB port (Settings, the firmware page, P5): Mac or Launchpad, from the
+ * next power-up. In Launchpad mode B2 shows the host: blue starting, cyan no
+ * device, yellow enumerating (or working behind a hub), red gave up, green
+ * running. Hold B1 at power-up to boot in Mac mode whatever the setting says.
+ */
+static bool in_scale(int n, int key_idx, int scale_idx);
+static const char* const kUsbLabels[2] = {"Mac", "Launchpad"};
+static SelectorHandle usb_port;
+static bool     g_lp_mode    = false;
+static uint8_t  g_lp_stage   = 0;
+static uint32_t g_lp_boot_ms = 0;
+static bool     g_lp_hard_down = false;
+static bool     g_lp_mute_down = false;
+
+/* Keyboard layout: pitch class at (x, row) or -1. Row 0 = sharps. */
+static int lp_key_at(uint8_t x, uint8_t y)
+{
+    static const int kSharps[8]   = {-1, 1, 3, -1, 6, 8, 10, -1};
+    static const int kNaturals[8] = {0, 2, 4, 5, 7, 9, 11, -1};
+    if (y == 0) return kSharps[x];
+    if (y == 1) return kNaturals[x];
+    return -1;
+}
+
+/* Set a PLAY-page selector from a pad: the stored value moves (so it saves
+ * and the ring shows it) and the pot re-arms its catch. */
+static void lp_set_play(uint8_t pot, int zone, int zones)
+{
+    float phys[kNumPots];
+    for (uint8_t p = 0; p < kNumPots; p++) phys[p] = hw.pots[p].Value();
+    pager.SetStored(kPagePlay, pot, ((float)zone + 0.5f) / (float)zones, phys);
+}
+
+static void lp_poll(uint32_t now)
+{
+    lp::Poll(now);
+    lp::Event e;
+    const bool live = !settings.IsActive();
+    while (lp::PopEvent(&e))
+    {
+        if (e.kind == lp::Kind::Top)
+        {
+            if (e.x == 0) g_lp_hard_down = e.down && live;
+            if (e.x == 1) g_lp_mute_down = e.down && live;
+            continue;
+        }
+        if (!live || !e.down || e.kind != lp::Kind::Grid) continue;
+        const int pc = lp_key_at(e.x, e.y);
+        if (pc >= 0) lp_set_play(kPotTopLeft, pc, 12);
+        if (e.y == 3 || (e.y == 4 && e.x == 0))
+        {
+            const int sc = (e.y == 3) ? e.x : 8;
+            lp_set_play(kPotTopRight, sc, 9);
+        }
+    }
+}
+
+static void lp_paint(void)
+{
+    if (!lp::Connected()) return;
+    const int key_idx   = k_key.last   < 0 ? 0 : k_key.last;
+    const int scale_idx = k_scale.last < 0 ? 1 : k_scale.last;
+    const int sung      = G_VOICED ? ((G_NOTE10 + 5) / 10 % 12 + 12) % 12 : -1;
+    const bool in_tune  = G_CENTS <= 25 && G_CENTS >= -25;
+    for (uint8_t y = 0; y < 2; y++)
+        for (uint8_t x = 0; x < 8; x++)
+        {
+            const int pc = lp_key_at(x, y);
+            uint8_t   c  = lp::kOff;
+            if (pc >= 0)
+            {
+                c = lp::kGrey;
+                if (in_scale(pc, key_idx, scale_idx)) c = lp::kBlueDim;
+                if (pc == key_idx) c = lp::kBlue;
+                if (pc == sung) c = in_tune ? lp::kGreen : lp::kOrange;
+            }
+            lp::SetGrid(x, y, c);
+        }
+    for (uint8_t x = 0; x < 8; x++) lp::SetGrid(x, 3, x == scale_idx ? lp::kMagenta : lp::kMagentaDim);
+    lp::SetGrid(0, 4, scale_idx == 8 ? lp::kMagenta : lp::kMagentaDim);
+    for (uint8_t v = 0; v < 4; v++)
+    {
+        const bool set = (G_MASK >> v) & 1;
+        lp::SetGrid(v, 6, !set ? lp::kOff : ((G_VOICED && !G_MUTED) ? lp::kCyan : lp::kCyanDim));
+    }
+    for (uint8_t x = 0; x < 8; x++)
+    {
+        uint8_t c = lp::kOff;
+        if (G_VOICED)
+        {
+            int pos = (int)lroundf(3.5f + (float)G_CENTS / 50.0f * 4.0f);
+            if (pos < 0) pos = 0;
+            if (pos > 7) pos = 7;
+            if (x == pos) c = in_tune ? lp::kGreen : lp::kOrange;
+        }
+        lp::SetGrid(x, 7, c);
+    }
+    lp::SetTop(0, G_HARD ? lp::kRed : lp::kRedDim);
+    lp::SetTop(1, G_MUTED ? lp::kAmber : lp::kAmberDim);
+    lp::SetLogo(lp::kGreen);
+}
+
+/* Host report to /lpdiag.txt once, 17 s after boot, unless a Launchpad came up. */
+alignas(32) static ALCHEMY_SDMMC_BSS FIL  s_lpdiag_fil;
+alignas(32) static ALCHEMY_SDMMC_BSS char s_lpdiag_buf[4096];
+static bool g_lpdiag_done = false;
+
+static void lp_write_report(uint32_t now)
+{
+    if (g_lpdiag_done || g_lp_stage < 2 || now - g_lp_boot_ms < 17000u) return;
+    if (lp::Connected()) { g_lpdiag_done = true; return; }
+    if (picker::Busy() || !sd.EnsureMounted(now)) return;
+    g_lpdiag_done = true;
+    const int n = lp::Report(s_lpdiag_buf, (int)sizeof s_lpdiag_buf);
+    if (f_open(&s_lpdiag_fil, "/lpdiag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
+    UINT w = 0;
+    f_write(&s_lpdiag_fil, s_lpdiag_buf, (UINT)n, &w);
+    f_close(&s_lpdiag_fil);
+}
+
 static void OnPoll(uint32_t now)
 {
+    if (g_lp_mode)
+    {
+        if (g_lp_stage == 0 && now - g_lp_boot_ms > 2000u) g_lp_stage = 1;
+        else if (g_lp_stage == 1 && now - g_lp_boot_ms > 2300u)
+        {
+            lp::Init();
+            g_lp_stage = 2;
+        }
+        else if (g_lp_stage >= 2)
+        {
+            lp_poll(now);
+            g_lp_stage = (uint8_t)(2 + lp::Stage());
+        }
+    }
+
     if (settings.IsActive())
     {
         /* Settings owns the buttons; drop momentaries, keep latches. */
@@ -477,14 +629,15 @@ static void OnPoll(uint32_t now)
         apply_mute(tg_mute.latch);
         return;
     }
-    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed(), now) || g_gate_state;
+    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed() || g_lp_hard_down, now)
+                      || g_gate_state;
     /* B2 stands down while B3 is held: B2+B3 held two seconds is the
      * Settings chord, and B2's own gesture would mute the harmonies on the
      * way in and, if B3 landed inside the tap window, flip the latch. */
     const bool b3   = hw.buttons[kButtonB3].Pressed();
     if (b3) tg_mute.Reset();
     const bool mute = b3 ? tg_mute.latch
-                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed(), now);
+                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed() || g_lp_mute_down, now);
     apply_hard(hard);
     apply_mute(mute);
 }
@@ -605,6 +758,8 @@ static void OnFrame(void)
      * poll is paused for the duration. The epsilons above are the wear
      * limiter; this is a ceiling on write frequency, not a write rate.
      */
+    if (g_lp_mode) { lp_paint(); lp_write_report(now); }
+
     if (g_dirty && now - g_dirty_since >= 5000u && !sact && !picker::Busy()
         && !hw.buttons[kButtonB1].Pressed() && !hw.buttons[kButtonB2].Pressed()
         && !hw.buttons[kButtonB3].Pressed())
@@ -713,6 +868,13 @@ static void OnRender(uint32_t t_ms)
     else if (G_MUTED)                b2 = kGrey;
     else if (G_MASK)                 b2 = kPurple;
     else                             b2 = kIdle;
+    if (g_lp_mode)
+    {
+        static const LedPanel::Rgb kStage[6] = {
+            {0x40, 0x00, 0x40}, {0x00, 0x00, 0xFF}, {0x00, 0xC0, 0xC0},
+            {0xFF, 0xC0, 0x00}, {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}};
+        if (g_lp_stage < 5) b2 = kStage[g_lp_stage];   /* running: B2 is B2 again */
+    }
     L.SetButtonPair(kButtonB2, L.ScaleGlobal(b2));
 
     if (pager.Page() != kPageSetup)
@@ -814,6 +976,14 @@ int main(void)
      * until something opens it. */
     sd.Init();
     picker::Install(settings, kSettingsFirmware, sd, hw);
+    usb_port = settings.Page(kSettingsFirmware).Pot(5)
+        .Selector(kUsbLabels).Default(0)
+        .Ident("usb").Name("USB port")
+        .Help("**Mac**: the front USB-C is HostLink, for the web programmer, "
+              "presets and the card. **Launchpad**: the Lab is the USB host "
+              "for a Launchpad Mini MK3, direct with 5 V injected or through "
+              "a powered hub adapter. From the next power-up; hold B1 while "
+              "powering up to get Mac mode back.");
     settings.UseBrightness();
     settings.UsePresets(presets);
     flex_k = settings.Page(kSettingsMain).Pot(1).Knob().Default(0.0f)
@@ -913,18 +1083,23 @@ int main(void)
     g_saved_peak     = 0.0f;
     g_readout_until  = System::GetNow() + 2500u;
 
+    hw.ProcessAllControls();
+    const bool force_mac = hw.buttons[kButtonB1].Pressed();
+    g_lp_mode    = (int)usb_port.Value() == 1 && !force_mac;
+    g_lp_boot_ms = System::GetNow();
+
     hw.StartAudio(AudioCallback);
     cpu.Reset();
 
     loop.Use(pager)
         .Use(settings)
         .Use(cv_matrix)
-        .Use(host)
         .Use(play_page)
         .Use(setup_page)
         .OnFrame(OnFrame)
         .OnPoll(OnPoll)
         .OnRender(OnRender);
+    if (!g_lp_mode) loop.Use(host);
 
     for (;;) loop.Tick();
 }
