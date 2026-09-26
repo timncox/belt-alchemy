@@ -48,6 +48,7 @@
 #include "picker.h"
 #include "launchpad.h"
 #include "usb_shared.h"
+#include "usb_audio.h"
 #include "ff.h"
 #include "versio_alloc.h"
 
@@ -490,9 +491,13 @@ static void apply_mute(bool on)
  * running. Hold B1 at power-up to boot in Mac mode whatever the setting says.
  */
 static bool in_scale(int n, int key_idx, int scale_idx);
-static const char* const kUsbLabels[2] = {"Mac", "Launchpad"};
+static const char* const kUsbLabels[3] = {"Mac", "Launchpad", "Audio"};
 static SelectorHandle usb_port;
 static bool     g_lp_mode    = false;
+/* true = the front USB-C is a USB audio interface this boot (usb_audio.h):
+ * computer -> J9/J10, J1/J2 -> computer, and the engine is bypassed. B2:
+ * cyan waiting for a computer, yellow connected, green streaming. */
+static bool     g_usb_audio  = false;
 static uint8_t  g_lp_stage   = 0;
 static uint32_t g_lp_boot_ms = 0;
 static bool     g_lp_hard_down = false;
@@ -665,6 +670,13 @@ static void lp_write_report(uint32_t now)
 
 static void OnPoll(uint32_t now)
 {
+    if (g_usb_audio && UAC_RebootRequested())
+    {
+        static uint32_t asked = 0u;
+        if (!asked) asked = now ? now : 1u;
+        else if (now - asked > 100u)
+            System::ResetToBootloader(System::BootloaderMode::DAISY);
+    }
     if (g_lp_mode)
     {
         if (g_lp_stage == 0 && now - g_lp_boot_ms > 2000u) g_lp_stage = 1;
@@ -950,6 +962,16 @@ static void OnRender(uint32_t t_ms)
             {0xFF, 0xC0, 0x00}, {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}};
         if (g_lp_stage < 5) b2 = kStage[g_lp_stage];   /* running: B2 is B2 again */
     }
+    if (g_usb_audio)
+    {
+        static const LedPanel::Rgb kUac[4] = {
+            {0x40, 0x00, 0x40},   /* not started                   */
+            {0x00, 0xC0, 0xC0},   /* waiting for a computer        */
+            {0xFF, 0xC0, 0x00},   /* connected, no stream open     */
+            {0x00, 0xFF, 0x00}};  /* streaming                     */
+        const uint8_t st = UAC_State();
+        b2 = kUac[st < 4 ? st : 0];
+    }
     L.SetButtonPair(kButtonB2, L.ScaleGlobal(b2));
 
     if (pager.Page() != kPageSetup)
@@ -972,6 +994,14 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
                           size_t                           size)
 {
     cpu.OnBlockStart();
+
+    /* Audio interface mode: the jacks belong to the computer. */
+    if (g_usb_audio)
+    {
+        UAC_Process(in, out, size);
+        cpu.OnBlockEnd();
+        return;
+    }
 
     /* Controls are NOT read here; only the gate needs an edge this fast. */
     gate_poll_isr();
@@ -1056,9 +1086,11 @@ int main(void)
         .Ident("usb").Name("USB port")
         .Help("**Mac**: the front USB-C is HostLink, for the web programmer, "
               "presets and the card. **Launchpad**: the Lab is the USB host "
-              "for a Launchpad Mini MK3, direct with 5 V injected or through "
-              "a powered hub adapter. From the next power-up; hold B1 while "
-              "powering up to get Mac mode back.");
+              "for a Launchpad Mini MK3 and a Launch Control XL (5 V from a "
+              "powered dongle). **Audio**: the Lab is a USB audio interface, "
+              "2 in (J1/J2) and 2 out (J9/J10) at 48 kHz, and the engine is "
+              "bypassed. From the next power-up; hold B1 while powering up "
+              "for Mac mode once.");
     settings.UseBrightness();
     settings.UsePresets(presets);
     flex_k = settings.Page(kSettingsMain).Pot(1).Knob().Default(0.0f)
@@ -1174,7 +1206,9 @@ int main(void)
     }
     force_mac = hw.buttons[kButtonB1].Pressed();
     g_lp_mode    = (int)usb_port.Value() == 1 && !force_mac;
+    g_usb_audio  = (int)usb_port.Value() == 2 && !force_mac;
     g_lp_boot_ms = System::GetNow();
+    if (g_usb_audio) UAC_Start("Alchemy Lab");
 
     hw.StartAudio(AudioCallback);
     cpu.Reset();
@@ -1187,7 +1221,7 @@ int main(void)
         .OnFrame(OnFrame)
         .OnPoll(OnPoll)
         .OnRender(OnRender);
-    if (!g_lp_mode) loop.Use(host);
+    if (!g_lp_mode && !g_usb_audio) loop.Use(host);
 
     for (;;) loop.Tick();
 }
