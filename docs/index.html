@@ -268,13 +268,18 @@ footer p{max-width:70ch}
       <div class="tagline">Sing into a Eurorack case. Come out in tune, in four parts.</div>
 
       <div class="note">
-        <h3>Built. Not yet heard.</h3>
-        <p>v0.1.0 compiles for the module and passes its native test: at the module's 48 kHz a
-          440 Hz sine reads as A4 to a hundredth of a semitone, and hard-tune in C major pulls a
-          note 35 cents sharp back to 440.0 Hz. <b>Nothing has been heard through it yet</b>, and
-          the one number that decides this port, how much of the processor seven pitch-shifting
-          voices take, is unmeasured until the first rack power-up. Every claim below about how it
-          sounds is a claim about the same engine on the Ableton Move, where it has been sung
+        <h3>Heard, on one module</h3>
+        <p>Belt has run on a racked Alchemy Lab (22 September 2026): audio in and out, the J3
+          gate, the SD card picker handing the module to Mark and Smack and back. The number that
+          decided this port, how much of the processor seven pitch-shifting voices take, is now
+          measured. The first build overran; with faster float maths on the engine and its
+          buffers moved into internal RAM, the worst average load was <b>63.7%</b>, with no
+          overload light and no clicks.</p>
+        <p>Still untested on the hardware: the CV inputs J4 to J8, a cold power-cycle coming back
+          with its settings, and Belt's own settings surviving a switch to another firmware and
+          back. At the module's 48 kHz a 440 Hz sine still reads as A4 to a hundredth of a
+          semitone in the native test. Claims below about how it sounds with all four voices are
+          still mostly claims about the same engine on the Ableton Move, where it has been sung
           through.</p>
       </div>
     </div>
@@ -451,11 +456,15 @@ footer p{max-width:70ch}
   <p style="margin-top:20px"><b>Opening the page to look cannot change anything.</b> The SDK's pot
     catch runs on the way in and on the way out: a SETUP pot only takes effect once you turn it
     through the value it already holds, and letting go of B3 hands the pots back to the PLAY page
-    without jumping anything. The six SETUP values are saved to flash a few seconds after you
-    stop moving them and come back at the next power-up. The PLAY page always comes up honest: at
-    boot, whatever a pot points at is what the module does.</p>
-  <p>First boot after flashing seeds the page with a third and a fifth above, the other two
-    voices off, no doubler, spread 70%.</p>
+    without jumping anything. Both pages, SETUP and PLAY, are saved to flash five seconds after
+    you stop moving them, with hands off the buttons, and come back at the next power-up.</p>
+  <p><b>At boot the PLAY page keeps its saved values, and the pots catch them.</b> The six pots
+    are shared by every firmware on the card, so after a switch in the picker they point wherever
+    the last firmware left them; adopting them would overwrite Belt's settings with Mark's or
+    Smack's. So a pot does nothing until you turn it through the value Belt saved, then takes
+    over. Only the first boot after flashing, with nothing saved, adopts the pots as they sit.</p>
+  <p>First boot after flashing seeds the SETUP page with a third and a fifth above, the other
+    two voices off, no doubler, spread 70%.</p>
 
   <h3 class="h">Settings — hold B2 + B3 for two seconds</h3>
   <div class="sub">The SDK's own settings layer; B1 steps through its pages, B2 or B3 leaves</div>
@@ -465,11 +474,29 @@ footer p{max-width:70ch}
         stray before correction lets go of it; 0 corrects everything. <b>P3 / P4</b> preset slot
         and action, sixteen slots. <b>P5</b> HUMANIZE: vibrato kept through the correction, and
         the voices' wander. <b>P6</b> WET: corrected lead against the dry voice; the harmonies
-        and doubler add on top either way.</p></div>
+        and doubler add on top either way. Out of the box: FLEX 0, HUMANIZE 30%, WET 100%.</p></div>
     <div class="card"><div class="k">Page 2</div><h4>Firmware · USB port</h4>
       <p>The SD card picker: <b>P1</b> file, <b>P2</b> flash, <b>P3</b> DFU. <a href="#card">The
         card section</a> is about it. <b>P6</b> USB PORT: Mac, Launchpad or Audio, <a href="#usb">below</a>.</p></div>
   </div>
+  <p style="margin-top:20px">Leaving Settings counts as a change: brightness, FLEX, HUMANIZE and WET
+    are saved with the pages five seconds later. The USB port setting goes to the card the moment
+    Settings closes. On module 2 the Settings chord opens, but more slowly with audio patched
+    than in Mark; the likely reason, not yet measured, is the seven voices leaving the control
+    loop less time.</p>
+
+  <h3 class="h">What it remembers</h3>
+  <div class="sub">Its own preset slot, so switching firmware loses nothing</div>
+  <p>Belt keeps its working state, both pages, the Settings knobs and the last session's CPU
+    readings, in <b>preset slot 14</b>, counting from zero (15 in HostLink's list). Each firmware
+    in the family has a slot of its own: Smack 12, Mark 13, Belt 14, Relay 15. Picking Mark in the
+    picker and coming back later finds Belt as you left it. Slots 0 to 11 are for presets saved by
+    hand; saving one by hand into 12 to 15 overwrites that firmware's working state.</p>
+  <p>Builds before this one autosaved into slot 0. At boot Belt still reads slot 0 once, if it
+    holds Belt's own settings (the schema guard refuses any other firmware's), so a module
+    carries its settings over; once slot 14 holds anything, it wins. Switching away and back has
+    been confirmed on the hardware in Mark and Smack; <b>Belt's own round trip, and a cold
+    power-cycle, are next on the test list</b>.</p>
 </div></section>
 
 <section id="tuner"><div class="wrap">
@@ -483,7 +510,7 @@ footer p{max-width:70ch}
       <tr><td>KEY ring</td><td>The SDK's 12-zone selector, one dot per key with the chosen one bright, plus the tuner: the scale's other notes as <span class="sw" style="color:#7a4a18"></span>dim dots, and the note you are singing as a <span class="sw" style="color:var(--s-green)"></span>green pip within 25 cents of its target or an <span class="sw" style="color:var(--s-amber)"></span>orange one outside. The pip sits on the dot the pot would select for that note.</td></tr>
       <tr><td>Other rings</td><td>A bar for continuous pots, one dot per step for stepped ones, two arms from a white pivot for FORMANT. SETUP colours appear while B3 is held.</td></tr>
       <tr><td>B1 · HARD / tuner</td><td><span class="sw" style="color:var(--s-white)"></span>white while HARD is on · else <span class="sw" style="color:var(--s-green)"></span>green in tune · <span class="sw" style="color:var(--s-amber)"></span>orange off it · <span class="sw" style="color:#3050ff"></span>dim blue when nothing voiced is coming in</td></tr>
-      <tr><td>B2 · HARMONIES</td><td><span class="sw" style="color:var(--s-purple)"></span>purple while any voice has an interval and is not muted · <span class="sw" style="color:#909090"></span>grey muted · dim when no voice is on · <span class="sw" style="color:var(--s-red)"></span><b>red = the audio callback is above 80%</b></td></tr>
+      <tr><td>B2 · HARMONIES</td><td><span class="sw" style="color:var(--s-purple)"></span>purple while any voice has an interval and is not muted · <span class="sw" style="color:#909090"></span>grey muted · dim when no voice is on · <span class="sw" style="color:var(--s-red)"></span><b>red = the audio callback's average load is above 80%</b></td></tr>
       <tr><td>B3 · SETUP</td><td>A dim violet tint while the PLAY page is up; the SDK lights it in the page colour while SETUP is held.</td></tr>
       <tr><td>P1 ring, first 2.5 s</td><td>Last session's worst CPU load, as a bar. See below.</td></tr>
       <tr><td>All three buttons red</td><td>The engine could not allocate its buffers. It needs 137 KB of a 1 MB pool, so this should be impossible; it fails loudly rather than running silently broken.</td></tr>
@@ -491,8 +518,8 @@ footer p{max-width:70ch}
   </table></div>
 
   <h3 class="h">The boot report</h3>
-  <div class="sub">The one number this port is waiting on</div>
-  <p class="lede">Seven pitch-shifting voices on a 480 MHz Cortex-M7 is the open question. You
+  <div class="sub">The number this port was waiting on</div>
+  <p class="lede">Seven pitch-shifting voices on a 480 MHz Cortex-M7 was the open question. You
     cannot watch a status light while singing, so the module measures its own worst-case load and
     shows it on the P1 ring for the first two and a half seconds of the <em>next</em> power-up.</p>
   <div class="sim">
@@ -506,11 +533,16 @@ footer p{max-width:70ch}
     </div>
   </div>
   <p style="margin-top:22px">A single dim blue LED means it has not measured anything yet. Green is
-    under 75%, amber under 90%, red means it did not fit. On a laptop the engine ran sixty-five
-    times faster than real time with all seven voices, and the Move's processor was estimated at
-    ten to fifteen percent; this chip is several times slower per core at this kind of arithmetic.
-    If it does not fit, the fallbacks are known and in order: faster float maths on the engine,
-    fewer voices on by default, then the engine's buffers moved into faster internal RAM.</p>
+    under 75%, amber under 90%, red means it did not fit.</p>
+  <p><b>What the rack said.</b> The first build on module 2 recorded a 100% worst block, and the
+    control loop starved: the Settings chord stopped opening reliably. Two of the three known
+    fallbacks fixed it. The engine is now compiled with faster float maths (its own file only;
+    the SDK and libDaisy keep strict arithmetic), and its buffers moved from the external SDRAM
+    into 160 KB of internal D2 SRAM, because seven voices reading the pitch-mark rings at
+    scattered offsets every sample were waiting on SDRAM. The worst <em>average</em> load since
+    is 63.7%, with no red on B2 and no clicks. The third fallback, fewer voices on by default, has
+    not been needed. The worst single block, what this ring shows, has not been written down
+    since the fix; the average is read over HostLink.</p>
 </div></section>
 
 <section id="cv"><div class="wrap">
@@ -535,7 +567,12 @@ footer p{max-width:70ch}
   <p><b>J3 is read raw in the audio callback</b>, not through the SDK's 20 Hz pot filter, which
     would round a gate's edges into a swell. It fires on the <em>magnitude</em> of the swing away
     from the jack's calibrated zero, 1.5 V to assert and 0.5 V to release, so a gate counts
-    whichever way the front end signs it. Unheard.</p>
+    whichever way the front end signs it. On module 2 a clock into J3 flashes B1 white in time;
+    at fast rates the light stops matching, because the LEDs redraw at about 60 Hz while J3 is
+    read every 2.7 ms, one 128-sample block. A pulse shorter than a block can fall between two
+    reads, so give it 5 ms or more.</p>
+  <p><b>J4 to J8 have not been tried on the hardware yet.</b> The mapping above is what the source
+    sets up.</p>
   <p>Volt-per-octave into the harmony target, so a keyboard or sequencer decides what the voices
     sing instead of the scale, is in Belt's engine on the Move as a branch not yet merged. When it
     lands there it is the obvious v0.2 here.</p>
@@ -570,8 +607,8 @@ footer p{max-width:70ch}
     <tbody>
       <tr><td>P1 · FILE</td><td>Picks a file. One dot per <code>.bin</code> in the folder, the chosen one bright; turn to move the choice.</td>
         <td><span class="sw" style="color:var(--k-file)"></span>green dots · <span class="sw" style="color:#c00000"></span>red: no card · <span class="sw" style="color:#c04800"></span>orange: no folder, or no files</td></tr>
-      <tr><td>P2 · FLASH</td><td>Writes the chosen file. <b>Turn it down below 85%, then all the way up.</b> The dip arms it, so a pot that happens to be parked at maximum cannot fire on entry.</td>
-        <td><span class="sw" style="color:var(--k-erase)"></span>orange erasing · <span class="sw" style="color:var(--k-write)"></span>blue writing · <span class="sw" style="color:var(--k-verify)"></span>green verifying · <span class="sw" style="color:var(--k-done)"></span>white, then reboot · <span class="sw" style="color:var(--k-arm)"></span><b>blinking red: failed, nothing booted; turn down to try again</b></td></tr>
+      <tr><td>P2 · FLASH</td><td>Writes the chosen file. <b>Turn it down below 85%, then all the way up.</b> The dip arms it, so a pot that happens to be parked at maximum cannot fire on entry. It first compares the file with the firmware already in the slot: <b>pick the firmware that is running and nothing is erased, written or rebooted</b>, so nothing you are playing is interrupted. The ring goes solid green; turn the pot back down and the list returns.</td>
+        <td><span class="sw" style="color:#20c0c0"></span>teal comparing · <span class="sw" style="color:#40ff60"></span>solid green: already running, nothing done · <span class="sw" style="color:var(--k-erase)"></span>orange erasing · <span class="sw" style="color:var(--k-write)"></span>blue writing · <span class="sw" style="color:var(--k-verify)"></span>green verifying · <span class="sw" style="color:var(--k-done)"></span>white, then reboot · <span class="sw" style="color:var(--k-arm)"></span><b>blinking red: failed, nothing booted; turn down to try again</b></td></tr>
       <tr><td>P3 · DFU</td><td>Same gesture. Reboots into the bootloader's update mode and stays there for a USB flash: the escape hatch for a firmware that has no picker of its own.</td>
         <td><span class="sw" style="color:var(--k-dfu)"></span>violet arming bar</td></tr>
     </tbody>
@@ -584,10 +621,10 @@ footer p{max-width:70ch}
       sector, so the board's calibration record and the preset store are never in the erase
       path. If a write fails, the module blinks red and boots nothing; the bootloader is intact,
       and hold-B3-at-power-on still gets you a USB flash.</p>
-    <p><b>What has and has not run.</b> The card side is proven with this same code in Smack: a
-      card in the module has been written and read back byte-identical over USB, through the
-      mount and buffers the picker uses. The picker's own path, listing the folder and writing
-      the slot, has not yet run in any of the three firmwares.</p>
+    <p><b>What has run.</b> On module 2 (22 September 2026) the picker switched the module between
+      Belt, Mark and Smack in every direction, and picking the firmware already running changed
+      nothing, as above. The card side was proven earlier in Smack: a card in the module written
+      and read back byte-identical over USB, through the mount and buffers the picker uses.</p>
   </div>
 </div></section>
 
@@ -741,13 +778,14 @@ footer p{max-width:70ch}
 <section id="build"><div class="wrap">
   <h2 class="sh">Build it</h2>
   <div class="sub">10 — No release yet; the source is the download</div>
-  <p class="lede">There is no packaged release of v0.1.0, because nothing has been heard through it.
-    Building takes a few minutes with the ARM toolchain installed.</p>
+  <p class="lede">There is no packaged release of v0.1.0: it has been heard on one module, and
+    the CV inputs and a cold boot are still to be tried. Building takes a few minutes with the
+    ARM toolchain installed.</p>
   <pre>git clone --recurse-submodules <i data-repo-text></i>
 cd belt-alchemy
 make libdaisy        <b># once</b>
-make                 <b># build/belt_alchemy.bin, ~312 KB</b>
-make test            <b># the engine on the SDRAM pool, and the 48 kHz tuner proof</b></pre>
+make                 <b># build/belt_alchemy.bin, ~341 KB</b>
+make test            <b># the engine on its allocation pool, and the 48 kHz tuner proof</b></pre>
   <p style="margin-top:20px">Needs <code>arm-none-eabi-gcc</code>, <code>make</code> and
     <code>dfu-util</code>. libDaisy has nested submodules, so the clone must be recursive or the
     HAL is missing. <code>make BENCH_USB=1 BUILD_DIR=build-bench</code> builds a variant with
@@ -775,16 +813,16 @@ make test            <b># the engine on the SDRAM pool, and the 48 kHz tuner pro
         picker</a>.</p></div>
     <div class="card"><div class="k">Back to stock</div><h4>Same door</h4>
       <p>Flashing any Alchemy Lab firmware, Hermetic's own included, the same way returns the
-        module to it. Presets in the slots survive; this firmware's own working preset is
+        module to it. Presets in the slots survive; Belt's working state stays in slot 14,
         schema-guarded, so another firmware will not read it as its own.</p></div>
   </div>
   <div class="note warn" style="margin-top:30px">
     <h3>Before you flash it</h3>
     <p>It is custom firmware. Hermetic Modular did not write it, did not test it and cannot
-      support it, so <b>please do not contact them about it</b>. And as of v0.1.0 it has not been
-      heard by anyone, its author included. If you run it before that changes, the two things
-      worth reporting are what the boot report reads after a few minutes of singing with all
-      four voices on, and whether the tuner pip lands on the note you sang.</p>
+      support it, so <b>please do not contact them about it</b>. It has been heard on one module,
+      its author's. If you run it, the things worth reporting are what the boot report reads
+      after a few minutes of singing with all four voices on, whether the tuner pip lands on the
+      note you sang, and whether CV on J4 to J8 does what the table says.</p>
   </div>
 </div></section>
 
@@ -796,15 +834,15 @@ make test            <b># the engine on the SDRAM pool, and the 48 kHz tuner pro
   <div class="tablewrap"><table>
     <thead><tr><th>Piece</th><th>What it is</th></tr></thead>
     <tbody>
-      <tr><td>The engine, at 48 kHz</td><td>Belt's engine, byte-identical to the Move build's, with one edit in its header: the sample rate, because libDaisy offers no 44.1 kHz. Left at 44.1 it would have read every note a semitone and a half flat and tuned the singer to a scale that much sharp. A native test holds the retarget: 440 Hz reads note 69.00.</td></tr>
+      <tr><td>The engine, at 48 kHz</td><td>Belt's engine, byte-identical to the Move build's, with one edit in its header: the sample rate, because libDaisy offers no 44.1 kHz. Left at 44.1 it would have read every note a semitone and a half flat and tuned the singer to a scale that much sharp. A native test holds the retarget: 440 Hz reads note 69.00. The engine's file is compiled with <code>-ffast-math -fno-finite-math-only</code>, a build flag and not a source edit; the rest of the firmware keeps strict IEEE arithmetic.</td></tr>
       <tr><td>The analysis</td><td>YIN pitch detection on the input decimated to 24 kHz, every 256 samples, with a tracking mode that keeps the lag search near the last period. A three-point median kills octave blips. One analysis feeds every voice.</td></tr>
       <tr><td>The voices</td><td>Time-domain pitch-synchronous overlap-add: two-period Hann grains fired at the target spacing into one stereo accumulator. Formant is the grain content resampled, independent of the spacing, so pitch and size are separate controls.</td></tr>
-      <tr><td>Two pages, one layer</td><td>The SDK's Pager makes SETUP a held layer on B3 with pot catch on the way in and out. Nothing on the PLAY page can jump because you looked at the other one.</td></tr>
-      <tr><td>Working preset</td><td>Slot 1 is the live state: both pages, the Settings knobs and the CPU peak. It autosaves five seconds after the last change with hands off the buttons, one 4 KB sector per save.</td></tr>
-      <tr><td>The picker</td><td>Three Custom slots on a Settings page: a file scanner, a state machine that erases, writes and verifies one step per frame, and a DFU hand-off. Shared, by copy, with Smack and Mark.</td></tr>
-      <tr><td>SDRAM allocator</td><td>A bump pool in external RAM, 137 KB of 1 MB, so the engine's five <code>calloc</code>s land there with no engine edits. Moving them into internal RAM is the last of the three CPU fallbacks.</td></tr>
+      <tr><td>Two pages, one layer</td><td>The SDK's Pager makes SETUP a held layer on B3 with pot catch on the way in and out. Nothing on the PLAY page can jump because you looked at the other one. At boot a saved PLAY page is restored and the pots catch it, so a firmware switch never drags Belt's settings to where another firmware left the pots.</td></tr>
+      <tr><td>Working preset</td><td>Slot 14 (0-based) is Belt's live state: both pages, the Settings knobs and the CPU readings. Each firmware in the family has its own (Smack 12, Mark 13, Relay 15). It autosaves five seconds after the last change on either page or in Settings, with hands off the buttons and the picker idle, one 4 KB sector per save. Slot 0, where earlier builds saved, is read once at boot to carry old settings over.</td></tr>
+      <tr><td>The picker</td><td>Three Custom slots on a Settings page: a file scanner, a state machine that compares, then erases, writes and verifies one step per frame, and a DFU hand-off. The compare reads the running image through the memory-mapped flash, so picking the firmware already loaded stops there. Shared, by copy, with Smack and Mark.</td></tr>
+      <tr><td>Engine pool, in D2 SRAM</td><td>A bump allocator, so the engine's five <code>calloc</code>s land in a pool with no engine edits. It started in external SDRAM; the callback overran there, so it moved to 160 KB of internal D2 SRAM (the engine takes 137,552 B), placed after the LED driver's DMA buffer, which must own the first 32 KB.</td></tr>
       <tr><td>HostLink</td><td>Product "Belt", both pages, ten jacks, three buttons, a manual and the SD filesystem, over the front USB-C.</td></tr>
-      <tr><td>Budget</td><td>~312 KB image. SRAM 65%, DTCM 57%, SDRAM 1.1 MB. CPU: unmeasured, and the open question.</td></tr>
+      <tr><td>Budget</td><td>~341 KB image (348,812 B). SRAM 71%, DTCM 72%, D2 pool 160 KB, SDRAM 1.2 MB. CPU: worst average 63.7% on module 2.</td></tr>
     </tbody>
   </table></div>
   <p style="margin-top:24px">Found something, or want it to do something it doesn't?
@@ -821,7 +859,7 @@ make test            <b># the engine on the SDRAM pool, and the 48 kHz tuner pro
     <div class="card"><div class="k">Range</div><h4>92 Hz – 1 kHz</h4><p>The pitch tracker's range, low F2 to high B5. Twelve keys, nine scales.</p></div>
     <div class="card"><div class="k">Voices</div><h4>1 + 4 + 2</h4><p>The corrected lead, four harmony voices at scale intervals from an octave below to an octave above, and a stereo doubler.</p></div>
     <div class="card"><div class="k">Controls</div><h4>6 × 2 · 3 · 6</h4><p>Six pots on two pages, three Settings knobs, three buttons, five CV inputs and a gate, 102 LEDs.</p></div>
-    <div class="card"><div class="k">Storage</div><h4>16 slots + card</h4><p>Sixteen preset slots in QSPI flash; firmware images and files on a FAT32 microSD.</p></div>
+    <div class="card"><div class="k">Storage</div><h4>16 slots + card</h4><p>Sixteen preset slots in QSPI flash, slot 14 Belt's own working state; firmware images and files on a FAT32 microSD.</p></div>
   </div>
 </div></section>
 
@@ -1186,7 +1224,7 @@ const BUTTONS = [
 const JACKS = {
   J1:{ name:"IN L",  sub:"audio in, left",  d:"The voice. Summed with J2 for the pitch analysis; kept stereo on the dry path.", meta:["kind <b>codec in</b>"] },
   J2:{ name:"IN R",  sub:"audio in, right", d:"Right channel in, summed with J1 for analysis.", meta:["kind <b>codec in</b>"] },
-  J3:{ name:"HARD GATE", sub:"gate in", d:"High is HARD, as if B1 were held. Read raw in the audio callback on the magnitude of the swing from the calibrated zero. Unheard.", meta:["assert <b>1.5 V</b>","release <b>0.5 V</b>","acts as <b>B1 held</b>"] },
+  J3:{ name:"HARD GATE", sub:"gate in", d:"High is HARD, as if B1 were held. Read raw in the audio callback on the magnitude of the swing from the calibrated zero. Responds on module 2; give it a pulse of 5 ms or more.", meta:["assert <b>1.5 V</b>","release <b>0.5 V</b>","acts as <b>B1 held</b>"] },
   J4:{ name:"CV → KEY",     sub:"±5 V, summed with PLAY P1", d:"Steps the key across twelve zones. Not volt-per-octave: a zone is about 0.8 V.", meta:["drives <b>PLAY P1</b>"] },
   J5:{ name:"CV → RETUNE",  sub:"±5 V, summed with PLAY P3", d:"Adds to the RETUNE pot's value.", meta:["drives <b>PLAY P3</b>"] },
   J6:{ name:"CV → AMOUNT",  sub:"±5 V, summed with PLAY P4", d:"Adds to the AMOUNT pot's value.", meta:["drives <b>PLAY P4</b>"] },
@@ -1434,7 +1472,7 @@ function renderCpu() {
   const say = v <= 0 ? "A single dim blue LED means the module has not measured anything yet. Sing for a few minutes with all four voices on, power-cycle, and look again."
     : v < .75 ? `Green: ${Math.round(v*13)} of 13 LEDs. It fits, with room. Seven voices on one core, done.`
     : v < .90 ? "Amber: it fits, without much room. The doubler and all four voices at once is the case that pushes it."
-    : "Red: the callback overran at some point. The B2 light would have gone red while it happened. Fewer voices, or the fallbacks in the text above.";
+    : "Red: the callback overran at some point. The B2 light would have gone red if it lasted. The first build did this; fewer voices on is the fallback left.";
   document.getElementById("cpuVerdict").textContent = say;
 }
 cpu.addEventListener("input", renderCpu);
