@@ -715,6 +715,24 @@ static void lp_write_report(uint32_t now)
     f_close(&s_lpdiag_fil);
 }
 
+/* Buttons still down when Settings closed: ignored until they are let go.
+ * The SDK closes Settings on the B2 or B3 press itself, and this poll sees
+ * that same press a moment later; without this the press that leaves
+ * Settings would also count as a press here. */
+static uint8_t g_btn_swallow = 0;
+
+static bool btn_live(uint8_t b)
+{
+    const bool    down = hw.buttons[b].Pressed();
+    const uint8_t bit  = (uint8_t)(1u << b);
+    if (g_btn_swallow & bit)
+    {
+        if (down) return false;
+        g_btn_swallow = (uint8_t)(g_btn_swallow & ~bit);
+    }
+    return down;
+}
+
 static void OnPoll(uint32_t now)
 {
     if (g_usb_audio && UAC_RebootRequested())
@@ -746,17 +764,18 @@ static void OnPoll(uint32_t now)
         tg_mute.Reset();
         apply_hard(tg_hard.latch || g_gate_state);
         apply_mute(tg_mute.latch);
+        g_btn_swallow = (uint8_t)((1u << kButtonB1) | (1u << kButtonB2) | (1u << kButtonB3));
         return;
     }
-    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed() || g_lp_hard_down || g_xl_hard_down, now)
+    const bool hard = tg_hard.Poll(btn_live(kButtonB1) || g_lp_hard_down || g_xl_hard_down, now)
                       || g_gate_state;
     /* B2 stands down while B3 is held: B2+B3 held two seconds is the
      * Settings chord, and B2's own gesture would mute the harmonies on the
      * way in and, if B3 landed inside the tap window, flip the latch. */
-    const bool b3   = hw.buttons[kButtonB3].Pressed();
+    const bool b3   = btn_live(kButtonB3);
     if (b3) tg_mute.Reset();
     const bool mute = b3 ? tg_mute.latch
-                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed() || g_lp_mute_down || g_xl_mute_down, now);
+                         : tg_mute.Poll(btn_live(kButtonB2) || g_lp_mute_down || g_xl_mute_down, now);
     apply_hard(hard);
     apply_mute(mute);
 }
