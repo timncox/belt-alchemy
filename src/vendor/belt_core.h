@@ -19,8 +19,12 @@
  */
 /*
  * VENDORED COPY for belt-alchemy -- from github.com/timncox/schwung-belt
- * (tim-os/belt) main @ e0eb4ad, module version 0.2.0. One edit, here in the
- * header, none in belt_core.c:
+ * (tim-os/belt) branch feat/chord-only @ 1e25bfc, which is PR #8's
+ * feat/midi-harmony-v2 @ 3b44960 (played harmony, target mode, control
+ * notes, vel_sens; module 0.3.0, OPEN and unmerged) plus the LEAD param
+ * (chord only). NOT main: main is 0.2.1 and has none of these, and Hide
+ * and Seek needs all of them. Re-vendor from main once PR #8 and
+ * feat/chord-only merge. One edit, here in the header, none in belt_core.c:
  *   BELT_SR 44100 -> 48000. libDaisy offers no 44.1 kHz (sai.h). The engine
  *   converts detected periods to Hz with this constant, so leaving it at
  *   44100 would read every note 1.47 semitones flat and tune the singer to

@@ -17,6 +17,8 @@
  *   B2     harmonies: hold to mute, tap to latch the mute
  *   J3     HARD gate; J4-J8 CV to KEY / RETUNE / AMOUNT / HARMONY / FORMANT
  *   Settings (B2+B3 2 s): FLEX, HUMANIZE, WET; page 1 = the SD firmware picker
+ *   Settings page 2 = CHORD: MIDI NOTES, LEAD (0 = chord only), VEL SENS;
+ *   Launchpad top 3 = KEY / PLAY (PLAY pads are held notes: Hide and Seek)
  */
 #include <math.h>
 #include <stdio.h>
@@ -80,7 +82,7 @@ static constexpr uint32_t kBlockSize = 128u;
 static constexpr uint8_t kGateJack = 0u;
 
 enum : uint8_t { kPagePlay = 0, kPageSetup = 1, kNumAppPages = 2 };
-enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1 };
+enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1, kSettingsChord = 2 };
 
 /* ---- hardware + engine -------------------------------------------------- */
 
@@ -282,7 +284,9 @@ static hostlink::FsExtension fs_ext(sd);
 static hostlink::Host host(presets, "belt_alchemy", "Belt",
                            BELT_VERSION, BELT_GIT_HASH);
 static BeltExtras  extras;
-static KnobHandle  flex_k, humanize_k, wet_k;
+static KnobHandle  flex_k, humanize_k, wet_k, lead_k, vel_k;
+static SelectorHandle midi_mode_s;
+static const char* const kMidiModeLabels[3] = {"Off", "Harmony", "Target"};
 
 #ifdef BELT_BENCH_USB
 /* HostLink on the Seed's own micro-USB instead of the front panel, for the
@@ -485,6 +489,16 @@ static void apply_mute(bool on)
  *              the right, green in the middle four when within 25 cents
  *   top 1      HARD tune, top 2  harmony MUTE: the same gestures as B1/B2
  *              (hold for momentary, tap to latch), sharing their latches
+ *   top 3      KEY / PLAY. The layout above is KEY, the default. PLAY turns
+ *              rows 1-6 into a three-octave keyboard -- rows 1-2 C5-B5,
+ *              3-4 C4-B4, 5-6 C3-B3, sharps above naturals as in KEY -- and
+ *              every pad held is a MIDI note into the engine (belt_on_midi):
+ *              with MIDI notes on Harmony the harmony voices sing the held
+ *              notes, and with LEAD 0 (Settings, the Chord page) only they
+ *              sound -- Hide and Seek. Held pads are green, the key's root
+ *              blue, in-scale notes dim blue. Rows 7-8 are as in KEY. Top 3
+ *              is dim green in KEY, bright in PLAY; leaving PLAY releases
+ *              every held pad.
  *
  * USB port (Settings, the firmware page, P5): Mac or Launchpad, from the
  * next power-up. In Launchpad mode B2 shows the host: blue starting, cyan no
@@ -504,6 +518,55 @@ static uint32_t g_lp_boot_ms = 0;
 static bool     g_lp_hard_down = false;
 static bool     g_lp_mute_down = false;
 
+/* ---- played notes -> the engine ------------------------------------------
+ *
+ * belt_on_midi() updates the held-note table that belt_update_targets()
+ * reads inside belt_process(), which runs in the audio callback. Calling it
+ * from the control loop would race the callback, so pads push their notes
+ * here and the callback drains the queue before each block: one producer
+ * (the control loop), one consumer (the audio callback), no locks. 32 is far
+ * more than a block's worth of pad presses; a full queue drops the press. */
+struct NoteMsg { uint8_t b[3]; };
+static NoteMsg           g_nq[32];
+static volatile uint32_t g_nq_w = 0, g_nq_r = 0;
+
+static void note_push(uint8_t status, uint8_t note, uint8_t vel)
+{
+    const uint32_t w = g_nq_w;
+    if (w - g_nq_r >= 32u) return;
+    g_nq[w & 31u] = NoteMsg{{status, note, vel}};
+    __asm__ volatile("" ::: "memory");   /* the entry before the index */
+    g_nq_w = w + 1u;
+}
+
+static void note_drain(belt_t* b)   /* audio callback only */
+{
+    uint32_t r = g_nq_r;
+    const uint32_t w = g_nq_w;
+    __asm__ volatile("" ::: "memory");
+    for (; r != w; r++) belt_on_midi(b, g_nq[r & 31u].b, 3, 0);
+    g_nq_r = r;
+}
+
+/* PLAY: rows 1-6 are three octaves, two rows each (sharps, then naturals).
+ * The pad's note is remembered when it goes down so its release sends the
+ * same note-off, whatever happens to the layout in between. */
+static bool   g_lp_play = false;
+static int8_t g_pad_note[6][8];
+
+static int lp_note_at(uint8_t x, uint8_t y);
+
+static void lp_release_all(void)
+{
+    for (uint8_t y = 0; y < 6; y++)
+        for (uint8_t x = 0; x < 8; x++)
+            if (g_pad_note[y][x] >= 0)
+            {
+                note_push(0x80, (uint8_t)g_pad_note[y][x], 0);
+                g_pad_note[y][x] = -1;
+            }
+}
+
 /* Keyboard layout: pitch class at (x, row) or -1. Row 0 = sharps. */
 static int lp_key_at(uint8_t x, uint8_t y)
 {
@@ -512,6 +575,15 @@ static int lp_key_at(uint8_t x, uint8_t y)
     if (y == 0) return kSharps[x];
     if (y == 1) return kNaturals[x];
     return -1;
+}
+
+/* PLAY keyboard: MIDI note at (x, y) or -1. Rows 0-1 are the C5 octave,
+ * 2-3 C4, 4-5 C3; within each pair, as lp_key_at. */
+static int lp_note_at(uint8_t x, uint8_t y)
+{
+    if (y > 5) return -1;
+    const int pc = lp_key_at(x, (uint8_t)(y & 1u));
+    return pc < 0 ? -1 : 72 - 12 * (y / 2) + pc;
 }
 
 /* Set a PLAY-page selector from a pad: the stored value moves (so it saves
@@ -580,6 +652,32 @@ static void lp_poll(uint32_t now)
         {
             if (e.x == 0) g_lp_hard_down = e.down && live;
             if (e.x == 1) g_lp_mute_down = e.down && live;
+            if (e.x == 2 && e.down && live)
+            {
+                if (g_lp_play) lp_release_all();
+                g_lp_play = !g_lp_play;
+            }
+            continue;
+        }
+        if (g_lp_play && e.kind == lp::Kind::Grid && e.y < 6)
+        {
+            /* A release always goes through, Settings open or not, so a pad
+             * let go while Settings is up cannot leave a note stuck on. */
+            int8_t& held = g_pad_note[e.y][e.x];
+            if (!e.down)
+            {
+                if (held >= 0) note_push(0x80, (uint8_t)held, 0);
+                held = -1;
+            }
+            else if (live && held < 0)
+            {
+                const int n = lp_note_at(e.x, e.y);
+                if (n >= 0)
+                {
+                    held = (int8_t)n;
+                    note_push(0x90, (uint8_t)n, 100);   /* the Mini MK3 has no velocity */
+                }
+            }
             continue;
         }
         if (!live || !e.down || e.kind != lp::Kind::Grid) continue;
@@ -659,22 +757,50 @@ static void lp_paint(void)
     const int scale_idx = k_scale.last < 0 ? 1 : k_scale.last;
     const int sung      = G_VOICED ? ((G_NOTE10 + 5) / 10 % 12 + 12) % 12 : -1;
     const bool in_tune  = G_CENTS <= 25 && G_CENTS >= -25;
-    for (uint8_t y = 0; y < 2; y++)
+    if (g_lp_play)
+    {
+        /* PLAY: three octaves, held pads green */
+        for (uint8_t y = 0; y < 6; y++)
+            for (uint8_t x = 0; x < 8; x++)
+            {
+                const int pc = lp_key_at(x, (uint8_t)(y & 1u));
+                uint8_t   c  = lp::kOff;
+                if (pc >= 0)
+                {
+                    c = lp::kGrey;
+                    if (in_scale(pc, key_idx, scale_idx)) c = lp::kBlueDim;
+                    if (pc == key_idx) c = lp::kBlue;
+                    if (g_pad_note[y][x] >= 0) c = lp::kGreen;
+                }
+                lp::SetGrid(x, y, c);
+            }
+    }
+    else
+    {
+        for (uint8_t y = 0; y < 2; y++)
+            for (uint8_t x = 0; x < 8; x++)
+            {
+                const int pc = lp_key_at(x, y);
+                uint8_t   c  = lp::kOff;
+                if (pc >= 0)
+                {
+                    c = lp::kGrey;
+                    if (in_scale(pc, key_idx, scale_idx)) c = lp::kBlueDim;
+                    if (pc == key_idx) c = lp::kBlue;
+                    if (pc == sung) c = in_tune ? lp::kGreen : lp::kOrange;
+                }
+                lp::SetGrid(x, y, c);
+            }
+        for (uint8_t x = 0; x < 8; x++) lp::SetGrid(x, 3, x == scale_idx ? lp::kMagenta : lp::kMagentaDim);
+        lp::SetGrid(0, 4, scale_idx == 8 ? lp::kMagenta : lp::kMagentaDim);
+        /* rows KEY does not use: dark (PLAY may have lit them) */
         for (uint8_t x = 0; x < 8; x++)
         {
-            const int pc = lp_key_at(x, y);
-            uint8_t   c  = lp::kOff;
-            if (pc >= 0)
-            {
-                c = lp::kGrey;
-                if (in_scale(pc, key_idx, scale_idx)) c = lp::kBlueDim;
-                if (pc == key_idx) c = lp::kBlue;
-                if (pc == sung) c = in_tune ? lp::kGreen : lp::kOrange;
-            }
-            lp::SetGrid(x, y, c);
+            lp::SetGrid(x, 2, lp::kOff);
+            lp::SetGrid(x, 5, lp::kOff);
+            if (x) lp::SetGrid(x, 4, lp::kOff);
         }
-    for (uint8_t x = 0; x < 8; x++) lp::SetGrid(x, 3, x == scale_idx ? lp::kMagenta : lp::kMagentaDim);
-    lp::SetGrid(0, 4, scale_idx == 8 ? lp::kMagenta : lp::kMagentaDim);
+    }
     for (uint8_t v = 0; v < 4; v++)
     {
         const bool set = (G_MASK >> v) & 1;
@@ -694,6 +820,7 @@ static void lp_paint(void)
     }
     lp::SetTop(0, G_HARD ? lp::kRed : lp::kRedDim);
     lp::SetTop(1, G_MUTED ? lp::kAmber : lp::kAmberDim);
+    lp::SetTop(2, g_lp_play ? lp::kGreen : lp::kGreenDim);
     lp::SetLogo(lp::kGreen);
 }
 
@@ -787,6 +914,7 @@ static uint32_t g_dirty_since = 0;
 static float    g_saved_peak  = 0.0f;
 static bool     prev_settings = false;
 static int      applied_flex = -1, applied_humanize = -1, applied_wet = -1;
+static int      applied_lead = -1, applied_vel = -1, applied_midi = -1;
 
 static void mark_dirty(uint32_t now)
 {
@@ -852,6 +980,12 @@ static void OnFrame(void)
         if (f != applied_flex)     { applied_flex     = f; set_param_int("flex",     f); }
         if (h != applied_humanize) { applied_humanize = h; set_param_int("humanize", h); }
         if (w != applied_wet)      { applied_wet      = w; set_param_int("wet",      w); }
+        /* The Chord page: what held notes (Launchpad PLAY pads) do. */
+        const int ld = settings_pct(lead_k), vs = settings_pct(vel_k);
+        const int mm = (int)midi_mode_s.Value();
+        if (ld != applied_lead) { applied_lead = ld; set_param_int("lead",      ld); }
+        if (vs != applied_vel)  { applied_vel  = vs; set_param_int("vel_sens",  vs); }
+        if (mm != applied_midi) { applied_midi = mm; set_param_int("midi_mode", mm); }
     }
 
     /* Engine readback, one snprintf per frame: "note10:cents:voiced:mask". */
@@ -1096,6 +1230,7 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
         bufi[2 * i + 1] = f2i(in[1][i]);
     }
 
+    note_drain(B);   /* pad notes from the control loop, before the block */
     belt_process(B, bufi, bufi, (int)size);
 
     const float k = 1.0f / 32768.0f;
@@ -1133,6 +1268,7 @@ int main(void)
     versio_alloc_init(g_pool, VERSIO_POOL_BYTES);
     gate_calibrate();
 
+    memset(g_pad_note, -1, sizeof g_pad_note);   /* no pad held */
     memset(&HOST, 0, sizeof HOST);
     HOST.api_version      = 1;
     HOST.sample_rate      = BELT_SR;
@@ -1167,6 +1303,33 @@ int main(void)
         .Ident("flex").Name("Flex").Color(kColRetune)
         .Help("How far from any scale note the singing may stray before "
               "correction lets go of it. 0 corrects everything.");
+    /* Settings page 3, Chord: what held notes do (Launchpad PLAY pads now;
+     * the chord sequencer and the front/back links later, all through the
+     * same belt_on_midi). B1 steps Main -> Firmware -> Chord. */
+    settings.Page(kSettingsChord).Name("Chord")
+        .Help("What held notes do. Hold them on the Launchpad in PLAY (the "
+              "third top button). With **MIDI notes** on Harmony the harmony "
+              "voices sing the held notes; turn **Lead** to 0 and only they "
+              "sound -- every note your own voice, re-pitched: Hide and Seek.");
+    midi_mode_s = settings.Page(kSettingsChord).Pot(0)
+        .Selector(kMidiModeLabels).Default(1)
+        .Ident("midi_mode").Name("MIDI notes")
+        .Help("**Off**: held notes are ignored. **Harmony** (default): each "
+              "held note takes a harmony voice, up to four, newest wins. "
+              "**Target**: the newest held note becomes the pitch the lead "
+              "is corrected to -- play the melody, sing roughly, land on it.");
+    lead_k = settings.Page(kSettingsChord).Pot(1).Knob().Default(1.0f)
+        .Ident("lead").Name("Lead").Color(kColKey)
+        .Help("The lead: the corrected voice, the dry voice and the doubler "
+              "together. 100 is Belt as always. 0 is chord only: just the "
+              "harmony voices on the held notes, the Hide and Seek sound. "
+              "Set the Setup page's Voice 1-4 intervals to Off so only held "
+              "notes sing.");
+    vel_k = settings.Page(kSettingsChord).Pot(4).Knob().Default(0.5f)
+        .Ident("vel_sens").Name("Vel sens").Color(kColAmount)
+        .Help("How much a held note's velocity sets its voice's level. The "
+              "Launchpad Mini MK3 has no velocity (its pads send 100), so this "
+              "is for keyboards and the chord sources to come.");
     humanize_k = settings.Page(kSettingsMain).Pot(4).Knob().Default(0.3f)
         .Ident("humanize").Name("Humanize").Color(kColAmount)
         .Help("Vibrato preserved through the correction, and a slow wander "

@@ -81,7 +81,12 @@ int main(void)
     assert(b);
     assert(!versio_alloc_failed());
     printf("pool %zu B, engine took %zu B\n", versio_alloc_capacity(), versio_alloc_used());
-    assert(versio_alloc_capacity() - versio_alloc_used() >= 256u * 1024u);
+    /* Headroom in the engine pool. 7bdba15 moved the pool into D2 SRAM and
+     * sized it at 160 KB for an engine of ~137 KB, but this line still asked
+     * for 256 KB free and has failed since. What matters is that the engine
+     * fits with a margin for its next small growth (PR #8's held-note state
+     * added 160 B): 16 KB. */
+    assert(versio_alloc_capacity() - versio_alloc_used() >= 16u * 1024u);
 
     /* 1. detection at 48 kHz: A4 and C3 */
     belt_set_param(b, "monitor", "1");
