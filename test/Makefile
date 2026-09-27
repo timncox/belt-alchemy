@@ -16,10 +16,16 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner
+test: $(BUILD)/test_tuner $(BUILD)/test_chord
 	./$(BUILD)/test_tuner
+	./$(BUILD)/test_chord
 
 $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $^ -o $@ -lm
+
+# Hide and Seek: held notes, LEAD 0, the firmware's own engine unit.
+$(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 

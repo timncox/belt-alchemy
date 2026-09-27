@@ -8,8 +8,12 @@ unheard**; keep that discipline.
 
 ## 1. What carries over unchanged
 
-- **The engine** (`src/vendor/belt_core.[ch]`, `plugin_api_v1.h`): the
-  schwung-belt `main` copy at e0eb4ad (module 0.2.0), with ONE edit, in
+- **The engine** (`src/vendor/belt_core.[ch]`, `plugin_api_v1.h`): since
+  2026-09-27 the schwung-belt **`feat/chord-only` @ 1e25bfc** copy, which is
+  PR #8's `feat/midi-harmony-v2` @ 3b44960 (played harmony, target mode,
+  control notes, vel_sens; module 0.3.0, **open and unmerged**) plus the LEAD
+  param. Not `main` (0.2.1): Hide and Seek needs all of it. Re-vendor from
+  `main` once both merge. Before that: `main` @ e0eb4ad (0.2.0). ONE edit, in
   the header: `BELT_SR` 44100 → 48000, because libDaisy offers no 44.1 kHz.
   The engine converts YIN periods to Hz with that constant, so at 44100 a
   sung A would read 67.5 and the scale would land a semitone and a half
@@ -62,6 +66,44 @@ Page 0: brightness (SDK, P1), **FLEX** (P2), preset slot + action (SDK,
 P3/P4), **HUMANIZE** (P5), **WET** (P6) — the three engine parameters
 that did not fit the panel, each 0–100. Page 1 **FIRMWARE**: the SD picker
 (smack-alchemy DESIGN.md § 4, unchanged).
+Page 2 **CHORD** (2026-09-27): what held notes do.
+- **P1 MIDI NOTES**: Off / Harmony (default) / Target (PR #8's
+  `midi_mode`).
+- **P2 LEAD** 0-100 (default 100): the corrected lead, the dry voice and
+  the doubler together. 0 = chord only.
+- **P5 VEL SENS** (default 50).
+
+The Launchpad's PLAY pads (below) are the note source for now. The chord
+sequencer and the front/back links of `docs/alchemy-chord-vocoder-design.md`
+feed the same `belt_on_midi`.
+
+**Hide and Seek** = MIDI NOTES Harmony, LEAD 0, Setup's Voice 1-4 intervals
+Off, then hold a chord and sing. Each held note is the singer's own voice
+re-pitched to it; there are four voices, and the newest press steals the
+oldest note's voice. ✅ `test/test_chord.c` at 48 kHz, voice-like A3 with
+C4-E4-G4 held: C4 23.4, E4 15.3, G4 18.8 (Goertzel power), D#4 0.05, and the
+A3 lead drops from 25.5 to 0.002 at LEAD 0. Release gives silence.
+
+### Launchpad: KEY and PLAY (top button 3)
+
+KEY (default, as shipped) is described in the header of `belt_alchemy.cpp`.
+
+PLAY turns rows 1-6 into three octaves, two rows each, sharps over
+naturals:
+- rows 1-2: C5-B5
+- rows 3-4: C4-B4
+- rows 5-6: C3-B3
+
+Held pads are green, the root blue, in-scale notes dim blue. Rows 7-8 stay
+the voices and the tuner.
+
+- **Pads send velocity 100.** The Mini MK3 has none.
+- **Pad notes are queued, not sent directly.** They go through a
+  single-producer queue drained at the top of the audio callback, because
+  the engine reads its held-note table inside `belt_process`.
+- **Releases always go through**, even with Settings open, and leaving PLAY
+  releases every held pad, so a note cannot stick.
+- **PLAY/KEY is not saved.** Every boot starts in KEY.
 
 ### Buttons
 
@@ -111,7 +153,10 @@ the obvious v0.2.
 ## 3. Persistence
 
 The SDK's **Presets** manage the pager (both pages), Settings (brightness,
-flex, humanize, wet) and `BeltExtras` {`cpu_peak`}. Slot 0 is the working
+flex, humanize, wet; midi notes, lead, vel sens) and `BeltExtras` {`cpu_peak`}.
+Adding the Chord page changed the Settings schema hash, so the first boot of
+the `hide-and-seek` build finds no valid Belt state and starts from Belt's
+first-boot defaults, once. Slot 0 is the working
 state, **autosaved** 5 s after the last SETUP / Settings / extras change
 with hands off the buttons and the picker idle. `BeltExtras` carries its
 own schema tag ('BLT'), so a slot 0 written by Smack or Mark on the same
