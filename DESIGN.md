@@ -9,7 +9,8 @@ unheard**; keep that discipline.
 ## 1. What carries over unchanged
 
 - **The engine** (`src/vendor/belt_core.[ch]`, `plugin_api_v1.h`): since
-  2026-09-27 the schwung-belt **`feat/chord-only` @ 1e25bfc** copy, which is
+  2026-10-02 the schwung-belt **`feat/hold` @ a86849c** copy (HOLD, below)
+  on top of **`feat/chord-only` @ 1e25bfc**, which is
   PR #8's `feat/midi-harmony-v2` @ 3b44960 (played harmony, target mode,
   control notes, vel_sens; module 0.3.0, **open and unmerged**) plus the LEAD
   param. Not `main` (0.2.1): Hide and Seek needs all of it. Re-vendor from
@@ -71,6 +72,8 @@ Page 2 **CHORD** (2026-09-27): what held notes do.
   `midi_mode`).
 - **P2 LEAD** 0-100 (default 100): the corrected lead, the dry voice and
   the doubler together. 0 = chord only.
+- **P3 HOLD**: Freeze (default) / Lock -- what HOLD does (below).
+- **P4 J8**: Formant (default) / Hold gate.
 - **P5 VEL SENS** (default 50).
 
 The Launchpad's PLAY pads (below) are the note source for now. The chord
@@ -83,6 +86,27 @@ re-pitched to it; there are four voices, and the newest press steals the
 oldest note's voice. ✅ `test/test_chord.c` at 48 kHz, voice-like A3 with
 C4-E4-G4 held: C4 23.4, E4 15.3, G4 18.8 (Goertzel power), D#4 0.05, and the
 A3 lead drops from 25.5 to 0.002 at LEAD 0. Release gives silence.
+
+### HOLD (2026-10-02)
+
+The harmony voices keep the notes they are on while the singer carries on.
+Engine params `hold` (performance, never in the state blob) and `hold_mode`
+(saved; CC 39). On engage every sounding harmony voice snapshots its note --
+its interval from the current target, or the played note it was pinned to.
+
+- **Freeze**: the 4096 samples ending at the last voiced analysis (a HOLD
+  hit in a breath freezes the note just sung) become the source; grains read
+  it at random marks at the held notes, so the chord sustains as a pad
+  through silence and ignores what is sung next. Release fades ~1/3 s, then
+  the live voices return. +16 KB in `belt_t`; the pool went 160 -> 176 KB.
+- **Lock**: the live voice stays the source: the words on the held chord,
+  ducking in the gaps like normal harmonies.
+
+Triggers, all toggles of one latch, ORed with the J8 gate: B2 held 0.6 s,
+Launchpad top 4, Launch Control XL upper 3, gamepad L3 (was Stutter 1/2).
+J8 in Hold-gate mode holds while high (`cv_matrix.Jack(5).Custom`, magnitude
+thresholds like J3). B2 is blue while held. Status field 7: 0 off, 1 locked,
+2 frozen, 3 fading. ✅ upstream sim tests 27-32; ⚠️ unheard on hardware.
 
 ### Launchpad: KEY and PLAY (top button 3)
 
@@ -111,13 +135,13 @@ the voices and the tuner.
 |---|---|---|
 | **B1 HARD** | hold | hard-tune while held: instant, full correction (`hard` = 1) |
 | | tap | latch hard-tune on / off |
-| **B2 HARMONIES** | hold | mute the harmony voices while held (`harm_level` 0, pot value restored after) |
-| | tap | latch the mute |
+| **B2 HARMONIES** | tap | latch the harmony mute (`harm_level` 0, pot value restored after) |
+| | hold 0.6 s | HOLD on / off (fires at 0.6 s; the release does nothing). B2 no longer mutes while held -- the Launchpad / XL MUTE buttons keep that momentary |
 | **B3 SETUP** | hold | the SETUP page |
 | B2 + B3 | hold 2 s | Settings (SDK). B2 stands down while B3 is held, so the chord neither mutes nor latches |
 
-Both use one gesture: effective state = latch XOR held, a tap (released
-within 300 ms) flips the latch. J3 ORs into HARD.
+B1 (and the Launchpad / XL HARD and MUTE buttons): effective state = latch
+XOR held, a tap (released within 300 ms) flips the latch. J3 ORs into HARD.
 
 ### LEDs
 
@@ -126,7 +150,7 @@ within 300 ms) flips the latch. J3 ORs into HARD.
 | KEY ring | the SDK's 12-zone selector, plus the **tuner**: in-scale notes as dim dots, the sung note as a green pip within ±25 cents of its target, orange outside |
 | other rings | the SDK draws every pot's value; SETUP rings while B3 is held |
 | B1 pair | white while hard-tune is on; else the tuner colour (green / orange / dim blue unvoiced) |
-| B2 pair | purple while any voice has an interval and is not muted; grey muted; dim none; **red = callback over 80%** |
+| B2 pair | purple while any voice has an interval and is not muted; **blue while HOLD is on** (dim if muted); grey muted; dim none; **red = callback over 80%** |
 | B3 pair | dim Setup tint |
 | P1 ring, first 2.5 s | last session's worst CPU load: dim blue = no data; green < 75%, amber < 90%, red = it did not fit |
 
@@ -144,7 +168,7 @@ tuner pip lands on the zone the pot would select for that note. ⚠️ Unseen.
 | J5 | → RETUNE |
 | J6 | → AMOUNT |
 | J7 | → HARMONY |
-| J8 | → FORMANT |
+| J8 | → FORMANT, or the **HOLD gate** (Settings, Chord page, P4) |
 
 V/oct into the harmony target needs the engine's Target mode, which is in
 schwung-belt PR #8 and not yet on `main`; when it lands, J4 → held note is

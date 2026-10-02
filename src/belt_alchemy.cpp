@@ -14,10 +14,12 @@
  *   PLAY   KEY · SCALE · RETUNE · AMOUNT · HARMONY · FORMANT
  *   SETUP  VOICE 1-4 intervals · DOUBLER · SPREAD          (hold B3)
  *   B1     HARD tune: hold for momentary, tap to latch
- *   B2     harmonies: hold to mute, tap to latch the mute
+ *   B2     harmonies: tap to latch the mute; hold 0.6 s for HOLD (the
+ *          harmony voices stay on their notes -- Freeze or Lock)
  *   J3     HARD gate; J4-J8 CV to KEY / RETUNE / AMOUNT / HARMONY / FORMANT
  *   Settings (B2+B3 2 s): FLEX, HUMANIZE, WET; page 1 = the SD firmware picker
- *   Settings page 2 = CHORD: MIDI NOTES, LEAD (0 = chord only), VEL SENS;
+ *   Settings page 2 = CHORD: MIDI NOTES, LEAD (0 = chord only), HOLD
+ *          (Freeze / Lock), J8 (Formant CV / Hold gate), VEL SENS;
  *   Launchpad top 3 = KEY / PLAY (PLAY pads are held notes: Hide and Seek)
  */
 #include <math.h>
@@ -102,6 +104,8 @@ static int  G_VOICED = 0;
 static int  G_MASK   = 0;      /* harmony voices with an interval set */
 static bool G_HARD   = false;  /* effective hard-tune state */
 static bool G_MUTED  = false;  /* harmonies muted */
+static bool G_HOLD   = false;  /* HOLD asked for (latch OR the J8 gate) */
+static int  G_HOLD_ST = 0;     /* engine: 0 off, 1 locked, 2 frozen, 3 fading */
 
 /* ---- colours ------------------------------------------------------------ */
 
@@ -130,6 +134,7 @@ static constexpr LedPanel::Rgb kGreen  = {0x00, 0xFF, 0x00};
 static constexpr LedPanel::Rgb kWhite  = {0xFF, 0xFF, 0xFF};
 static constexpr LedPanel::Rgb kGrey   = {0x60, 0x60, 0x60};
 static constexpr LedPanel::Rgb kPurple = {0x80, 0x00, 0xC0};
+static constexpr LedPanel::Rgb kHold   = {0x10, 0x60, 0xFF};  /* HOLD on */
 
 /* ---- labels (descriptor metadata; static storage, borrowed by pointer) -- */
 
@@ -232,7 +237,7 @@ static Jack jk_cv_key ("J4",  "CV Key",     JackSig::CvBi);
 static Jack jk_cv_ret ("J5",  "CV Retune",  JackSig::CvBi);
 static Jack jk_cv_amt ("J6",  "CV Amount",  JackSig::CvBi);
 static Jack jk_cv_hrm ("J7",  "CV Harmony", JackSig::CvBi);
-static Jack jk_cv_fmt ("J8",  "CV Formant", JackSig::CvBi);
+static Jack jk_cv_fmt ("J8",  "CV Formant / Hold", JackSig::CvBi);
 static Jack jk_out_l  ("J9",  "Out L",      JackSig::AudioOut);
 static Jack jk_out_r  ("J10", "Out R",      JackSig::AudioOut);
 
@@ -241,8 +246,9 @@ static VirtualButton bt_hard = VirtualButton("b1", "Hard")
     .Action("Tap", "Latch hard-tune on / off");
 
 static VirtualButton bt_harm = VirtualButton("b2", "Harmonies")
-    .Action("Hold", "Mute the harmony voices while held")
-    .Action("Tap", "Latch the mute on / off");
+    .Action("Tap", "Latch the harmony mute on / off")
+    .Action("Hold", "0.6 s: HOLD on / off -- the harmony voices stay on "
+                    "their notes while you keep singing");
 
 static VirtualButton bt_setup = VirtualButton("b3", "Setup")
     .Action("Hold", "Show the Setup page");
@@ -254,8 +260,11 @@ static Manual manual = Manual()
         "SCALE at the RETUNE speed (0 is the hard-tune robot), and adds up to "
         "four harmony voices that walk the scale from what you sing. Set the "
         "voices' intervals on the Setup page (hold B3), with the doubler and "
-        "the stereo spread. Hold B1 for a hard-tune punch, tap it to latch; "
-        "B2 mutes the harmonies the same way. The KEY ring is a tuner: the "
+        "the stereo spread. Hold B1 for a hard-tune punch, tap it to latch. "
+        "Tap B2 to mute the harmonies; hold it 0.6 s for HOLD: the voices "
+        "keep the notes they are on while you sing on (Freeze sustains them "
+        "as a pad, Lock keeps them singing with you -- Settings, Chord "
+        "page). The KEY ring is a tuner: the "
         "note you are singing lights green when it is within a quarter tone "
         "of a scale note, orange when it is not. A gate on J3 punches hard-"
         "tune from a sequencer.");
@@ -285,7 +294,9 @@ static hostlink::Host host(presets, "belt_alchemy", "Belt",
                            BELT_VERSION, BELT_GIT_HASH);
 static BeltExtras  extras;
 static KnobHandle  flex_k, humanize_k, wet_k, lead_k, vel_k;
-static SelectorHandle midi_mode_s;
+static SelectorHandle midi_mode_s, hold_mode_s, j8_mode_s;
+static const char* const kHoldModeLabels[2] = {"Freeze", "Lock"};
+static const char* const kJ8Labels[2]       = {"Formant", "Hold gate"};
 static const char* const kMidiModeLabels[3] = {"Off", "Harmony", "Target"};
 
 #ifdef BELT_BENCH_USB
@@ -475,6 +486,68 @@ static void apply_mute(bool on)
     set_param_int("harm_level", on ? 0 : (k_harm.last < 0 ? 0 : k_harm.last));
 }
 
+/* ---- HOLD ------------------------------------------------------------------
+ *
+ * The harmony voices keep the notes they are on while you keep singing.
+ * Toggled by B2 held 0.6 s, the Launchpad's fourth top button, the Launch
+ * Control XL's third upper button and the gamepad's L3 (the button that was
+ * Stutter 1/2); with J8 set to Hold gate (Settings, Chord page), a gate on J8
+ * holds while high. Effective HOLD = the latch OR the gate. Never saved: a
+ * power cycle comes up with the voices following again.
+ */
+#define HOLD_MS 600u
+static bool          g_hold_latch = false;
+static volatile bool g_hold_gate  = false;
+
+static void apply_hold(bool on)
+{
+    if (on == G_HOLD) return;
+    G_HOLD = on;
+    set_param_int("hold", on ? 1 : 0);
+}
+
+/* J8 in Hold-gate mode: the matrix calls this every 1 ms with the jack's raw
+ * reading, 0.5 = 0 V. Like J3 the MAGNITUDE of the deviation is thresholded
+ * (+-1.5 V asserts, +-0.5 V releases), so it reads whichever way the front
+ * end counts. */
+static void OnHoldGate(float cv, uint32_t t_us, void* ctx)
+{
+    (void)t_us; (void)ctx;
+    float dev = cv - 0.5f;
+    if (dev < 0.0f) dev = -dev;
+    if (!g_hold_gate) { if (dev > 0.15f) g_hold_gate = true; }
+    else if (dev < 0.05f) g_hold_gate = false;
+}
+
+/* B2's own gesture: a tap (released before HOLD_MS) latches the mute; held
+ * to HOLD_MS it toggles HOLD instead, at that moment, and the release does
+ * nothing. B2 no longer mutes while held -- the 0.6 s of silence before a
+ * HOLD would drop the very voices being held. The Launchpad and XL MUTE
+ * buttons keep the hold-to-mute momentary. */
+struct B2Gesture
+{
+    bool     down  = false;
+    bool     fired = false;
+    uint32_t t0    = 0;
+
+    void Poll(bool pressed, uint32_t now, bool* mute_latch)
+    {
+        if (pressed && !down) { down = true; fired = false; t0 = now; }
+        if (pressed && down && !fired && now - t0 >= HOLD_MS)
+        {
+            fired        = true;
+            g_hold_latch = !g_hold_latch;
+        }
+        if (!pressed && down)
+        {
+            down = false;
+            if (!fired) *mute_latch = !*mute_latch;
+        }
+    }
+    void Reset() { down = false; }
+};
+static B2Gesture b2g;
+
 /* ---- Launchpad Mini MK3 -----------------------------------------------------
  *
  *   rows 1-2   KEY, laid out as a keyboard (sharps above: C# D# . F# G# A#,
@@ -489,6 +562,7 @@ static void apply_mute(bool on)
  *              the right, green in the middle four when within 25 cents
  *   top 1      HARD tune, top 2  harmony MUTE: the same gestures as B1/B2
  *              (hold for momentary, tap to latch), sharing their latches
+ *   top 4      HOLD on / off: blue while held (see HOLD above)
  *   top 3      KEY / PLAY. The layout above is KEY, the default. PLAY turns
  *              rows 1-6 into a three-octave keyboard -- rows 1-2 C5-B5,
  *              3-4 C4-B4, 5-6 C3-B3, sharps above naturals as in KEY -- and
@@ -603,7 +677,7 @@ static void lp_set_play(uint8_t pot, int zone, int zones)
  *   top row     X Stutter 1/4   Y Stutter 1/8   RB Stutter 1/16   LB Buzz
  *   bottom row  A Reverse       B Tape Stop     RT Half Speed     LT Echo
  *   directions  Left Low-pass   Down High-pass  Right Crush       Up Gate
- *   L3 Stutter 1/2    R3 Drive
+ *   L3 HOLD on / off (no effect)    R3 Drive
  * * Tempo-synced to 120 BPM (Belt has no tempo of its own).
  */
 #define PFX_RING_FRAMES 96000u   /* 2 s: two beats at 60 BPM */
@@ -615,11 +689,12 @@ static pfx_t g_pfx;
 /* index = pad:: bit (XInput wButtons, then LT/RT) */
 static const int8_t kPadPfx[18] = {
     PFX_GATE, PFX_HIGH_PASS, PFX_LOW_PASS, PFX_CRUSH,      /* Up Down Left Right */
-    -1, -1, PFX_STUTTER_2, PFX_DRIVE,                      /* Start Back L3 R3   */
+    -1, -1, -1, PFX_DRIVE,                                 /* Start Back L3 R3   */
     PFX_BUZZ, PFX_STUTTER_16, -1, -1,                      /* LB RB Guide -      */
     PFX_REVERSE, PFX_TAPE_STOP, PFX_STUTTER_4, PFX_STUTTER_8, /* A B X Y         */
     PFX_ECHO, PFX_HALF_SPEED,                              /* LT RT              */
 };
+static constexpr int kPadHoldBit = 6;   /* L3: toggles HOLD */
 static uint32_t g_pad_prev = 0;
 static int      g_pad_fx   = -1;
 
@@ -628,6 +703,7 @@ static void pad_poll(void)
     const uint32_t b = pad::Buttons();
     const uint32_t pressed = b & ~g_pad_prev, released = g_pad_prev & ~b;
     g_pad_prev = b;
+    if ((pressed >> kPadHoldBit & 1u) && !settings.IsActive()) g_hold_latch = !g_hold_latch;
     for (int i = 0; i < 18; i++)
         if ((pressed >> i & 1u) && kPadPfx[i] >= 0) g_pad_fx = kPadPfx[i];
     for (int i = 0; i < 18; i++)
@@ -657,6 +733,7 @@ static void lp_poll(uint32_t now)
                 if (g_lp_play) lp_release_all();
                 g_lp_play = !g_lp_play;
             }
+            if (e.x == 3 && e.down && live) g_hold_latch = !g_hold_latch;
             continue;
         }
         if (g_lp_play && e.kind == lp::Kind::Grid && e.y < 6)
@@ -697,7 +774,8 @@ static void lp_poll(uint32_t now)
  *   faders 5-6    DOUBLER, SPREAD (SETUP)
  *   top knobs 1-4 VOICE 1-4 intervals (SETUP)
  *   middle knobs  1 KEY, 2 SCALE
- *   upper row     1 HARD, 2 MUTE: the same tap/hold gestures as B1/B2
+ *   upper row     1 HARD, 2 MUTE: hold for momentary, tap to latch;
+ *                 3 HOLD on / off
  * All through the pages' stored values, so the pots catch and it saves.
  */
 static void mark_dirty(uint32_t now);
@@ -735,6 +813,7 @@ static void xl_frame(uint32_t now)
         if (b.row != 0) continue;
         if (b.col == 0) g_xl_hard_down = b.down && live;
         if (b.col == 1) g_xl_mute_down = b.down && live;
+        if (b.col == 2 && b.down && live) g_hold_latch = !g_hold_latch;
     }
 
     for (uint8_t c = 0; c < 8; c++)
@@ -742,6 +821,7 @@ static void xl_frame(uint32_t now)
         uint8_t up = xl::kOff;
         if (c == 0) up = G_HARD ? xl::kRed : xl::kRedDim;
         if (c == 1) up = G_MUTED ? xl::kAmber : xl::kAmberDim;
+        if (c == 2) up = G_HOLD ? xl::kGreen : xl::kGreenDim;
         xl::SetButtonLed(0, c, up);
         xl::SetButtonLed(1, c, xl::kOff);
         xl::SetKnobLed(0, c, c < 4 ? (((G_MASK >> c) & 1) ? xl::kGreen : xl::kGreenDim) : xl::kOff);
@@ -804,7 +884,9 @@ static void lp_paint(void)
     for (uint8_t v = 0; v < 4; v++)
     {
         const bool set = (G_MASK >> v) & 1;
-        lp::SetGrid(v, 6, !set ? lp::kOff : ((G_VOICED && !G_MUTED) ? lp::kCyan : lp::kCyanDim));
+        uint8_t c = !set ? lp::kOff : ((G_VOICED && !G_MUTED) ? lp::kCyan : lp::kCyanDim);
+        if (set && G_HOLD_ST && !G_MUTED) c = lp::kBlue;   /* held voices */
+        lp::SetGrid(v, 6, c);
     }
     for (uint8_t x = 0; x < 8; x++)
     {
@@ -821,6 +903,7 @@ static void lp_paint(void)
     lp::SetTop(0, G_HARD ? lp::kRed : lp::kRedDim);
     lp::SetTop(1, G_MUTED ? lp::kAmber : lp::kAmberDim);
     lp::SetTop(2, g_lp_play ? lp::kGreen : lp::kGreenDim);
+    lp::SetTop(3, G_HOLD ? lp::kBlue : lp::kBlueDim);
     lp::SetLogo(lp::kGreen);
 }
 
@@ -889,8 +972,10 @@ static void OnPoll(uint32_t now)
         /* Settings owns the buttons; drop momentaries, keep latches. */
         tg_hard.Reset();
         tg_mute.Reset();
+        b2g.Reset();
         apply_hard(tg_hard.latch || g_gate_state);
         apply_mute(tg_mute.latch);
+        apply_hold(g_hold_latch || g_hold_gate);
         g_btn_swallow = (uint8_t)((1u << kButtonB1) | (1u << kButtonB2) | (1u << kButtonB3));
         return;
     }
@@ -900,11 +985,13 @@ static void OnPoll(uint32_t now)
      * Settings chord, and B2's own gesture would mute the harmonies on the
      * way in and, if B3 landed inside the tap window, flip the latch. */
     const bool b3   = btn_live(kButtonB3);
-    if (b3) tg_mute.Reset();
+    if (b3) { tg_mute.Reset(); b2g.Reset(); }
+    else    b2g.Poll(btn_live(kButtonB2), now, &tg_mute.latch);
     const bool mute = b3 ? tg_mute.latch
-                         : tg_mute.Poll(btn_live(kButtonB2) || g_lp_mute_down || g_xl_mute_down, now);
+                         : tg_mute.Poll(g_lp_mute_down || g_xl_mute_down, now);
     apply_hard(hard);
     apply_mute(mute);
+    apply_hold(g_hold_latch || g_hold_gate);
 }
 
 /* ---- control frame (~60 Hz) ------------------------------------------------ */
@@ -915,6 +1002,7 @@ static float    g_saved_peak  = 0.0f;
 static bool     prev_settings = false;
 static int      applied_flex = -1, applied_humanize = -1, applied_wet = -1;
 static int      applied_lead = -1, applied_vel = -1, applied_midi = -1;
+static int      applied_hold_mode = -1, applied_j8 = -1;
 
 static void mark_dirty(uint32_t now)
 {
@@ -986,20 +1074,37 @@ static void OnFrame(void)
         if (ld != applied_lead) { applied_lead = ld; set_param_int("lead",      ld); }
         if (vs != applied_vel)  { applied_vel  = vs; set_param_int("vel_sens",  vs); }
         if (mm != applied_midi) { applied_midi = mm; set_param_int("midi_mode", mm); }
+        const int hm = (int)hold_mode_s.Value(), j8 = (int)j8_mode_s.Value();
+        if (hm != applied_hold_mode) { applied_hold_mode = hm; set_param_int("hold_mode", hm); }
+        if (j8 != applied_j8)
+        {
+            /* J8: the FORMANT knob's CV, or the HOLD gate. Re-pointing a jack
+             * at runtime is the matrix's documented way (cv_matrix.h). */
+            applied_j8 = j8;
+            if (j8) cv_matrix.Jack(5).Custom(OnHoldGate, nullptr);
+            else
+            {
+                cv_matrix.Jack(5).To(formant);
+                g_hold_gate = false;
+            }
+        }
     }
 
     /* Engine readback, one snprintf per frame: "note10:cents:voiced:mask". */
     {
-        char buf[48];
-        int  n10 = 0, cents = 0, voiced = 0, mask = 0;
-        if (belt_get_param(B, "status", buf, sizeof buf) > 0
-            && sscanf(buf, "%d:%d:%d:%d", &n10, &cents, &voiced, &mask) == 4)
+        char buf[64];
+        int  n10 = 0, cents = 0, voiced = 0, mask = 0, held = 0, hard = 0, hold = 0;
+        const int got = belt_get_param(B, "status", buf, sizeof buf) > 0
+            ? sscanf(buf, "%d:%d:%d:%d:%d:%d:%d", &n10, &cents, &voiced, &mask, &held, &hard, &hold)
+            : 0;
+        if (got >= 4)
         {
             G_NOTE10 = n10;
             G_CENTS  = cents;
             G_VOICED = voiced;
             G_MASK   = mask;
         }
+        if (got == 7) G_HOLD_ST = hold;
     }
 
     /* Worst block this session. Clamped: an overrunning callback can report
@@ -1067,8 +1172,9 @@ static void OnFrame(void)
  *   B1 pair          white while hard-tune is on; else the tuner colour
  *                    (green in tune, orange off, dim blue when unvoiced)
  *   B2 pair          purple while harmony voices are active, grey muted,
- *                    dim when no voice has an interval; red when the
- *                    audio callback is above 80%
+ *                    dim when no voice has an interval; blue while HOLD
+ *                    is on (dim if muted); red when the audio callback is
+ *                    above 80%
  *   B3 pair          dim Setup tint (the SDK paints it while the page is held)
  *   P1 ring at boot  the previous session's worst CPU load, for 2.5 s
  */
@@ -1152,6 +1258,7 @@ static void OnRender(uint32_t t_ms)
 
     LedPanel::Rgb b2;
     if (cpu.GetAvgCpuLoad() > 0.80f) b2 = kRed;
+    else if (G_HOLD)                 b2 = G_MUTED ? LedPanel::Rgb{0x04, 0x18, 0x40} : kHold;
     else if (G_MUTED)                b2 = kGrey;
     else if (G_MASK)                 b2 = kPurple;
     else                             b2 = kIdle;
@@ -1325,6 +1432,21 @@ int main(void)
               "harmony voices on the held notes, the Hide and Seek sound. "
               "Set the Setup page's Voice 1-4 intervals to Off so only held "
               "notes sing.");
+    hold_mode_s = settings.Page(kSettingsChord).Pot(2)
+        .Selector(kHoldModeLabels).Default(0)
+        .Ident("hold_mode").Name("Hold")
+        .Help("What HOLD does (B2 held 0.6 s, Launchpad top 4, XL upper 3, "
+              "gamepad L3, or J8). **Freeze** (default): the harmony voices "
+              "keep the chord you were singing and sustain it as a pad, "
+              "even when you stop. **Lock**: they keep their notes but sing "
+              "with your live voice -- your words on a fixed chord -- and "
+              "go quiet when you do.");
+    j8_mode_s = settings.Page(kSettingsChord).Pot(3)
+        .Selector(kJ8Labels).Default(0)
+        .Ident("j8").Name("J8")
+        .Help("**Formant** (default): J8 is the FORMANT knob's CV. **Hold "
+              "gate**: J8 holds while its gate is high -- a footswitch "
+              "through a gate converter, or a sequencer.");
     vel_k = settings.Page(kSettingsChord).Pot(4).Knob().Default(0.5f)
         .Ident("vel_sens").Name("Vel sens").Color(kColAmount)
         .Help("How much a held note's velocity sets its voice's level. The "
