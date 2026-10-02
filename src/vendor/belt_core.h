@@ -19,7 +19,8 @@
  */
 /*
  * VENDORED COPY for belt-alchemy -- from github.com/timncox/schwung-belt
- * (tim-os/belt) branch feat/chord-only @ 1e25bfc, which is PR #8's
+ * (tim-os/belt) branch feat/hold @ a86849c (HOLD: Freeze / Lock) on top of
+ * feat/chord-only @ 1e25bfc, which is PR #8's
  * feat/midi-harmony-v2 @ 3b44960 (played harmony, target mode, control
  * notes, vel_sens; module 0.3.0, OPEN and unmerged) plus the LEAD param
  * (chord only). NOT main: main is 0.2.1 and has none of these, and Hide
