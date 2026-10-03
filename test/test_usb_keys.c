@@ -235,7 +235,7 @@ static void test_roles(void)
 {
     CHECK(umk_role(0x1235, 0x0113, UMK_KIND_MIDI) == UMK_ROLE_MINI);
     CHECK(umk_role(0x1235, 0x0061, UMK_KIND_MIDI) == UMK_ROLE_XL);
-    CHECK(umk_role(0x1235, 0x0102, UMK_KIND_MIDI) == UMK_ROLE_KEYS); /* a Launchkey: keys */
+    CHECK(umk_role(0x1235, 0x0102, UMK_KIND_MIDI) == UMK_ROLE_KEYS); /* another Novation PID: keys */
     CHECK(umk_role(0x0582, 0x0156, UMK_KIND_MIDI) == UMK_ROLE_KEYS); /* any vendor */
     CHECK(umk_role(0x045E, 0x028E, UMK_KIND_XINPUT) == UMK_ROLE_PAD);
     CHECK(umk_role(0x0BDA, 0x8153, UMK_KIND_NONE) == UMK_ROLE_NONE); /* Ethernet */
