@@ -719,11 +719,13 @@ static void pad_poll(void)
 /* A USB-MIDI keyboard (launchpad.h keys::): its notes and sustain pedal go to
  * the engine like the PLAY pads -- note-ons only while Settings is closed,
  * releases and the pedal always. Notes 0-2 are belt_on_midi's reserved
- * control notes (HARD / DOUBLE / MUTE momentaries), never a key's pitch. */
+ * control notes (HARD / DOUBLE / MUTE momentaries), never a key's pitch.
+ * A fast arpeggio waits in keys:: (128) while the 32-entry note queue is
+ * full, rather than being dropped there: a lost note-off is a stuck voice. */
 static void keys_poll(void)
 {
     uint8_t m[3];
-    while (keys::PopMsg(m))
+    while (g_nq_w - g_nq_r < 32u && keys::PopMsg(m))
     {
         if (m[0] != 0xB0 && m[1] < 3) continue;
         if (m[0] == 0x90 && settings.IsActive()) continue;
