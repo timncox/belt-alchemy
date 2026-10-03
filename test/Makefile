@@ -27,15 +27,29 @@ test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/t
 # repo; skipped when it is not there) -> Belt's rear_midi.cpp + libDaisy's
 # MidiParser -> Belt's engine. `make -C test rear_link EMU_OUT=x.emu` also
 # writes the byte stream as an emulator script.
-SEQ_CHORD_OUT ?= $(HOME)/tim-os/seq-alchemy/.claude/worktrees/chord-out/core
-LIBDAISY_DIR  ?= $(HOME)/tim-os/belt-alchemy/lib/libDaisy
+#
+# The sender is taken from a COMMITTED revision (git show), never from a
+# working tree another session may be editing. SEQ_CHORD_OUT=<dir> uses a
+# directory with chord_midi.[ch] + seq.h instead.
+SEQ_ALCHEMY_GIT   ?= $(HOME)/tim-os/seq-alchemy
+SEQ_CHORD_OUT_REV ?= 8919592
+LIBDAISY_DIR      ?= $(HOME)/tim-os/belt-alchemy/lib/libDaisy
+ifeq ($(SEQ_CHORD_OUT),)
+ifneq ($(shell git -C $(SEQ_ALCHEMY_GIT) cat-file -e $(SEQ_CHORD_OUT_REV):core/chord_midi.c 2>/dev/null && echo y),)
+SEQ_CHORD_OUT := $(abspath $(BUILD))/seqco-$(SEQ_CHORD_OUT_REV)
+$(SEQ_CHORD_OUT)/chord_midi.c:
+	@mkdir -p $(SEQ_CHORD_OUT)
+	for f in chord_midi.c chord_midi.h seq.h; do \
+	    git -C $(SEQ_ALCHEMY_GIT) show $(SEQ_CHORD_OUT_REV):core/$$f > $(SEQ_CHORD_OUT)/$$f || exit 1; done
+endif
+endif
 .PHONY: rear_link
-ifneq ($(wildcard $(SEQ_CHORD_OUT)/chord_midi.c),)
+ifneq ($(SEQ_CHORD_OUT),)
 rear_link: $(BUILD)/test_rear_link
 	./$(BUILD)/test_rear_link $(EMU_OUT)
 else
 rear_link:
-	@echo "test_rear_link: skipped ($(SEQ_CHORD_OUT)/chord_midi.c not found)"
+	@echo "test_rear_link: skipped (no seq-alchemy $(SEQ_CHORD_OUT_REV) at $(SEQ_ALCHEMY_GIT))"
 endif
 
 REAR_C = ../src/versio_alloc.c ../src/belt_core_alchemy.c ../src/vendor/seq.c $(SEQ_CHORD_OUT)/chord_midi.c

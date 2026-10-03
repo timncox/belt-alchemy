@@ -138,7 +138,9 @@ int main(int argc, char** argv)
     CHECK(seen == want, "Belt held C, Am, F, G, C, then nothing");
     CHECK(mismatch == 0, "Belt's held notes differ from the sender's in %d ms", mismatch);
     CHECK(engine_bad == 0, "the engine's held count disagreed %d times", engine_bad);
-    CHECK(f8 > 300 && fa == 1 && fc == 1, "the clock really was in the stream");
+    /* the sender's clock details (how many FA / FC) are its own business; Belt
+     * ignores them -- what matters is that they were there and changed nothing */
+    CHECK(f8 > 300 && fa >= 1 && fc >= 1, "the clock really was in the stream");
     /* C 3 + Am 1 (C, E stay held) + F 3 + G 3 + C 3 */
     CHECK(g_ons == g_offs && g_ons == 13, "every note-on answered (%d on, %d off)", g_ons, g_offs);
     CHECK(rearmidi::Dropped() == 0, "nothing dropped");
