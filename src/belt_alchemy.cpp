@@ -725,7 +725,8 @@ static void lp_set_play(uint8_t pot, int zone, int zones)
  * note-off through note_push(), exactly as the pads do; the engine never
  * knows which. Changing the source lets go of every note the old one held.
  *
- *   Pads   no other source (the default)
+ *   Pads   no other source (the default): only the hands -- the PLAY pads
+ *          and a USB-MIDI keyboard, which play on top of every source
  *   Seq    the internal chord sequencer: seq-alchemy's own core
  *          (vendor/seq.[ch]) runs its progression at TEMPO (P3), each chord
  *          held as TRIADS or SEVENTHS (P4) in Belt's KEY and SCALE, rooted
@@ -1010,10 +1011,32 @@ static void chords_pad(const lp::Event& e, uint32_t now)
     }
 }
 
+/* A USB-MIDI keyboard (launchpad.h keys::): its notes and sustain pedal go to
+ * the engine like the PLAY pads -- note-ons only while Settings is closed,
+ * releases and the pedal always. Notes 0-2 are belt_on_midi's reserved
+ * control notes (HARD / DOUBLE / MUTE momentaries), never a key's pitch.
+ * A fast arpeggio waits in keys:: (128) once the note queue holds 32,
+ * rather than being dropped there: a lost note-off is a stuck voice. The
+ * queue is 64 deep, so the other half stays free for the chord sources.
+ * Like the PLAY pads, a keyboard plays whatever Chords from (Settings,
+ * Sources) says: the selector picks the one extra source; the hands on
+ * pads or keys always play on top of it. */
+static void keys_poll(void)
+{
+    uint8_t m[3];
+    while (g_nq_w - g_nq_r < 32u && keys::PopMsg(m))
+    {
+        if (m[0] != 0xB0 && m[1] < 3) continue;
+        if (m[0] == 0x90 && settings.IsActive()) continue;
+        note_push(m[0], m[1], m[2]);
+    }
+}
+
 static void lp_poll(uint32_t now)
 {
     lp::Poll(now);
     pad_poll();
+    keys_poll();
     lp::Event e;
     const bool live = !settings.IsActive();
     while (lp::PopEvent(&e))
@@ -1610,7 +1633,8 @@ static void OnRender(uint32_t t_ms)
             {0xFF, 0xC0, 0x00}, {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}};
         if (g_lp_stage < 5) b2 = kStage[g_lp_stage];   /* running: B2 is B2 again */
     }
-    if (g_lp_mode && pad::Buttons()) b2 = {0xFF, 0xFF, 0xFF}; /* a gamepad button held */
+    if (g_lp_mode && (pad::Buttons() || keys::Held()))
+        b2 = {0xFF, 0xFF, 0xFF};   /* a gamepad button or a keyboard key held */
     if (g_usb_audio)
     {
         static const LedPanel::Rgb kUac[4] = {
@@ -1817,8 +1841,8 @@ int main(void)
 
     /* Settings page 4, Sources: where else held notes come from. */
     settings.Page(kSettingsSources).Name("Sources")
-        .Help("Where held notes come from besides the Launchpad's PLAY pads: "
-              "**Seq**, the internal chord sequencer (its chords on the "
+        .Help("Where held notes come from besides the hands (Launchpad "
+              "PLAY pads, a USB keyboard -- always on): **Seq**, the internal chord sequencer (its chords on the "
               "Launchpad's CHORDS page, top 5); **CV**, 1 V/oct chord pitches "
               "on J4-J7; **MIDI**, notes on the rear header from another Lab. "
               "With MIDI notes on Harmony (Chord page) the harmony voices "
@@ -1826,7 +1850,8 @@ int main(void)
     source_s = settings.Page(kSettingsSources).Pot(0)
         .Selector(kSourceLabels).Default(0)
         .Ident("chord_src").Name("Chords from")
-        .Help("**Pads** (default): the Launchpad's PLAY pads only. **Seq**: "
+        .Help("**Pads** (default): no extra source, only the PLAY pads and "
+              "a USB keyboard (they play on top of every source). **Seq**: "
               "the internal chord sequencer. **CV**: J4-J7 (P6 says how many) "
               "are chord pitches and stop modulating their knobs. **MIDI**: "
               "notes on the rear header (USART1, header pin 7; never a "

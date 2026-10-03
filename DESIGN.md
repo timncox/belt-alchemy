@@ -90,6 +90,13 @@ Page 3 **SOURCES** (2026-10-02, the last page the SDK allows:
 
 Settings reopens on the page it was left on (the SDK keeps `page_`).
 
+**The hands are always on.** The Launchpad PLAY pads and a USB-MIDI
+keyboard (usb-keys: `keys_poll`) play whatever CHORDS FROM says -- the
+selector picks the one extra source, the hands layer on top; changing the
+source releases only that source's notes. `keys_poll` stops taking from
+the keyboard's own 128-message queue once the note queue holds 32 of its
+64, so a burst of keys never crowds out a chord change.
+
 ### Chord sources (2026-10-02, phase 2 of `docs/alchemy-chord-vocoder-design.md`)
 
 Every source ends in `note_push()` → the audio callback's `belt_on_midi()`,
@@ -111,8 +118,8 @@ J3's rising-edge counter. All of it runs in the 1 ms control poll
   `belt_alchemy.cpp`), which also has run / stop (side 1). `seq_t` (~19 KB)
   is in SDRAM. A preset save pauses the poll, and the next poll catches up
   in one step -- a chord can change up to that pause late.
-- **J3 = Chord clock.** Each rising edge (counted in `gate_poll_isr`, so a
-  trigger between two polls is not lost) moves the sequencer to its next
+- **J3 = Chord clock.** Each rising edge (counted in `gate_poll_isr`, once
+  per audio block -- 2.67 ms; a shorter trigger can be missed) moves the sequencer to its next
   chord; the tempo and bars are not used. With CV it samples the inputs.
   HARD is then B1 / the controllers only.
 - **CV.** `hw.cv_jacks[1..4].Volts()` (the SDK's calibrated input, ~±10 mV
@@ -140,6 +147,11 @@ J3's rising-edge counter. All of it runs in the 1 ms control poll
   velocity 0 = off. Clock, start / stop, CCs: ignored in this version.
   Cable: pin 8 ↔ pin 7 crossed both ways plus grounds only -- pins 1 / 11 /
   15 are −12 V / +12 V / 3V3A; **never a straight ribbon**.
+  ✅ `test/test_rear_link.cpp`: seq-alchemy chord-out's own
+  `core/chord_midi.c` (ea93d84) sends C - Am - F - G - C - stop with clock
+  (469 bytes, 389 × F8); through `rear_midi.cpp` + libDaisy `MidiParser` +
+  the engine, Belt holds exactly the sender's notes every millisecond, the
+  engine's held count agrees, 13 on / 13 off, nothing after stop.
 
 ✅ emulator (alchemy-lab `emu-chords`, `make test-belt-chords`): every
 source, plus every tests/belt script against this build. ⚠️ Nothing on

@@ -7,6 +7,7 @@
 #include "usbh_ctlreq.h"
 #include "usbh_ioreq.h"
 #include "usbh_pipes.h"
+#include "usb_midi_keys.h"
 
 #define DMA_SECTION __attribute__((section(".sram1_bss")))
 
@@ -165,53 +166,20 @@ static int free_slot(void)
     return -1;
 }
 
-/* Find the first MIDI-streaming interface's bulk endpoints, or an XInput
- * interface's interrupt IN endpoint. */
+/* The device's MIDI-streaming bulk endpoints (IN, and OUT if it has one),
+ * or an XInput interface's interrupt endpoints: usb_midi_keys.c. */
 static int parse_cfg(const uint8_t *c, uint16_t total)
 {
-    uint16_t i    = 0;
-    int      midi = 0, pad = 0;
-    H.e_in_ep = H.e_out_ep = 0;
-    H.e_kind = HUBMIDI_KIND_MIDI;
-    H.e_interval = 1;
-    while (i + 2 <= total)
-    {
-        const uint8_t len = c[i], type = c[i + 1];
-        if (len < 2 || i + len > total) break;
-        if (type == 0x04 && len >= 9) /* interface */
-        {
-            if (midi && H.e_in_ep && H.e_out_ep) break;
-            if (pad && H.e_in_ep) break;
-            midi = (c[i + 5] == 0x01 && c[i + 6] == 0x03);
-            pad  = (c[i + 5] == 0xFF && c[i + 6] == 0x5D && c[i + 7] == 0x01);
-        }
-        else if (type == 0x05 && len >= 7 && pad && (c[i + 3] & 0x03) == 0x03)
-        {
-            if ((c[i + 2] & 0x80U) && !H.e_in_ep)
-            {
-                H.e_in_ep    = c[i + 2];
-                H.e_in_size  = le16(&c[i + 4]) & 0x03FFU;
-                H.e_interval = c[i + 6] ? c[i + 6] : 1;
-                H.e_kind     = HUBMIDI_KIND_XINPUT;
-            }
-            else if (!(c[i + 2] & 0x80U) && !H.e_out_ep)
-            {
-                H.e_out_ep   = c[i + 2];
-                H.e_out_size = le16(&c[i + 4]) & 0x03FFU;
-            }
-        }
-        else if (type == 0x05 && len >= 7 && midi && (c[i + 3] & 0x03) == 0x02)
-        {
-            const uint8_t  ep  = c[i + 2];
-            const uint16_t mps = le16(&c[i + 4]) & 0x03FFU;
-            if (ep & 0x80U) { if (!H.e_in_ep)  { H.e_in_ep = ep;  H.e_in_size = mps; } }
-            else            { if (!H.e_out_ep) { H.e_out_ep = ep; H.e_out_size = mps; } }
-        }
-        i = (uint16_t)(i + len);
-    }
+    umk_cfg_t f;
+    const int kind = umk_parse_cfg(c, total, &f);
+    H.e_in_ep    = f.in_ep;
+    H.e_out_ep   = f.out_ep;
+    H.e_in_size  = f.in_size;
+    H.e_out_size = f.out_size;
+    H.e_interval = f.interval;
+    H.e_kind     = kind == UMK_KIND_XINPUT ? HUBMIDI_KIND_XINPUT : HUBMIDI_KIND_MIDI;
     if (H.e_in_size > sizeof s_rx[0]) H.e_in_size = sizeof s_rx[0];
-    if (H.e_kind == HUBMIDI_KIND_XINPUT) return H.e_in_ep != 0;
-    return H.e_in_ep && H.e_out_ep;
+    return kind != UMK_KIND_NONE;
 }
 
 /* On to the next port; after the last, wait and go round again. */
@@ -522,7 +490,7 @@ static void enum_step(USBH_HandleTypeDef *ph, uint32_t now)
                     USBH_LL_SetToggle(ph, d->out_pipe, 0U);
                     d->led = 1;
                 }
-                else if (d->kind == HUBMIDI_KIND_MIDI)
+                else if (d->kind == HUBMIDI_KIND_MIDI && d->out_ep)
                 {
                     d->out_pipe = USBH_AllocPipe(ph, d->out_ep);
                     USBH_OpenPipe(ph, d->out_pipe, d->out_ep, d->addr, ph->device.speed,
@@ -608,14 +576,15 @@ uint8_t HUBMIDI_DevKind(uint8_t dev)
 
 uint16_t HUBMIDI_OutSize(USBH_HandleTypeDef *ph, uint8_t dev)
 {
-    return HUBMIDI_DevReady(ph, dev) && H.dev[dev].kind == HUBMIDI_KIND_MIDI
+    return HUBMIDI_DevReady(ph, dev) && H.dev[dev].kind == HUBMIDI_KIND_MIDI && H.dev[dev].out_ep
                ? H.dev[dev].out_size : 0;
 }
 
 USBH_StatusTypeDef HUBMIDI_Transmit(USBH_HandleTypeDef *ph, uint8_t dev, uint8_t *data,
                                     uint16_t len)
 {
-    if (!HUBMIDI_DevReady(ph, dev) || H.dev[dev].kind != HUBMIDI_KIND_MIDI) return USBH_FAIL;
+    if (!HUBMIDI_DevReady(ph, dev) || H.dev[dev].kind != HUBMIDI_KIND_MIDI || !H.dev[dev].out_ep)
+        return USBH_FAIL; /* not MIDI, or a keyboard with no OUT endpoint */
     const Dev                 *d = &H.dev[dev];
     const USBH_URBStateTypeDef u = USBH_LL_GetURBState(ph, d->out_pipe);
     if (u != USBH_URB_IDLE && u != USBH_URB_DONE)

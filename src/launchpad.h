@@ -4,6 +4,13 @@
  *
  * Shared by copy with smack-alchemy, belt-alchemy and seq-alchemy.
  *
+ * Version: belt-alchemy usb-keys, 2026-10-02 -- Mark track-page b328b94's
+ * copy (identical in Smack and Belt then) plus generic USB-MIDI keyboards
+ * (keys:: below) and four hub slots. Copy these six together:
+ * launchpad.{h,cpp}, usbh_hub_midi.{h,c}, usb_midi_keys.{h,c} (new; add
+ * usb_midi_keys.c to the Makefile's C_SOURCES). A firmware that does not
+ * call keys:: just drops what a keyboard plays.
+ *
  * The Lab's front port has no VBUS (Hermetic: "identical to ... the Daisy
  * itself, minus VBUS"), so the Launchpad needs 5 V injected -- by a PASSIVE
  * injector: libDaisy's host has no hub class, and a powered "OTG adapter"
@@ -182,3 +189,25 @@ uint32_t Buttons();      /* held now */
 uint32_t ReportCount();  /* reports received, for a readout */
 
 } // namespace pad
+
+/* ---------------------------------------------------------------------------
+ * Any other class-compliant USB-MIDI device -- a keyboard, any vendor --
+ * plugged straight in (through a passive 5 V injector) or through the hub.
+ * Its notes and sustain pedal arrive as channel-1 messages, every cable and
+ * channel merged: 90 n v, 80 n 00, B0 40 7F/00. Nothing is sent to it.
+ * When it goes away (unplug seen as a host reset, or its slot closing) every
+ * note it held is let go. The plain MIDI host (no hub) only serves a device
+ * whose FIRST interface is Audio class with the MIDIStreaming interface
+ * among the first two (/lpdiag.txt says "plain MIDI host can serve it");
+ * anything else needs the hub.
+ */
+namespace keys
+{
+
+bool     Connected();
+bool     Held();                /* a key is down */
+bool     PopMsg(uint8_t msg[3]);
+uint32_t MsgCount();            /* messages queued since boot */
+uint32_t DropCount();           /* messages lost to a full queue */
+
+} // namespace keys

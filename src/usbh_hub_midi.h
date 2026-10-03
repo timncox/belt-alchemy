@@ -15,8 +15,10 @@
  *     hub runs its upstream at full speed and passes full-speed packets
  *     through unchanged: no split transactions. Low-speed devices (which
  *     would need PRE packets) are refused;
+ *   - any class-compliant MIDI device is taken (Audio class, MIDIStreaming
+ *     subclass, bulk endpoints; a keyboard with no OUT endpoint too);
  *   - besides MIDI, an XInput gamepad is taken (interrupt IN, polled every
- *     bInterval ms); nothing is ever sent to it;
+ *     bInterval ms); only the player-LED command is ever sent to it;
  *   - the hub stays at address 1 (the core enumerates it); devices behind
  *     it get addresses 2, 3, ... here. A device that is not MIDI (many
  *     dongles carry an Ethernet chip on a port, e.g. Realtek 0bda:8153) or
@@ -40,9 +42,9 @@ extern "C" {
 extern USBH_ClassTypeDef USBH_hub_midi;
 #define USBH_HUB_MIDI_CLASS (&USBH_hub_midi)
 
-/* Controllers served at once (e.g. a Launchpad Mini, a Launch Control and
- * a gamepad). */
-#define HUBMIDI_MAX_DEVICES 3
+/* Controllers served at once (e.g. a Launchpad Mini, a Launch Control, a
+ * gamepad and a MIDI keyboard). */
+#define HUBMIDI_MAX_DEVICES 4
 
 /* What a slot carries. An XInput gamepad (vendor interface ff/5d/01, e.g.
  * a GP2040-CE controller in XInput mode, 045E:028E) delivers its 20-byte

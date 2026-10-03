@@ -16,10 +16,35 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys rear_link
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
 	./$(BUILD)/test_chord_src
+	./$(BUILD)/test_usb_keys
+
+# The back link end to end: seq-alchemy's own chord-out sender (another
+# repo; skipped when it is not there) -> Belt's rear_midi.cpp + libDaisy's
+# MidiParser -> Belt's engine. `make -C test rear_link EMU_OUT=x.emu` also
+# writes the byte stream as an emulator script.
+SEQ_CHORD_OUT ?= $(HOME)/tim-os/seq-alchemy/.claude/worktrees/chord-out/core
+LIBDAISY_DIR  ?= $(HOME)/tim-os/belt-alchemy/lib/libDaisy
+.PHONY: rear_link
+ifneq ($(wildcard $(SEQ_CHORD_OUT)/chord_midi.c),)
+rear_link: $(BUILD)/test_rear_link
+	./$(BUILD)/test_rear_link $(EMU_OUT)
+else
+rear_link:
+	@echo "test_rear_link: skipped ($(SEQ_CHORD_OUT)/chord_midi.c not found)"
+endif
+
+REAR_C = ../src/versio_alloc.c ../src/belt_core_alchemy.c ../src/vendor/seq.c $(SEQ_CHORD_OUT)/chord_midi.c
+$(BUILD)/test_rear_link: test_rear_link.cpp ../src/rear_midi.cpp $(REAR_C)
+	@mkdir -p $(BUILD)/rear
+	cd $(BUILD)/rear && $(CC) -c $(addprefix $(CURDIR)/,$(filter ../%,$(REAR_C))) \
+	    $(filter /%,$(REAR_C)) $(CFLAGS:-I../%=-I$(CURDIR)/../%)
+	$(CXX) -std=c++17 -O2 -g -Wall -Istubs -I../src -I../src/vendor -idirafter $(LIBDAISY_DIR)/src -idirafter $(SEQ_CHORD_OUT) \
+	    test_rear_link.cpp ../src/rear_midi.cpp $(LIBDAISY_DIR)/src/hid/midi_parser.cpp \
+	    $(BUILD)/rear/*.o -o $@ -lm
 
 $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
@@ -34,6 +59,11 @@ $(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy
 $(BUILD)/test_chord_src: test_chord_src.c ../src/chord_src.c ../src/vendor/seq.c
 	@mkdir -p $(BUILD)
 	$(CC) -O1 -g -Wall -Wextra -I../src -fsanitize=address,undefined -fno-omit-frame-pointer $^ -o $@ -lm
+
+# The USB host's hardware-free half: descriptors, roles, keyboard packets.
+$(BUILD)/test_usb_keys: test_usb_keys.c ../src/usb_midi_keys.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $^ -o $@
 
 clean:
 	rm -rf $(BUILD)
