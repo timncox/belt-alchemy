@@ -55,10 +55,13 @@ void Init()
     cfg.periph        = daisy::UartHandler::Config::Peripheral::USART_1;
     cfg.stopbits      = daisy::UartHandler::Config::StopBits::BITS_1;
     cfg.parity        = daisy::UartHandler::Config::Parity::NONE;
-    cfg.mode          = daisy::UartHandler::Config::Mode::TX_RX;
+    cfg.mode          = daisy::UartHandler::Config::Mode::RX;
     cfg.wordlength    = daisy::UartHandler::Config::WordLength::BITS_8;
     cfg.pin_config.rx = daisy::seed::D14;   /* PB7, header pin 7 */
-    cfg.pin_config.tx = daisy::seed::D13;   /* PB6, header pin 8 (idle) */
+    /* No TX pin: libDaisy's InitPins() configures a pin only when its port
+     * is not PORTX, which a default Pin() is, so PB6 (header pin 8) stays
+     * the reset-state input -- never driven. */
+    cfg.pin_config.tx = daisy::Pin();
     parser.Init();
     if (uart.Init(cfg) != daisy::UartHandler::Result::OK) return;
     Listen();

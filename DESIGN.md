@@ -140,7 +140,8 @@ J3's rising-edge counter. All of it runs in the 1 ms control poll
   header pin 7 (`seed::D14`), 31,250 baud, circular DMA (DMA1_Stream5, which
   nothing else in this firmware or the SDK uses; neither touches USART1 --
   both checked by grep) into a 64-byte buffer in
-  `.sram1_bss`; the interrupt only copies bytes into a 256-byte ring, and
+  `.sram1_bss`, receive only (`Mode::RX`, no TX pin: header pin 8 is never
+  driven); the interrupt only copies bytes into a 256-byte ring, and
   libDaisy's `MidiParser` reads them in the control loop. Not
   `MidiUartHandler`: it parses in the interrupt and its event FIFO is 256 ×
   ~140 B (sysex buffers) = ~36 KB of SRAM. Notes on any channel; note-on

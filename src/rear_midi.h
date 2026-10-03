@@ -6,6 +6,12 @@
  * 1:1 ribbon would join TX to TX and put the power rails through it. Never
  * a straight ribbon. (docs/alchemy-chord-vocoder-design.md, "Back link".)
  *
+ * RECEIVE ONLY. The UART runs in RX mode with no TX pin, so Belt never
+ * drives header pin 8 (PB6): it stays the reset-state input. Belt sends
+ * nothing on the back link in v1, and an undriven pin is the safer default
+ * on a header that also carries +-12 V. A cable crossed both ways still
+ * works; pin 8 -> the sender's pin 7 is simply unused.
+ *
  * libDaisy's UartHandler receives into a DMA ring (DMA1_Stream5, unclaimed
  * by the SDK and this firmware); its callback, an interrupt, only copies
  * bytes into a small ring here. Poll() -- the control loop only -- feeds
