@@ -16,11 +16,12 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys rear_link
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys $(BUILD)/test_hub_unplug rear_link
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
 	./$(BUILD)/test_chord_src
 	./$(BUILD)/test_usb_keys
+	./$(BUILD)/test_hub_unplug
 
 # The back link end to end: seq-alchemy's own chord-out sender (another
 # repo; skipped when it is not there) -> Belt's rear_midi.cpp + libDaisy's
@@ -64,6 +65,12 @@ $(BUILD)/test_chord_src: test_chord_src.c ../src/chord_src.c ../src/vendor/seq.c
 $(BUILD)/test_usb_keys: test_usb_keys.c ../src/usb_midi_keys.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $@
+
+# The real hub driver against a simulated hub (fake_usbh/ = ST host headers):
+# unplug mid-chord, re-plug, full slots, rejected ports, the proven set-up.
+$(BUILD)/test_hub_unplug: test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_midi_keys.c fake_usbh/usbh_core.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DDMA_SECTION= -Ifake_usbh test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_midi_keys.c -o $@
 
 clean:
 	rm -rf $(BUILD)

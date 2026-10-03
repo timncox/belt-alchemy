@@ -9,7 +9,9 @@
 #include "usbh_pipes.h"
 #include "usb_midi_keys.h"
 
+#ifndef DMA_SECTION /* test/test_hub_unplug.c builds this file on the laptop */
 #define DMA_SECTION __attribute__((section(".sram1_bss")))
+#endif
 
 #define HUB_CLASS 0x09U
 #define DEV_ADDR0 0x02U /* first device address; the hub keeps USBH_DEVICE_ADDRESS (1) */
@@ -28,6 +30,12 @@
 #define PS_ENABLE             0x0002U
 #define PS_RESET              0x0010U
 #define PS_LOW_SPEED          0x0200U
+#define PC_CONNECTION         0x0001U /* wPortChange: the connection changed */
+
+/* A configured or rejected port is asked how it is every CHECK_MS, one port
+ * at a time, so an unplugged controller is noticed within
+ * CHECK_MS x (watched ports) -- 400 ms with four. */
+#define CHECK_MS 100U
 
 /* Enumeration / port-management states (numbers appear in /lpdiag.txt). */
 enum
@@ -54,6 +62,7 @@ enum
     S_FAILED,
     S_REJECT, /* the device is not MIDI: switch its port off, scan on */
     S_FULL,   /* every device slot taken: nothing more to scan for */
+    S_CHECK,  /* GET_PORT_STATUS on a watched port: is its device still there? */
 };
 
 /* Per-device receive loop. */
@@ -88,6 +97,12 @@ typedef struct
     uint8_t  hub_mps;   /* the hub's control max packet size */
     uint8_t  ctl_addr;  /* where the control pipes point now */
     uint8_t  rejects;
+    /* watching configured / rejected ports for an unplug */
+    uint8_t  chk_port;  /* last port checked, 1-based */
+    uint8_t  chk_ret;   /* the idle state to go back to */
+    uint32_t chk_t;
+    uint32_t checks, check_fails;
+    uint16_t unplugs;
     /* the device being enumerated */
     uint8_t  e_addr, e_mps0, e_cfg_value;
     uint16_t e_cfg_total, e_vid, e_pid;
@@ -164,6 +179,70 @@ static int free_slot(void)
     for (int i = 0; i < HUBMIDI_MAX_DEVICES; i++)
         if (!H.dev[i].ready) return i;
     return -1;
+}
+
+/* A fresh address for the next device: never one a configured device
+ * holds, never 0 or the hub's; wraps after 127, so unplugging and
+ * re-plugging all evening never runs out. */
+static uint8_t alloc_addr(void)
+{
+    uint8_t a = H.next_addr;
+    for (int tries = 0; tries < 127; tries++, a++)
+    {
+        if (a < DEV_ADDR0 || a > 127U) a = DEV_ADDR0;
+        int used = 0;
+        for (int i = 0; i < HUBMIDI_MAX_DEVICES; i++)
+            if (H.dev[i].ready && H.dev[i].addr == a) used = 1;
+        if (!used) break;
+    }
+    H.next_addr = (uint8_t)(a + 1U);
+    return a;
+}
+
+/* Close a slot's pipes and empty it; whoever reads it sees "not ready". */
+static void free_dev(USBH_HandleTypeDef *ph, int i)
+{
+    Dev *d = &H.dev[i];
+    if (d->in_pipe)  { USBH_ClosePipe(ph, d->in_pipe);  USBH_FreePipe(ph, d->in_pipe);  }
+    if (d->out_pipe) { USBH_ClosePipe(ph, d->out_pipe); USBH_FreePipe(ph, d->out_pipe); }
+    memset(d, 0, sizeof *d);
+}
+
+/* The device on a configured port has gone (or the port was switched off):
+ * free its slot and forget the port, so the scan enumerates whatever is
+ * plugged in there next. */
+static void port_gone(USBH_HandleTypeDef *ph, uint8_t port)
+{
+    for (int i = 0; i < HUBMIDI_MAX_DEVICES; i++)
+        if (H.dev[i].ready && H.dev[i].port == port) free_dev(ph, i);
+    H.done = (uint16_t)(H.done & ~(1U << port));
+    H.unplugs++;
+}
+
+/* The next configured or rejected port after `from`, round robin; 0 if none. */
+static uint8_t next_watched(uint8_t from)
+{
+    const uint16_t w = (uint16_t)(H.done | H.skip);
+    for (uint8_t k = 1; k <= H.ports; k++)
+    {
+        const uint8_t p = (uint8_t)((from + k - 1U) % H.ports + 1U);
+        if (w & (1U << p)) return p;
+    }
+    return 0;
+}
+
+/* From an idle state (between enumerations, so never in the middle of
+ * another control request): time to look at a watched port? */
+static int maybe_check(uint32_t now)
+{
+    if (now - H.chk_t < CHECK_MS) return 0;
+    H.chk_t = now;
+    const uint8_t p = next_watched(H.chk_port);
+    if (!p) return 0;
+    H.chk_port = p;
+    H.chk_ret  = H.state;
+    H.state    = S_CHECK;
+    return 1;
 }
 
 /* The device's MIDI-streaming bulk endpoints (IN, and OUT if it has one),
@@ -267,13 +346,7 @@ static USBH_StatusTypeDef Init(USBH_HandleTypeDef *ph)
 
 static USBH_StatusTypeDef DeInit(USBH_HandleTypeDef *ph)
 {
-    for (int i = 0; i < HUBMIDI_MAX_DEVICES; i++)
-    {
-        Dev *d = &H.dev[i];
-        if (d->in_pipe)  { USBH_ClosePipe(ph, d->in_pipe);  USBH_FreePipe(ph, d->in_pipe);  }
-        if (d->out_pipe) { USBH_ClosePipe(ph, d->out_pipe); USBH_FreePipe(ph, d->out_pipe); }
-        memset(d, 0, sizeof *d);
-    }
+    for (int i = 0; i < HUBMIDI_MAX_DEVICES; i++) free_dev(ph, i);
     if (ph->pActiveClass) ph->pActiveClass->pData = 0;
     return USBH_OK;
 }
@@ -344,9 +417,50 @@ static void enum_step(USBH_HandleTypeDef *ph, uint32_t now)
 
         case S_SCAN_WAIT:
             /* Free ports are looked at again twice a second, so a controller
-             * plugged in later is picked up. */
+             * plugged in later is picked up; in between, one watched port
+             * every CHECK_MS, so one pulled out is let go. */
+            if (maybe_check(now)) break;
             if (now - H.t0 >= 500U) H.state = S_SCAN;
             break;
+
+        case S_FULL:
+            maybe_check(now);
+            break;
+
+        case S_CHECK:
+        {
+            to_hub(ph);
+            const USBH_StatusTypeDef st =
+                ctl(ph, USB_D2H | USB_REQ_TYPE_CLASS | USB_REQ_RECIPIENT_OTHER,
+                    HUB_REQ_GET_STATUS, 0, H.chk_port, s_ctl, 4);
+            if (st == USBH_BUSY) break;
+            H.checks++;
+            if (st == USBH_OK)
+            {
+                const uint16_t ps = le16(&s_ctl[0]), pc = le16(&s_ctl[2]);
+                const uint16_t bit = (uint16_t)(1U << H.chk_port);
+                /* Gone: not connected, or disconnected and back since
+                 * (connection-change set -- a quick re-plug is a new device
+                 * at address 0), or the hub switched the port off. */
+                if ((H.done & bit)
+                    && (!(ps & PS_CONNECTION) || (pc & PC_CONNECTION) || !(ps & PS_ENABLE)))
+                    port_gone(ph, H.chk_port);
+                /* A rejected device unplugged: the port is free again. */
+                else if ((H.skip & bit) && !(ps & PS_CONNECTION))
+                    H.skip = (uint16_t)(H.skip & ~bit);
+            }
+            else
+                H.check_fails++; /* the hub did not answer: never fatal, ask again later */
+            if (H.chk_ret == S_FULL && free_slot() >= 0)
+            {
+                H.port  = 1;
+                H.t0    = now;
+                H.state = S_SCAN_WAIT;
+            }
+            else
+                H.state = H.chk_ret;
+            break;
+        }
 
         case S_CLR_C_CONN:
             to_hub(ph);
@@ -396,7 +510,7 @@ static void enum_step(USBH_HandleTypeDef *ph, uint32_t now)
             /* Reset recovery; the new device answers at address 0. */
             if (now - H.t0 >= 20U)
             {
-                H.e_addr = H.next_addr;
+                H.e_addr = alloc_addr();
                 H.state  = S_DEV_DESC8;
             }
             break;
@@ -500,7 +614,6 @@ static void enum_step(USBH_HandleTypeDef *ph, uint32_t now)
                 d->rx       = RX_ARM;
                 d->ready    = 1;
                 H.done     |= (uint16_t)(1U << H.port);
-                H.next_addr = (uint8_t)(H.next_addr + 1U);
                 next_port(now); /* scan on for a second controller */
             }
             break;
@@ -508,22 +621,22 @@ static void enum_step(USBH_HandleTypeDef *ph, uint32_t now)
 
         case S_REJECT:
         {
-            /* Back to the hub, turn the port off, never pick it again. A
-             * fresh address for the next device, so nothing stale answers. */
+            /* Back to the hub, turn the port off, never pick it again (until
+             * its device is unplugged). The next device gets a fresh address
+             * (alloc_addr), so nothing stale answers. */
             to_hub(ph);
             const USBH_StatusTypeDef st =
                 ctl(ph, USB_H2D | USB_REQ_TYPE_CLASS | USB_REQ_RECIPIENT_OTHER,
                     HUB_REQ_CLEAR_FEATURE, PORT_ENABLE, H.port, 0, 0);
             if (st == USBH_BUSY) break;
             /* done, or the hub would not answer: give up the port either way */
-            H.skip     |= (uint16_t)(1U << H.port);
+            H.skip |= (uint16_t)(1U << H.port);
             H.rejects++;
-            H.next_addr = (uint8_t)(H.next_addr + 1U);
             next_port(now);
             break;
         }
 
-        default: break; /* S_FAILED, S_FULL */
+        default: break; /* S_FAILED */
     }
 }
 
@@ -612,6 +725,9 @@ HUBMIDI_Info HUBMIDI_GetInfo(void)
     i.fail_code   = H.fail_code;
     i.skipped     = H.skip;
     i.done        = H.done;
+    i.checks      = H.checks;
+    i.check_fails = H.check_fails;
+    i.unplugs     = H.unplugs;
     for (int d = 0; d < HUBMIDI_MAX_DEVICES; d++)
     {
         i.dev_vid[d]  = H.dev[d].vid;

@@ -22,8 +22,12 @@
  *   - the hub stays at address 1 (the core enumerates it); devices behind
  *     it get addresses 2, 3, ... here. A device that is not MIDI (many
  *     dongles carry an Ethernet chip on a port, e.g. Realtek 0bda:8153) or
- *     will not enumerate has its port switched off and is skipped.
- *     Configured ports are not polled again; an unplug surfaces as transfer errors / a host reset.
+ *     will not enumerate has its port switched off and is skipped;
+ *   - configured and skipped ports are asked GET_PORT_STATUS one at a time,
+ *     every 100 ms between enumerations: a device unplugged (or the port
+ *     switched off) frees its slot -- HUBMIDI_DevReady() goes to 0, which is
+ *     how the caller learns to let go of what it held -- and a re-plug is
+ *     enumerated afresh. A skipped port whose device left is scanned again.
  *
  * It registers as the class for bInterfaceClass 0x09, enumerates the device
  * behind the hub itself with standard control requests (re-pointing the
@@ -80,6 +84,9 @@ typedef struct
     uint8_t  fail_code;    /* USBH_StatusTypeDef of that failure */
     uint16_t skipped;      /* ports rejected (bit n = port n) */
     uint16_t done;         /* ports carrying a configured device */
+    uint32_t checks;       /* watched-port status reads done */
+    uint32_t check_fails;  /* ... the hub did not answer */
+    uint16_t unplugs;      /* configured devices seen gone */
     uint16_t dev_vid[HUBMIDI_MAX_DEVICES], dev_pid[HUBMIDI_MAX_DEVICES];
     uint8_t  dev_port[HUBMIDI_MAX_DEVICES]; /* 0 = slot empty */
     uint8_t  dev_kind[HUBMIDI_MAX_DEVICES];

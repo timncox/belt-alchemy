@@ -93,6 +93,8 @@ void mini_rx(uint8_t* buf, size_t len);
 void xl_rx(uint8_t* buf, size_t len);
 void mini_bound();
 void xl_bound();
+void mini_dropped();
+void xl_dropped();
 
 /* XInput input report: type 0x00, length 0x14, wButtons, LT, RT, sticks. */
 void pad_rx(const uint8_t* buf, size_t len)
@@ -155,6 +157,8 @@ void on_error(void*) { g_failed = true; }
 void on_disconnect(void*)
 {
     g_direct_ready = false;
+    if (g_mini_link != kNone) mini_dropped();
+    if (g_xl_link != kNone) xl_dropped();
     g_mini_link    = kNone;
     g_xl_link      = kNone;
     g_pad_buttons  = 0;
@@ -162,13 +166,19 @@ void on_disconnect(void*)
         if (is_keys(l)) keys_drop(l);
 }
 
-/* Bind ready links to roles by id; drop roles whose link went away. */
+/* Bind ready links to roles by id; drop roles whose link went away (the
+ * hub driver frees a slot when its device is unplugged): whatever that
+ * device was holding down is released, as if let go. */
 void bind()
 {
-    if (g_mini_link != kNone && !link_ready(g_mini_link)) g_mini_link = kNone;
-    if (g_xl_link != kNone && !link_ready(g_xl_link)) g_xl_link = kNone;
+    if (g_mini_link != kNone && !link_ready(g_mini_link)) { mini_dropped(); g_mini_link = kNone; }
+    if (g_xl_link != kNone && !link_ready(g_xl_link)) { xl_dropped(); g_xl_link = kNone; }
     for (int l = 0; l < kLinks; l++)
         if (is_keys(l) && !link_ready(l)) keys_drop(l);
+    bool pad = false;
+    for (int l = kHub0; l < kLinks; l++)
+        if (link_ready(l) && is_pad(l)) pad = true;
+    if (!pad) g_pad_buttons = 0;
     for (int l = 0; l < kLinks; l++)
     {
         if (l == g_mini_link || l == g_xl_link || is_keys(l) || !link_ready(l) || is_pad(l))
@@ -256,6 +266,30 @@ void push(Kind k, uint8_t x, uint8_t y, bool down)
     if (next == g_qtail) return; /* full: drop, never block */
     g_q[g_qhead] = Event{k, x, y, down};
     g_qhead      = next;
+}
+
+/* Which pads and buttons are down now (cell index as g_want), so an unplug
+ * can release them. */
+uint8_t g_down[(kLogo + 7) / 8];
+
+void press(Kind k, uint8_t x, uint8_t y, bool down)
+{
+    const int i = k == Kind::Grid ? y * 8 + x : k == Kind::Side ? kSide0 + y : kTop0 + x;
+    if (down) g_down[i >> 3] = (uint8_t)(g_down[i >> 3] | (1u << (i & 7)));
+    else      g_down[i >> 3] = (uint8_t)(g_down[i >> 3] & ~(1u << (i & 7)));
+    push(k, x, y, down);
+}
+
+void release_held()
+{
+    for (int i = 0; i < kLogo; i++)
+    {
+        if (!(g_down[i >> 3] & (1u << (i & 7)))) continue;
+        if (i < kGrid)      push(Kind::Grid, (uint8_t)(i % 8), (uint8_t)(i / 8), false);
+        else if (i < kTop0) push(Kind::Side, 0, (uint8_t)(i - kSide0), false);
+        else                push(Kind::Top, (uint8_t)(i - kTop0), 0, false);
+    }
+    memset(g_down, 0, sizeof g_down);
 }
 
 /* One LED as a USB-MIDI packet on the given cable. */
@@ -426,9 +460,10 @@ int Report(char* b, int cap)
     {
         const HUBMIDI_Info h = HUBMIDI_GetInfo();
         OUT("hub: active %d state %u ports %u port %u status %04x last fail state %u code %u "
-            "skipped %04x done %04x\n",
+            "skipped %04x done %04x, port checks %lu (no answer %lu), unplugs %u\n",
             (int)via_hub(), h.state, h.ports, h.port, h.port_status, h.fail_state, h.fail_code,
-            h.skipped, h.done);
+            h.skipped, h.done, (unsigned long)h.checks, (unsigned long)h.check_fails,
+            (unsigned)h.unplugs);
         for (int d = 0; d < HUBMIDI_MAX_DEVICES; d++)
             OUT("  slot %d: port %u %04x:%04x kind %u rx armed %lu data %lu nak %lu err %lu stale %lu\n", d,
                 h.dev_port[d], h.dev_vid[d], h.dev_pid[d], h.dev_kind[d],
@@ -478,6 +513,10 @@ void mini_bound()
     lp::g_rx_cable  = -1;
 }
 
+/* Unplugged (or the host reset): release what was held; the LEDs are all
+ * sent again at the next bind. */
+void mini_dropped() { lp::release_held(); }
+
 /* USB-MIDI event packets, 4 bytes each: [cable|CIN, status, data1, data2]. */
 void mini_rx(uint8_t* buf, size_t len)
 {
@@ -497,12 +536,12 @@ void mini_rx(uint8_t* buf, size_t len)
         const bool down = (st != 0x80) && d2 > 0;
         if (row == 9)
         {
-            if (col <= 8) push(Kind::Top, (uint8_t)(col - 1), 0, down);
+            if (col <= 8) press(Kind::Top, (uint8_t)(col - 1), 0, down);
         }
         else if (col == 9)
-            push(Kind::Side, 0, (uint8_t)(8 - row), down);
+            press(Kind::Side, 0, (uint8_t)(8 - row), down);
         else
-            push(Kind::Grid, (uint8_t)(col - 1), (uint8_t)(8 - row), down);
+            press(Kind::Grid, (uint8_t)(col - 1), (uint8_t)(8 - row), down);
     }
 }
 
@@ -538,12 +577,21 @@ int           g_qhead = 0, g_qtail = 0;
 uint8_t g_sx[16];
 int     g_sx_n = 0;
 
+uint16_t g_btn_down = 0; /* bit row*8+col */
+
 void push(uint8_t row, uint8_t col, bool down)
 {
     int next = (g_qhead + 1) % kQueue;
     if (next == g_qtail) return;
     g_q[g_qhead] = Button{row, col, down};
     g_qhead      = next;
+}
+
+void press(uint8_t row, uint8_t col, bool down)
+{
+    const uint16_t bit = (uint16_t)(1u << (row * 8 + col));
+    g_btn_down = down ? (uint16_t)(g_btn_down | bit) : (uint16_t)(g_btn_down & ~bit);
+    push(row, col, down);
 }
 
 void sx_byte(uint8_t b)
@@ -649,6 +697,13 @@ void Flush_()
 namespace
 {
 
+void xl_dropped()
+{
+    for (int i = 0; i < 16; i++)
+        if (xl::g_btn_down & (1u << i)) xl::push((uint8_t)(i / 8), (uint8_t)(i % 8), false);
+    xl::g_btn_down = 0;
+}
+
 void xl_bound()
 {
     xl::g_need_template = true;
@@ -689,10 +744,10 @@ void xl_rx(uint8_t* buf, size_t len)
         else if (cin == 0x8 || cin == 0x9)
         {
             const bool down = (st == 0x90) && d2 > 0;
-            if (d1 >= 41 && d1 <= 44)      push(0, (uint8_t)(d1 - 41), down);
-            else if (d1 >= 57 && d1 <= 60) push(0, (uint8_t)(4 + d1 - 57), down);
-            else if (d1 >= 73 && d1 <= 76) push(1, (uint8_t)(d1 - 73), down);
-            else if (d1 >= 89 && d1 <= 92) push(1, (uint8_t)(4 + d1 - 89), down);
+            if (d1 >= 41 && d1 <= 44)      press(0, (uint8_t)(d1 - 41), down);
+            else if (d1 >= 57 && d1 <= 60) press(0, (uint8_t)(4 + d1 - 57), down);
+            else if (d1 >= 73 && d1 <= 76) press(1, (uint8_t)(d1 - 73), down);
+            else if (d1 >= 89 && d1 <= 92) press(1, (uint8_t)(4 + d1 - 89), down);
         }
     }
 }

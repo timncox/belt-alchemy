@@ -874,12 +874,14 @@ h4.setglance{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-tr
     <div class="card"><div class="k">Plugging in</div><h4>Through the powered hub dongle</h4>
       <p>The front port has no 5 V, so a keyboard goes into the same powered hub dongle as the
         other controllers; up to four devices behind it. Plugged straight in, through a passive
-        5 V injector, only a keyboard whose first USB interface is its MIDI one is served. If B2
-        goes red that way, use the hub.</p></div>
-    <div class="card"><div class="k">Unplugging</div><h4>Let go of the keys first</h4>
-      <p>A keyboard pulled from the hub is not noticed until the host resets, so a note it was
-        holding can stay on. Release every key and the pedal before unplugging it. B2 is white
-        while a key is held, which shows when one is still down.</p></div>
+        5 V injector, only a keyboard whose first USB interface is an audio one, with its MIDI
+        interface right after, is served (most are). If B2 goes red that way, use the hub.</p></div>
+    <div class="card"><div class="k">Unplugging</div><h4>Notes let go by themselves</h4>
+      <p>Pull a keyboard out mid-chord and its notes and pedal are released: straight away when
+        it was plugged straight in, within half a second when it was behind the hub, which
+        checks one of its ports every tenth of a second. Plug it back in and it plays again.
+        The same goes for a Launchpad's held pads and a gamepad's held buttons. B2 is white
+        while a key is held.</p></div>
   </div>
   <p style="margin-top:18px">If the host does not come up, the <code>/lpdiag.txt</code> report on
     the card has a <code>keys:</code> line: which slots are keyboards, their USB IDs, how many notes
