@@ -36,7 +36,7 @@
 #define YIN_RING   4096
 #define YIN_MASK   (YIN_RING - 1)
 #define YIN_W      512               /* ~23 ms integration window */
-#define YIN_TAUMAX 260               /* 22050/85 Hz */
+#define YIN_TAUMAX ((YIN_SR + 84) / 85)  /* ceil(YIN_SR / 85 Hz): 260 at 44.1k, 283 at 48k */
 #define YIN_TAUMIN 22                /* 22050/1000 Hz */
 #define YIN_HOP    256               /* input samples between analyses */
 
