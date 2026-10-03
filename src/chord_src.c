@@ -52,12 +52,16 @@ int cs_seq_scale(int belt_scale)
 int cs_chord_notes(const seq_prog_t *pr, int ci, int base, uint8_t *out)
 {
     if (ci < 0 || ci >= pr->count || ci >= SEQ_MAX_CHORDS) return 0;
-    int tones = pr->tones < 1 ? 3 : pr->tones;
+    return cs_degree_notes(pr->root, pr->scale, pr->tones, pr->chord[ci].degree, base, out);
+}
+
+int cs_degree_notes(int key, int scale, int tones, int degree, int base, uint8_t *out)
+{
+    if (tones < 1) tones = 3;
     if (tones > CS_MAX_NOTES) tones = CS_MAX_NOTES;
-    const int deg = pr->chord[ci].degree;
     for (int i = 0; i < tones; i++)
     {
-        int n = base + pr->root + seq_degree_semis(pr->scale, deg + 2 * i);
+        int n = base + key + seq_degree_semis(scale, degree + 2 * i);
         while (n > 127) n -= 12;
         while (n < 0) n += 12;
         out[i] = (uint8_t)n;
@@ -70,6 +74,71 @@ int cs_chord_notes(const seq_prog_t *pr, int ci, int base, uint8_t *out)
 /* ~5 ms at the 1 ms poll: long enough to sit through ADC noise, short
  * against a chord change. */
 #define CV_ALPHA 0.2f
+
+/* ---- one-jack CV chord -------------------------------------------------- */
+
+static float deg_pitch(int key, int scale, int d)   /* semitones above 0 V's C */
+{
+    return (float)(key + seq_degree_semis(scale, d));
+}
+
+/* The scale degree whose note is nearest semitone position s. */
+static int nearest_degree(float s, int key, int scale)
+{
+    const int len = seq_scale_len(scale);
+    int       d0  = (int)floorf((s - (float)key) / 12.0f * (float)len);
+    int       best = d0;
+    float     bd   = 1e9f;
+    for (int d = d0 - 2; d <= d0 + 2; d++)
+    {
+        const float e = fabsf(s - deg_pitch(key, scale, d));
+        if (e < bd) { bd = e; best = d; }
+    }
+    return best;
+}
+
+void cs_cvdeg_init(cs_cvdeg_t *c)
+{
+    c->smooth = 0.0f;
+    c->degree = c->cand = 0;
+    c->still  = 0;
+    c->key = c->scale = -1;
+    c->primed = false;
+}
+
+bool cs_cvdeg_poll(cs_cvdeg_t *c, float volts, int key, int scale)
+{
+    c->smooth = c->primed ? c->smooth + CV_ALPHA * (volts - c->smooth) : volts;
+    const float s = c->smooth * 12.0f;
+    const int   n = nearest_degree(s, key, scale);
+    if (!c->primed || key != c->key || scale != c->scale)
+    {
+        /* first poll, or the scale under it moved: snap now */
+        const bool moved = !c->primed || n != c->degree;
+        c->primed = true;
+        c->key    = key;
+        c->scale  = scale;
+        c->degree = c->cand = n;
+        c->still  = 0;
+        return moved;
+    }
+    if (n == c->degree
+        || fabsf(s - deg_pitch(key, scale, c->degree)) - fabsf(s - deg_pitch(key, scale, n))
+               <= 2.0f * CS_CV_HYST
+        || nearest_degree(volts * 12.0f, key, scale) != n)
+    {
+        c->still = 0;   /* home, near a boundary, or passing through */
+        return false;
+    }
+    if (n != c->cand) { c->cand = n; c->still = 0; }
+    if (++c->still >= CS_CV_STILL_MS)
+    {
+        c->degree = n;
+        c->still  = 0;
+        return true;
+    }
+    return false;
+}
 
 void cs_cv_init(cs_cv_t *c)
 {

@@ -312,7 +312,7 @@ static const char* const kSourceLabels[4] = {"Pads", "Seq", "CV", "MIDI"};
 static const char* const kJ3Labels[2]     = {"Hard gate", "Chord clock"};
 static const char* const kTonesLabels[2]  = {"Triads", "Sevenths"};
 static const char* const kCvCalLabels[3]  = {"Off", "On", "Learn"};
-static const char* const kCvInsLabels[4]  = {"J4", "J4-J5", "J4-J6", "J4-J7"};
+static const char* const kCvInsLabels[5]  = {"Chord", "J4", "J4-J5", "J4-J6", "J4-J7"};
 static const char* const kOctaveLabels[4] = {"C2", "C3", "C4", "C5"};
 
 #ifdef BELT_BENCH_USB
@@ -734,18 +734,23 @@ static void lp_set_play(uint8_t pot, int zone, int zones)
  *          the Launchpad's CHORDS page (top 5). With J3 = Chord clock (P2)
  *          every rising edge on J3 moves to the next chord instead, and the
  *          tempo is not used.
- *   CV     J4.. J7 (P6: how many) are 1 V/oct chord pitches, 0 V = the
- *          OCTAVE's C, each rounded to the nearest semitone. A note changes
- *          when its input moves to a new semitone and stays there; with
- *          J3 = Chord clock the inputs are read only on a J3 edge (sample
- *          and hold). Those jacks stop modulating KEY / RETUNE / AMOUNT /
- *          HARMONY while they carry a chord.
+ *   CV     P6 CV INS. Chord (the default; Tim, 2026-10-03, the contract
+ *          seq-alchemy's sender keeps): J4 alone, 1 V/oct, 0 V = the
+ *          OCTAVE's C, is the chord's ROOT, snapped to the nearest note of
+ *          KEY / SCALE; the diatonic chord on that degree is held (triads
+ *          or sevenths, P4), so in C major it is C Dm Em F G Am B dim. It
+ *          changes when the snapped degree does; J5-J7 keep their knobs.
+ *          J4 .. J4-J7: those jacks are a note each, 1 V/oct, rounded to
+ *          the nearest semitone, a note changing when its input moves to a
+ *          new semitone and stays there. Either way, with J3 = Chord clock
+ *          the jacks are read only on a J3 edge (sample and hold), and the
+ *          jacks in use stop modulating KEY / RETUNE / AMOUNT / HARMONY.
  *          CV cal (P5): On applies each input's learned offset, Off reads
- *          them raw. Learn: have the sender play the reference chord -- J4
- *          0 V, J5 +4/12 V, J6 +7/12 V, J7 +1 V (C E G C) -- then turn P5
- *          to Learn; a quarter second later the offsets are stored in the
+ *          them raw. Learn: in Chord mode the sender holds 0 V on J4; in
+ *          the per-jack modes it plays the reference chord -- J4 0 V, J5
+ *          +4/12 V, J6 +7/12 V, J7 +1 V (C E G C). Then turn P5 to Learn; a quarter second later the offsets are stored in the
  *          slot. Turn it back to On. B3 shows the result for 3 s once
- *          Settings closes: green all four learned, amber some, red none
+ *          Settings closes: green all learned, amber some, red none
  *          (an input more than 0.25 V off is a wrong patch, not an error to
  *          learn, and keeps its old offset).
  *   MIDI   notes on the rear header's USART1 (rear_midi.h: the cable, and
@@ -758,7 +763,8 @@ static void lp_set_play(uint8_t pot, int zone, int zones)
  */
 static seq_t DSY_SDRAM_BSS g_seq;   /* plain C, ~19 KB: seq_init() fills it */
 static cs_held_t g_src_held;        /* what Seq / CV are holding */
-static cs_cv_t   g_cv;
+static cs_cv_t   g_cv;              /* CV INS J4..J4-J7: a note per jack */
+static cs_cvdeg_t g_cvdeg;          /* CV INS Chord: J4 is the chord root */
 static uint32_t  g_midi_held[4];    /* rear-header notes on, by note number */
 static int       g_src        = -1; /* the source applied: kSourceLabels */
 static int       g_cv_routed  = -1; /* CV inputs taken off the matrix */
@@ -768,6 +774,7 @@ static uint32_t  g_edges_seen = 0;
 static int       g_cal_prev   = -1, g_cal_n = -1;
 static float     g_cal_sum[CS_CV_INPUTS];
 static int       g_cal_mask   = -1; /* last Learn's result, to show; -1 none */
+static int       g_cal_jacks  = CS_CV_INPUTS, g_cal_all = 0xF;  /* what it learned */
 static uint32_t  g_cal_show_until = 0;
 enum { kSrcPads = 0, kSrcSeq = 1, kSrcCv = 2, kSrcMidi = 3 };
 
@@ -856,7 +863,10 @@ static void chords_poll(uint32_t now)
 {
     const int  src   = (int)source_s.Value();
     const int  base  = 36 + 12 * (int)octave_s.Value();      /* C2 = 36 */
-    const int  n_cv  = 1 + (int)cv_ins_s.Value();
+    /* CV INS: 0 = Chord (J4 alone: its voltage is the chord's root), else
+     * that many per-jack notes from J4 up. */
+    const bool cv_chord = (int)cv_ins_s.Value() == 0;
+    const int  n_cv     = cv_chord ? 1 : (int)cv_ins_s.Value();
     const int  cal   = (int)cv_cal_s.Value();
     g_j3_clock = (int)j3_mode_s.Value() == 1;
 
@@ -875,6 +885,7 @@ static void chords_poll(uint32_t now)
         g_src = src;
         if (src == kSrcSeq) seq_set_run(g_seq_run);
         cs_cv_init(&g_cv);
+        cs_cvdeg_init(&g_cvdeg);
     }
     cv_route(src == kSrcCv ? n_cv : 0);
 
@@ -891,6 +902,9 @@ static void chords_poll(uint32_t now)
     if (g_cal_prev < 0) g_cal_prev = cal;
     if (cal == 2 && g_cal_prev != 2)
     {
+        /* Chord mode learns J4 alone against 0 V (J5-J7 are carrying their
+         * knobs' CV); the per-jack modes learn all four, C E G C. */
+        g_cal_jacks = cv_chord ? 1 : CS_CV_INPUTS;
         g_cal_n = 0;
         for (int i = 0; i < CS_CV_INPUTS; i++) g_cal_sum[i] = 0.0f;
     }
@@ -902,7 +916,8 @@ static void chords_poll(uint32_t now)
         {
             float avg[CS_CV_INPUTS];
             for (int i = 0; i < CS_CV_INPUTS; i++) avg[i] = g_cal_sum[i] / 256.0f;
-            g_cal_mask       = (int)cs_cal_learn(avg, CS_CV_INPUTS, extras.cv_off_mv);
+            g_cal_mask       = (int)cs_cal_learn(avg, g_cal_jacks, extras.cv_off_mv);
+            g_cal_all        = (1 << g_cal_jacks) - 1;
             g_cal_show_until = 0;   /* armed: shown once Settings closes */
             g_cal_n          = -1;
             mark_dirty(now);
@@ -926,6 +941,21 @@ static void chords_poll(uint32_t now)
         const int ci = seq_chord_now();
         const int n  = ci < 0 ? 0 : cs_chord_notes(&g_seq.prog, ci, base, notes);
         cs_hold(&g_src_held, notes, n, 100, src_emit, nullptr);
+    }
+    else if (src == kSrcCv && cv_chord)
+    {
+        /* One jack: the voltage is the root, snapped to KEY / SCALE; the
+         * diatonic chord on that degree is held (Sources P4: triads or
+         * sevenths). Re-held every poll -- cs_hold() sends only what changed,
+         * so CHORD / OCTAVE / KEY moves are heard at once -- except with J3 as
+         * the clock, where it is sampled on the edge. */
+        const int key   = k_key.last < 0 ? 0 : k_key.last;
+        const int scale = cs_seq_scale(k_scale.last < 0 ? 1 : k_scale.last);
+        cs_cvdeg_poll(&g_cvdeg, v[0], key, scale);
+        if (!g_j3_clock || edges != 0)
+            cs_hold(&g_src_held, notes,
+                    cs_degree_notes(key, scale, 3 + (int)tones_s.Value(), g_cvdeg.degree, base, notes),
+                    100, src_emit, nullptr);
     }
     else if (src == kSrcCv)
     {
@@ -1653,7 +1683,7 @@ static void OnRender(uint32_t t_ms)
         if (!g_cal_show_until) g_cal_show_until = t_ms + 3000u;
         if (t_ms < g_cal_show_until)
         {
-            L.SetButtonPair(kButtonB3, L.ScaleGlobal(g_cal_mask == 0xF ? kGreen
+            L.SetButtonPair(kButtonB3, L.ScaleGlobal(g_cal_mask == g_cal_all ? kGreen
                                                      : g_cal_mask ? kAmber : kRed));
             return;
         }
@@ -1871,23 +1901,28 @@ int main(void)
     tones_s = settings.Page(kSettingsSources).Pot(3)
         .Selector(kTonesLabels).Default(0)
         .Ident("chord_tones").Name("Chord")
-        .Help("The sequencer's chords as **Triads** (three notes) or "
-              "**Sevenths** (four: every harmony voice).");
+        .Help("The sequencer's and the CV Chord mode's chords as **Triads** "
+              "(three notes) or **Sevenths** (four: every harmony voice).");
     cv_cal_s = settings.Page(kSettingsSources).Pot(4)
         .Selector(kCvCalLabels).Default(1)
         .Ident("cv_cal").Name("CV cal")
         .Help("**On** (default): the CV chord inputs take off each one's "
-              "learned offset. **Off**: raw. **Learn**: with the sender "
-              "playing the reference chord (J4 0 V, J5 +4/12 V, J6 +7/12 V, "
-              "J7 +1 V: C E G C), turn to Learn; a quarter second later the "
-              "offsets are saved. Then back to On. B3 shows the result after "
+              "learned offset. **Off**: raw. **Learn**: with CV ins on Chord, "
+              "the sender holds 0 V on J4; on J4..J4-J7, it plays the "
+              "reference chord (J4 0 V, J5 +4/12 V, J6 +7/12 V, J7 +1 V: "
+              "C E G C). Turn to Learn; a quarter second later the offsets "
+              "are saved. Then back to On. B3 shows the result after "
               "Settings closes: green all, amber some, red none.");
     cv_ins_s = settings.Page(kSettingsSources).Pot(5)
-        .Selector(kCvInsLabels).Default(3)
+        .Selector(kCvInsLabels).Default(0)
         .Ident("cv_ins").Name("CV ins")
-        .Help("How many CV chord inputs, from J4 up. The rest keep modulating "
-              "their knobs. An unpatched input reads 0 V -- the Octave's C -- "
-              "so leave it out here rather than unpatched.");
+        .Help("**Chord** (default): J4 alone, its voltage the chord's root "
+              "(1 V/oct, 0 V = the Octave's C), snapped to the nearest note "
+              "of KEY / SCALE; the diatonic chord on it is held -- in C major "
+              "C, Dm, Em, F, G, Am, B dim. J5-J7 keep modulating their knobs. "
+              "**J4 .. J4-J7**: a note per jack, rounded to the semitone; the "
+              "rest keep their knobs. An unpatched jack reads 0 V -- the "
+              "Octave's C -- so leave it out here rather than unpatched.");
     humanize_k = settings.Page(kSettingsMain).Pot(4).Knob().Default(0.3f)
         .Ident("humanize").Name("Humanize").Color(kColAmount)
         .Help("Vibrato preserved through the correction, and a slow wander "
@@ -1978,6 +2013,7 @@ int main(void)
     seq_init(&g_seq, 1u);
     prog_from_extras();
     cs_cv_init(&g_cv);
+    cs_cvdeg_init(&g_cvdeg);
     rearmidi::Init();
 
     /* Report last session's peak on the P1 ring, then start recording this

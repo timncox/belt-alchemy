@@ -202,6 +202,77 @@ static void test_cal(void)
     CHECK(n[0] == 50 && n[1] == 54 && n[2] == 57, "corrected: D3 F#3 A3 (%d %d %d)", n[0], n[1], n[2]);
 }
 
+/* One-jack CV chord: the voltage is the root, snapped to KEY / SCALE. */
+static int chord_at(int key, int scale, int tones, float volts, uint8_t *n)
+{
+    cs_cvdeg_t c;
+    cs_cvdeg_init(&c);
+    cs_cvdeg_poll(&c, volts, key, scale);
+    return cs_degree_notes(key, scale, tones, c.degree, 48, n);
+}
+
+static void test_cvdeg(void)
+{
+    static const char *const kName[8] = {"C", "Dm", "Em", "F", "G", "Am", "Bdim", "C'"};
+    static const uint8_t kWant[8][3] = {{48, 52, 55}, {50, 53, 57}, {52, 55, 59}, {53, 57, 60},
+                                        {55, 59, 62}, {57, 60, 64}, {59, 62, 65}, {60, 64, 67}};
+    /* a slow sweep 0 -> 1 V (1 mV per ms) in C major: each chord once, in order */
+    cs_cvdeg_t c;
+    cs_cvdeg_init(&c);
+    int seen[16], ns = 0;
+    for (int mv = 0; mv <= 1000; mv++)
+        if (cs_cvdeg_poll(&c, mv / 1000.0f, 0, SEQ_SCALE_MAJOR) && ns < 16) seen[ns++] = c.degree;
+    int ok = ns == 8;
+    for (int i = 0; ok && i < 8; i++) ok = seen[i] == i;
+    CHECK(ok, "C major sweep: degrees 0..7 once each (%d changes)", ns);
+    for (int i = 0; i < 8; i++)
+    {
+        const int semis = seq_degree_semis(SEQ_SCALE_MAJOR, i);
+        uint8_t n[4];
+        const int k = chord_at(0, SEQ_SCALE_MAJOR, 3, semis / 12.0f, n);
+        CHECK(k == 3 && !memcmp(n, kWant[i], 3), "%s at %.3f V = %d %d %d", kName[i], semis / 12.0f, n[0], n[1], n[2]);
+    }
+    uint8_t n[4];
+    /* sevenths: G7 */
+    chord_at(0, SEQ_SCALE_MAJOR, 4, 7 / 12.0f, n);
+    CHECK(n[0] == 55 && n[1] == 59 && n[2] == 62 && n[3] == 65, "G7 = G B D F (%d %d %d %d)", n[0], n[1], n[2], n[3]);
+    /* a semitone off the scale snaps to a scale note: F# (6) -> F or G, never F# */
+    chord_at(0, SEQ_SCALE_MAJOR, 3, 6 / 12.0f, n);
+    CHECK(n[0] == 53 || n[0] == 55, "F# snaps to F or G (%d)", n[0]);
+    /* A minor: C E G on 0 V (III), Am, F, Dm, B dim, G */
+    struct { float v; uint8_t w[3]; const char *nm; } am[] = {
+        {0.0f, {48, 52, 55}, "C"}, {9 / 12.0f, {57, 60, 64}, "Am"}, {5 / 12.0f, {53, 57, 60}, "F"},
+        {2 / 12.0f, {50, 53, 57}, "Dm"}, {11 / 12.0f, {59, 62, 65}, "Bdim"}, {7 / 12.0f, {55, 59, 62}, "G"}};
+    for (unsigned i = 0; i < sizeof am / sizeof am[0]; i++)
+    {
+        chord_at(9, SEQ_SCALE_MINOR, 3, am[i].v, n);
+        CHECK(!memcmp(n, am[i].w, 3), "A minor: %s (%d %d %d)", am[i].nm, n[0], n[1], n[2]);
+    }
+    /* boundaries with +-10 mV noise: E|F at 4.5 st and G|A at 8 st hold */
+    const float bnd[2] = {4.5f / 12.0f, 8.0f / 12.0f};
+    for (int b = 0; b < 2; b++)
+    {
+        cs_cvdeg_init(&c);
+        cs_cvdeg_poll(&c, bnd[b], 0, SEQ_SCALE_MAJOR);
+        int moved = 0;
+        for (int i = 0; i < 5000; i++)
+            moved += cs_cvdeg_poll(&c, bnd[b] + noise() * 2.0f, 0, SEQ_SCALE_MAJOR);
+        CHECK(moved == 0, "boundary %.1f st with +-10 mV noise holds (%d changes)", bnd[b] * 12, moved);
+    }
+    /* a sender 40 mV off still lands on its degree: G from C */
+    cs_cvdeg_init(&c);
+    cs_cvdeg_poll(&c, 0.0f, 0, SEQ_SCALE_MAJOR);
+    for (int i = 0; i < 50; i++) cs_cvdeg_poll(&c, 7 / 12.0f + 0.040f, 0, SEQ_SCALE_MAJOR);
+    CHECK(c.degree == 4, "G +40 mV lands on G (degree %d)", c.degree);
+    /* a KEY change re-snaps at once (C major -> D major: G is degree 3 there) */
+    CHECK(cs_cvdeg_poll(&c, 7 / 12.0f + 0.040f, 2, SEQ_SCALE_MAJOR) && c.degree == 3,
+          "a key change re-snaps at once (degree %d)", c.degree);
+    /* the one-jack learn: J4 alone, reference 0 V */
+    int16_t off[4] = {0, 0, 0, 0};
+    const float meas[1] = {0.030f};
+    CHECK(cs_cal_learn(meas, 1, off) == 1u && off[0] == 30, "one-jack learn: J4 +30 mV (%d)", off[0]);
+}
+
 int main(void)
 {
     srand(7);
@@ -210,6 +281,7 @@ int main(void)
     test_tempo();
     test_cv();
     test_cal();
+    test_cvdeg();
     printf("test_chord_src: %s (%d failures)\n", fails ? "FAIL" : "pass", fails);
     return fails ? 1 : 0;
 }

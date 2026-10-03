@@ -62,6 +62,32 @@ int cs_seq_scale(int belt_scale);
  * of the octave's C (48 = C3). Returns how many (0 if ci is out of range). */
 int cs_chord_notes(const seq_prog_t *pr, int ci, int base, uint8_t *out);
 
+/* The same, for any scale degree (0 = the key's root; negative and past the
+ * scale's length go down / up octaves): the diatonic chord on that degree. */
+int cs_degree_notes(int key, int scale, int tones, int degree, int base, uint8_t *out);
+
+/* ---- one-jack CV chord (Tim, 2026-10-03; shared with seq-alchemy) -------
+ *
+ * One jack, 1 V/oct, 0 V = the Octave's C: the voltage is the chord ROOT.
+ * It is snapped to the nearest note of KEY / SCALE; that scale degree's
+ * diatonic chord is what is held, so the quality falls out of the scale (C
+ * major: C Dm Em F G Am B dim). The degree moves once another scale note is
+ * nearer than the held one by 2 x CS_CV_HYST, the input itself agrees, and
+ * it has stayed CS_CV_STILL_MS polls; a KEY / SCALE change re-snaps at once.
+ */
+typedef struct {
+    float   smooth;
+    int     degree, cand;    /* scale degrees from the key's root */
+    uint8_t still;
+    int     key, scale;      /* what degree was snapped against */
+    bool    primed;
+} cs_cvdeg_t;
+
+void cs_cvdeg_init(cs_cvdeg_t *c);
+/* One 1 ms poll; volts with the offset taken off. key 0..11, scale a
+ * seq_scale_t. Returns true when the degree changed. */
+bool cs_cvdeg_poll(cs_cvdeg_t *c, float volts, int key, int scale);
+
 /* ---- CV pitch inputs -------------------------------------------------- */
 
 /* A held note moves once the smoothed pitch is half a semitone plus

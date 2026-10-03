@@ -86,7 +86,7 @@ Page 3 **SOURCES** (2026-10-02, the last page the SDK allows:
 - **P3 TEMPO**: 40-240 BPM (default 120).
 - **P4 CHORD**: Triads (default) / Sevenths.
 - **P5 CV CAL**: Off / On (default) / Learn.
-- **P6 CV INS**: J4 / J4-J5 / J4-J6 / J4-J7 (default).
+- **P6 CV INS**: Chord (default: J4 alone is the chord root) / J4 / J4-J5 / J4-J6 / J4-J7.
 
 Settings reopens on the page it was left on (the SDK keeps `page_`).
 
@@ -121,8 +121,22 @@ J3's rising-edge counter. All of it runs in the 1 ms control poll
 - **J3 = Chord clock.** Each rising edge (counted in `gate_poll_isr`, once
   per audio block -- 2.67 ms; a shorter trigger can be missed) moves the sequencer to its next
   chord; the tempo and bars are not used. With CV it samples the inputs.
-  HARD is then B1 / the controllers only.
-- **CV.** `hw.cv_jacks[1..4].Volts()` (the SDK's calibrated input, ~±10 mV
+  HARD is then B1 / the controllers only. **Tim's decision, 2026-10-03:
+  each pulse advances the progression** -- one edge, one chord (not a bar
+  clock), as built.
+- **CV, Chord mode (CV INS = Chord, the default; Tim 2026-10-03).** The
+  contract seq-alchemy's sender keeps: ONE jack, J4, 1 V/oct, 0 V = the
+  Octave's C; the voltage is the chord ROOT. `cs_cvdeg_poll()` snaps it to
+  the nearest note of KEY / SCALE (seq's scale, Chromatic → Major, Blues →
+  Minor pentatonic as for Seq) -- the degree moves once another scale note
+  is nearer than the held one by 2 × 0.15 st (25 mV), the raw input agrees
+  and it has stayed 3 ms; a KEY / SCALE change re-snaps at once -- and
+  `cs_degree_notes()`, the same chord rule the Seq source uses (degree +
+  2i), builds triads or sevenths (Sources P4) on it: C major gives C Dm Em
+  F G Am B°. Changes when the snapped degree does; with J3 = Chord clock,
+  sample and hold on the edge. J5-J7 stay on the CV matrix. Learn: the
+  sender holds 0 V on J4, and only J4 is learned (B3 green = J4).
+- **CV, per-jack modes (CV INS = J4 .. J4-J7).** `hw.cv_jacks[1..4].Volts()` (the SDK's calibrated input, ~±10 mV
   in input mode), the learned offset taken off, smoothed (one-pole, ~5 ms),
   then a Schmitt trigger per input: a note moves once the pitch is 0.65
   semitone from it, to the nearest semitone, and has stayed 3 ms -- an input
