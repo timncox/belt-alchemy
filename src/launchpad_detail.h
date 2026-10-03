@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "launchpad.h"
+#include "usb_midi_keys.h"
 
 namespace lpd
 {
@@ -35,6 +36,10 @@ void XlKnob(int k, uint8_t v);      /* k = row * 8 + col */
 void XlFader(int col, uint8_t v);
 void XlPush(uint8_t row, uint8_t col, bool down);
 
+/* Keyboard messages (keys::), from any keyboard: a USB one's link or the
+ * phone's. A full queue drops (counted). */
+void KeysPush(const umk_msg_t* m, int n);
+
 /* The gamepad's held mask (written by the USB receive callback). */
 extern volatile uint32_t pad_buttons;
 extern uint32_t          pad_reports;
@@ -43,5 +48,7 @@ extern uint32_t          pad_reports;
 bool UsbLpConnected();
 bool UsbXlConnected();
 bool UsbPadConnected();
+bool UsbKeysConnected();
+bool UsbKeysHeld();
 
 } // namespace lpd

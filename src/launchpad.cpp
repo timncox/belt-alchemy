@@ -10,6 +10,7 @@
 #include "usbh_midi.h"
 #include "usbh_hub_midi.h"
 #include "launchpad_detail.h"
+#include "usb_midi_keys.h"
 
 extern "C" USBH_HandleTypeDef hUsbHostHS; /* libDaisy's host handle */
 
@@ -19,14 +20,13 @@ namespace xl { void Flush_(); }
 /*
  * A "link" is one USB-MIDI device the host can talk to: the device plugged
  * straight in (libDaisy's MIDI class), or one of the hub driver's slots.
- * Devices are recognised by vendor/product id and bound to a role.
+ * Devices are recognised by vendor/product id and bound to a role
+ * (umk_role): the Mini and the XL by id, any other MIDI device is a keyboard.
  */
 namespace
 {
 
 constexpr uint16_t kNovation = 0x1235;
-constexpr uint16_t kPidMini  = 0x0113; /* Launchpad Mini MK3 */
-constexpr uint16_t kPidXl    = 0x0061; /* Launch Control XL */
 
 constexpr int kDirect   = 0;                         /* link id: no hub */
 constexpr int kHub0     = 1;                         /* link id: hub slot 0 */
@@ -38,6 +38,8 @@ bool                 g_direct_ready = false; /* MIDI class active, pipes open */
 bool                 g_failed       = false; /* abort, unsupported or error seen */
 int                  g_mini_link    = kNone;
 int                  g_xl_link      = kNone;
+uint8_t              g_keys_links   = 0;     /* bit n = link n is a keyboard */
+umk_keys_t           g_keys[kLinks];         /* per keyboard: notes held */
 uint8_t              g_pad_last[6];         /* the last report's head, any type */
 
 uint32_t g_rx_count = 0, g_tx_count = 0;
@@ -108,11 +110,29 @@ bool is_pad(int link)
     return link != kDirect && HUBMIDI_DevKind((uint8_t)(link - kHub0)) == HUBMIDI_KIND_XINPUT;
 }
 
+bool is_keys(int link) { return (g_keys_links >> link) & 1u; }
+
+void keys_rx(int link, const uint8_t* buf, size_t len)
+{
+    umk_msg_t m[16];
+    lpd::KeysPush(m, umk_keys_rx(&g_keys[link], buf, len, m, 16));
+}
+
+/* The keyboard went away: let go of what it held. */
+void keys_drop(int link)
+{
+    umk_msg_t m[16];
+    int       n;
+    while ((n = umk_keys_release_all(&g_keys[link], m, 16)) > 0) lpd::KeysPush(m, n);
+    g_keys_links = (uint8_t)(g_keys_links & ~(1u << link));
+}
+
 void dispatch(int link, uint8_t* buf, size_t len)
 {
     if (is_pad(link)) { pad_rx(buf, len); return; }
     g_rx_count++;
-    if (link == g_mini_link) mini_rx(buf, len);
+    if (is_keys(link)) keys_rx(link, buf, len);
+    else if (link == g_mini_link) mini_rx(buf, len);
     else if (link == g_xl_link) xl_rx(buf, len);
 }
 
@@ -137,6 +157,8 @@ void on_disconnect(void*)
     g_mini_link    = kNone;
     g_xl_link      = kNone;
     lpd::pad_buttons = 0;
+    for (int l = 0; l < kLinks; l++)
+        if (is_keys(l)) keys_drop(l);
 }
 
 /* Bind ready links to roles by id; drop roles whose link went away. */
@@ -145,13 +167,21 @@ void bind()
     if (g_mini_link != kNone && !link_ready(g_mini_link)) g_mini_link = kNone;
     if (g_xl_link != kNone && !link_ready(g_xl_link)) g_xl_link = kNone;
     for (int l = 0; l < kLinks; l++)
+        if (is_keys(l) && !link_ready(l)) keys_drop(l);
+    for (int l = 0; l < kLinks; l++)
     {
-        if (l == g_mini_link || l == g_xl_link || !link_ready(l) || is_pad(l)) continue;
+        if (l == g_mini_link || l == g_xl_link || is_keys(l) || !link_ready(l) || is_pad(l))
+            continue;
         uint16_t vid = 0, pid = 0;
         link_id(l, &vid, &pid);
-        if (vid != kNovation) continue;
-        if (pid == kPidMini && g_mini_link == kNone) { g_mini_link = l; mini_bound(); }
-        else if (pid == kPidXl && g_xl_link == kNone) { g_xl_link = l; xl_bound(); }
+        const int role = umk_role(vid, pid, UMK_KIND_MIDI);
+        if (role == UMK_ROLE_MINI && g_mini_link == kNone) { g_mini_link = l; mini_bound(); }
+        else if (role == UMK_ROLE_XL && g_xl_link == kNone) { g_xl_link = l; xl_bound(); }
+        else if (role == UMK_ROLE_KEYS)
+        {
+            umk_keys_reset(&g_keys[l]);
+            g_keys_links = (uint8_t)(g_keys_links | (1u << l));
+        }
     }
 }
 
@@ -299,6 +329,14 @@ void Init()
 void Poll(uint32_t now)
 {
     g_usbh.Process();
+    /* libDaisy reads the whole configuration descriptor into a 256-byte
+     * buffer, however long the device says it is (a big keyboard's can be
+     * longer): ask for no more than fits. The request goes out on the next
+     * Process, so this is in time. */
+    if (hUsbHostHS.gState == HOST_ENUMERATION && hUsbHostHS.EnumState == ENUM_GET_FULL_CFG_DESC
+        && hUsbHostHS.RequestState == CMD_SEND
+        && hUsbHostHS.device.CfgDesc.wTotalLength > USBH_MAX_SIZE_CONFIGURATION)
+        hUsbHostHS.device.CfgDesc.wTotalLength = USBH_MAX_SIZE_CONFIGURATION;
     const uint8_t gs = (uint8_t)hUsbHostHS.gState;
     const uint8_t es = (uint8_t)hUsbHostHS.EnumState;
     if ((gs != g_last_gs || es != g_last_es) && g_tr_n < kTrace)
@@ -323,7 +361,7 @@ void Poll(uint32_t now)
 
 uint8_t Stage()
 {
-    if (g_mini_link != kNone || g_xl_link != kNone) return 3;
+    if (g_mini_link != kNone || g_xl_link != kNone || g_keys_links) return 3;
     for (int l = kHub0; l < kLinks; l++)
         if (link_ready(l) && is_pad(l)) return 3;
     if (hUsbHostHS.gState == HOST_ABORT_STATE) g_failed = true;
@@ -361,8 +399,25 @@ int Report(char* b, int cap)
     OUT("pad: reports %lu, held %05lx, last %02x %02x %02x %02x %02x %02x\n",
         (unsigned long)lpd::pad_reports, (unsigned long)lpd::pad_buttons, g_pad_last[0], g_pad_last[1],
         g_pad_last[2], g_pad_last[3], g_pad_last[4], g_pad_last[5]);
-    OUT("direct device %04x:%04x\n", hUsbHostHS.device.DevDesc.idVendor,
-        hUsbHostHS.device.DevDesc.idProduct);
+    OUT("keys: links %02x", g_keys_links);
+    for (int l = 0; l < kLinks; l++)
+    {
+        if (!is_keys(l)) continue;
+        uint16_t vid = 0, pid = 0;
+        link_id(l, &vid, &pid);
+        OUT(", link %d %04x:%04x held %d", l, vid, pid, umk_keys_held_count(&g_keys[l]));
+    }
+    OUT("; notes in %lu, dropped %lu\n", (unsigned long)keys::MsgCount(),
+        (unsigned long)keys::DropCount());
+    {
+        uint16_t n = hUsbHostHS.device.CfgDesc.wTotalLength;
+        if (n > USBH_MAX_SIZE_CONFIGURATION) n = USBH_MAX_SIZE_CONFIGURATION;
+        OUT("direct device %04x:%04x cfg %u B, plain MIDI host can serve it %d\n",
+            hUsbHostHS.device.DevDesc.idVendor, hUsbHostHS.device.DevDesc.idProduct,
+            hUsbHostHS.device.CfgDesc.wTotalLength,
+            umk_direct_ok(hUsbHostHS.device.CfgDesc_Raw, n, USBH_MAX_NUM_INTERFACES,
+                          USBH_MAX_NUM_ENDPOINTS, USBH_MAX_SIZE_CONFIGURATION));
+    }
     OUT("trace (ms gState enumState):\n");
     for (int i = 0; i < g_tr_n; i++) OUT("  %lu %u %u\n", (unsigned long)g_tr[i].t, g_tr[i].gs, g_tr[i].es);
 #undef OUT
@@ -555,6 +610,15 @@ bool UsbPadConnected()
 {
     for (int l = kHub0; l < kLinks; l++)
         if (link_ready(l) && is_pad(l)) return true;
+    return false;
+}
+
+bool UsbKeysConnected() { return g_keys_links != 0; }
+
+bool UsbKeysHeld()
+{
+    for (int l = 0; l < kLinks; l++)
+        if (is_keys(l) && umk_keys_held_count(&g_keys[l]) > 0) return true;
     return false;
 }
 

@@ -16,9 +16,10 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_usb_keys
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
+	./$(BUILD)/test_usb_keys
 
 $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
@@ -28,6 +29,11 @@ $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy
 $(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $@ -lm
+
+# The USB host's hardware-free half: descriptors, roles, keyboard packets.
+$(BUILD)/test_usb_keys: test_usb_keys.c ../src/usb_midi_keys.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $^ -o $@
 
 clean:
 	rm -rf $(BUILD)

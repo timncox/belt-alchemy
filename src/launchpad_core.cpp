@@ -1,6 +1,7 @@
 /* launchpad_core -- the hardware-free half of launchpad.h: the event queues,
- * the knob and fader tables, the gamepad mask and the LED framebuffers that
- * both backends share, and the remote backend (ctrl::, HostLink 0x77 CTRL).
+ * the knob and fader tables, the gamepad mask, the keyboard's message queue
+ * and the LED framebuffers that both backends share, and the remote backend
+ * (ctrl::, HostLink 0x77 CTRL).
  * The USB host backend is launchpad.cpp. */
 #include "launchpad.h"
 
@@ -68,6 +69,28 @@ void XlPush(uint8_t row, uint8_t col, bool down)
     if (next == g_xl_tail) return;
     g_xl_q[g_xl_head] = xl::Button{row, col, down};
     g_xl_head         = next;
+}
+
+namespace
+{
+
+constexpr int kKeysQueue = 128; /* a whole keyboard's release fits */
+umk_msg_t     g_keys_q[kKeysQueue];
+int           g_keys_head = 0, g_keys_tail = 0;
+uint32_t      g_keys_msgs = 0, g_keys_drops = 0;
+
+} // namespace
+
+void KeysPush(const umk_msg_t* m, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        const int next = (g_keys_head + 1) % kKeysQueue;
+        if (next == g_keys_tail) { g_keys_drops++; continue; } /* full: drop, never block */
+        g_keys_q[g_keys_head] = m[i];
+        g_keys_head           = next;
+        g_keys_msgs++;
+    }
 }
 
 } // namespace lpd
@@ -176,6 +199,29 @@ uint32_t Buttons() { return Connected() ? lpd::pad_buttons : 0u; }
 uint32_t ReportCount() { return lpd::pad_reports; }
 
 } // namespace pad
+
+/* ================================================================== keyboard */
+
+namespace keys
+{
+
+/* Connected() and Held() are at the end, after the remote backend. */
+
+bool PopMsg(uint8_t msg[3])
+{
+    using namespace lpd;
+    if (g_keys_tail == g_keys_head) return false;
+    msg[0]      = g_keys_q[g_keys_tail].b[0];
+    msg[1]      = g_keys_q[g_keys_tail].b[1];
+    msg[2]      = g_keys_q[g_keys_tail].b[2];
+    g_keys_tail = (g_keys_tail + 1) % kKeysQueue;
+    return true;
+}
+
+uint32_t MsgCount() { return lpd::g_keys_msgs; }
+uint32_t DropCount() { return lpd::g_keys_drops; }
+
+} // namespace keys
 
 /* ================================================================== remote */
 
@@ -303,3 +349,12 @@ const uint8_t* LpLeds() { return lpd::lp_want; }
 const uint8_t* XlLeds() { return lpd::xl_want; }
 
 } // namespace ctrl
+
+namespace keys
+{
+
+/* No keyboard comes over CTRL yet: with the remote backend on, none. */
+bool Connected() { return !g_remote && lpd::UsbKeysConnected(); }
+bool Held() { return !g_remote && lpd::UsbKeysHeld(); }
+
+} // namespace keys
