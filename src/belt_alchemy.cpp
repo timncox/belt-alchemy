@@ -21,6 +21,9 @@
  *   Settings page 2 = CHORD: MIDI NOTES, LEAD (0 = chord only), HOLD
  *          (Freeze / Lock), J8 (Formant CV / Hold gate), VEL SENS;
  *   Launchpad top 3 = KEY / PLAY (PLAY pads are held notes: Hide and Seek)
+ *   Settings page 4 = SOURCES: where else the held notes come from --
+ *          the internal chord sequencer, CV on J4-J7, or MIDI on the rear
+ *          header (see "chord sources" below); J3 as the chord clock
  */
 #include <math.h>
 #include <stdio.h>
@@ -56,6 +59,8 @@
 #include "punch_fx.h"
 #include "ff.h"
 #include "versio_alloc.h"
+#include "chord_src.h"
+#include "rear_midi.h"
 
 /* versio_alloc.h first, then the engine inside extern "C" -- see the note in
  * versio_alloc.h about include order and linkage. */
@@ -84,7 +89,7 @@ static constexpr uint32_t kBlockSize = 128u;
 static constexpr uint8_t kGateJack = 0u;
 
 enum : uint8_t { kPagePlay = 0, kPageSetup = 1, kNumAppPages = 2 };
-enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1, kSettingsChord = 2 };
+enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1, kSettingsChord = 2, kSettingsSources = 3 };
 
 /* ---- hardware + engine -------------------------------------------------- */
 
@@ -232,11 +237,11 @@ static Page setup_page = Page(kPageSetup).Name("Setup").Color("#c060ff")
 
 static Jack jk_in_l   ("J1",  "In L",       JackSig::AudioIn);
 static Jack jk_in_r   ("J2",  "In R",       JackSig::AudioIn);
-static Jack jk_gate   ("J3",  "Hard",       JackSig::Trig);
-static Jack jk_cv_key ("J4",  "CV Key",     JackSig::CvBi);
-static Jack jk_cv_ret ("J5",  "CV Retune",  JackSig::CvBi);
-static Jack jk_cv_amt ("J6",  "CV Amount",  JackSig::CvBi);
-static Jack jk_cv_hrm ("J7",  "CV Harmony", JackSig::CvBi);
+static Jack jk_gate   ("J3",  "Hard / Chord clock", JackSig::Trig);
+static Jack jk_cv_key ("J4",  "CV Key / Chord 1",     JackSig::CvBi);
+static Jack jk_cv_ret ("J5",  "CV Retune / Chord 2",  JackSig::CvBi);
+static Jack jk_cv_amt ("J6",  "CV Amount / Chord 3",  JackSig::CvBi);
+static Jack jk_cv_hrm ("J7",  "CV Harmony / Chord 4", JackSig::CvBi);
 static Jack jk_cv_fmt ("J8",  "CV Formant / Hold", JackSig::CvBi);
 static Jack jk_out_l  ("J9",  "Out L",      JackSig::AudioOut);
 static Jack jk_out_r  ("J10", "Out R",      JackSig::AudioOut);
@@ -267,7 +272,9 @@ static Manual manual = Manual()
         "page). The KEY ring is a tuner: the "
         "note you are singing lights green when it is within a quarter tone "
         "of a scale note, orange when it is not. A gate on J3 punches hard-"
-        "tune from a sequencer.");
+        "tune from a sequencer. Chords for the harmony voices can come from "
+        "the Launchpad, Belt's own chord sequencer, CV on J4-J7 or MIDI on "
+        "the rear header (Settings, Sources).");
 
 /* ---- surfaces ------------------------------------------------------------ */
 
@@ -298,6 +305,15 @@ static SelectorHandle midi_mode_s, hold_mode_s, j8_mode_s;
 static const char* const kHoldModeLabels[2] = {"Freeze", "Lock"};
 static const char* const kJ8Labels[2]       = {"Formant", "Hold gate"};
 static const char* const kMidiModeLabels[3] = {"Off", "Harmony", "Target"};
+/* The Sources page and the Chord page's Octave (chord sources, below). */
+static KnobHandle     tempo_k;
+static SelectorHandle source_s, j3_mode_s, tones_s, cv_cal_s, cv_ins_s, octave_s;
+static const char* const kSourceLabels[4] = {"Pads", "Seq", "CV", "MIDI"};
+static const char* const kJ3Labels[2]     = {"Hard gate", "Chord clock"};
+static const char* const kTonesLabels[2]  = {"Triads", "Sevenths"};
+static const char* const kCvCalLabels[3]  = {"Off", "On", "Learn"};
+static const char* const kCvInsLabels[4]  = {"J4", "J4-J5", "J4-J6", "J4-J7"};
+static const char* const kOctaveLabels[4] = {"C2", "C3", "C4", "C5"};
 
 #ifdef BELT_BENCH_USB
 /* HostLink on the Seed's own micro-USB instead of the front panel, for the
@@ -411,6 +427,9 @@ static uint16_t      g_gate_zero  = 32768u;
 static int           g_gate_hi    = 4915;   /* +1.5 V at VDDA 3.30: assert  */
 static int           g_gate_lo    = 1638;   /* +0.5 V:               release */
 static volatile bool g_gate_state = false;
+/* Rising edges on J3, counted here because a trigger can come and go
+ * between two 1 ms polls; the chord clock consumes them (chords_poll). */
+static volatile uint32_t g_gate_edges = 0;
 
 static void gate_calibrate(void)
 {
@@ -430,9 +449,21 @@ static inline void gate_poll_isr(void)
     const uint16_t raw = hw.seed.adc.Get(kCvAdcOffset + kGateJack);
     int            dev = (int)g_gate_zero - (int)raw;
     if (dev < 0) dev = -dev;
-    if (!g_gate_state) { if (dev > g_gate_hi) g_gate_state = true; }
+    if (!g_gate_state)
+    {
+        if (dev > g_gate_hi)
+        {
+            g_gate_state = true;
+            g_gate_edges = g_gate_edges + 1u;
+        }
+    }
     else if (dev < g_gate_lo) g_gate_state = false;
 }
+
+/* J3 is the HARD gate unless Settings (Sources) makes it the chord clock;
+ * then hard-tune is B1 (and the controllers) only. */
+static bool g_j3_clock = false;
+static inline bool j3_hard(void) { return g_gate_state && !g_j3_clock; }
 
 /* ---- buttons (1 ms poll) -------------------------------------------------- */
 
@@ -573,6 +604,22 @@ static B2Gesture b2g;
  *              blue, in-scale notes dim blue. Rows 7-8 are as in KEY. Top 3
  *              is dim green in KEY, bright in PLAY; leaving PLAY releases
  *              every held pad.
+ *   top 5      CHORDS on / off: the internal chord sequencer's progression
+ *              (Settings, Sources: Chords from = Seq). Each COLUMN is one
+ *              chord of the progression, left to right, up to eight:
+ *                rows 1-7  its scale degree, VII at the top down to I in
+ *                          row 7 -- press to set it (a column past the end
+ *                          lengthens the progression to it). Cyan, the
+ *                          playing chord green.
+ *                row 8     its length: press to step 1 -> 2 -> 4 -> 8 bars
+ *                          -> 1 (dim amber, amber, orange, red)
+ *              side 1      run / stop (green running); stopped, the voices
+ *                          let go of the chord
+ *              side 2 / 3  one chord fewer / one more
+ *              Top 5 is magenta in CHORDS; top 5 again goes back to KEY,
+ *              top 3 to PLAY.
+ *              Key and scale are the panel's; triads or sevenths and the
+ *              tempo are on the Sources page. Saved with the slot.
  *
  * USB port (Settings, the firmware page, P5): Mac or Launchpad, from the
  * next power-up. In Launchpad mode B2 shows the host: blue starting, cyan no
@@ -598,17 +645,19 @@ static bool     g_lp_mute_down = false;
  * reads inside belt_process(), which runs in the audio callback. Calling it
  * from the control loop would race the callback, so pads push their notes
  * here and the callback drains the queue before each block: one producer
- * (the control loop), one consumer (the audio callback), no locks. 32 is far
- * more than a block's worth of pad presses; a full queue drops the press. */
+ * (the control loop), one consumer (the audio callback), no locks. Every
+ * chord source pushes here too (chord sources, below) -- never from an
+ * interrupt. 64 holds a chord change (up to 8 messages) plus a burst of
+ * rear-header MIDI between two blocks; a full queue drops the message. */
 struct NoteMsg { uint8_t b[3]; };
-static NoteMsg           g_nq[32];
+static NoteMsg           g_nq[64];
 static volatile uint32_t g_nq_w = 0, g_nq_r = 0;
 
 static void note_push(uint8_t status, uint8_t note, uint8_t vel)
 {
     const uint32_t w = g_nq_w;
-    if (w - g_nq_r >= 32u) return;
-    g_nq[w & 31u] = NoteMsg{{status, note, vel}};
+    if (w - g_nq_r >= 64u) return;
+    g_nq[w & 63u] = NoteMsg{{status, note, vel}};
     __asm__ volatile("" ::: "memory");   /* the entry before the index */
     g_nq_w = w + 1u;
 }
@@ -618,7 +667,7 @@ static void note_drain(belt_t* b)   /* audio callback only */
     uint32_t r = g_nq_r;
     const uint32_t w = g_nq_w;
     __asm__ volatile("" ::: "memory");
-    for (; r != w; r++) belt_on_midi(b, g_nq[r & 31u].b, 3, 0);
+    for (; r != w; r++) belt_on_midi(b, g_nq[r & 63u].b, 3, 0);
     g_nq_r = r;
 }
 
@@ -669,6 +718,225 @@ static void lp_set_play(uint8_t pot, int zone, int zones)
     pager.SetStored(kPagePlay, pot, ((float)zone + 0.5f) / (float)zones, phys);
 }
 
+/* ---- chord sources -----------------------------------------------------------
+ *
+ * Besides the Launchpad's PLAY pads, one more source of held notes at a time
+ * (Settings, page 4 SOURCES, P1 "Chords from"). All of them become note-on /
+ * note-off through note_push(), exactly as the pads do; the engine never
+ * knows which. Changing the source lets go of every note the old one held.
+ *
+ *   Pads   no other source (the default)
+ *   Seq    the internal chord sequencer: seq-alchemy's own core
+ *          (vendor/seq.[ch]) runs its progression at TEMPO (P3), each chord
+ *          held as TRIADS or SEVENTHS (P4) in Belt's KEY and SCALE, rooted
+ *          in the OCTAVE on the Chord page (P6). Chords and bars are set on
+ *          the Launchpad's CHORDS page (top 5). With J3 = Chord clock (P2)
+ *          every rising edge on J3 moves to the next chord instead, and the
+ *          tempo is not used.
+ *   CV     J4.. J7 (P6: how many) are 1 V/oct chord pitches, 0 V = the
+ *          OCTAVE's C, each rounded to the nearest semitone. A note changes
+ *          when its input moves to a new semitone and stays there; with
+ *          J3 = Chord clock the inputs are read only on a J3 edge (sample
+ *          and hold). Those jacks stop modulating KEY / RETUNE / AMOUNT /
+ *          HARMONY while they carry a chord.
+ *          CV cal (P5): On applies each input's learned offset, Off reads
+ *          them raw. Learn: have the sender play the reference chord -- J4
+ *          0 V, J5 +4/12 V, J6 +7/12 V, J7 +1 V (C E G C) -- then turn P5
+ *          to Learn; a quarter second later the offsets are stored in the
+ *          slot. Turn it back to On. B3 shows the result for 3 s once
+ *          Settings closes: green all four learned, amber some, red none
+ *          (an input more than 0.25 V off is a wrong patch, not an error to
+ *          learn, and keeps its old offset).
+ *   MIDI   notes on the rear header's USART1 (rear_midi.h: the cable, and
+ *          why never a straight ribbon), any channel. MIDI clock and
+ *          start / stop are ignored in this version.
+ *
+ * J3 = Chord clock takes J3 away from HARD: hard-tune is then B1 (and the
+ * controllers' HARD) only. All of this runs in the 1 ms control poll;
+ * nothing new runs in the audio callback but J3's edge count.
+ */
+static seq_t DSY_SDRAM_BSS g_seq;   /* plain C, ~19 KB: seq_init() fills it */
+static cs_held_t g_src_held;        /* what Seq / CV are holding */
+static cs_cv_t   g_cv;
+static uint32_t  g_midi_held[4];    /* rear-header notes on, by note number */
+static int       g_src        = -1; /* the source applied: kSourceLabels */
+static int       g_cv_routed  = -1; /* CV inputs taken off the matrix */
+static bool      g_seq_run    = true;
+static int       g_clk_ci     = 0;  /* chord, when J3 clocks the progression */
+static uint32_t  g_edges_seen = 0;
+static int       g_cal_prev   = -1, g_cal_n = -1;
+static float     g_cal_sum[CS_CV_INPUTS];
+static int       g_cal_mask   = -1; /* last Learn's result, to show; -1 none */
+static uint32_t  g_cal_show_until = 0;
+enum { kSrcPads = 0, kSrcSeq = 1, kSrcCv = 2, kSrcMidi = 3 };
+
+static void mark_dirty(uint32_t now);
+
+static void src_emit(uint8_t status, uint8_t note, uint8_t vel, void* ctx)
+{
+    (void)ctx;
+    note_push(status, note, vel);
+}
+
+static void midi_note(uint8_t status, uint8_t note, uint8_t vel)
+{
+    if (g_src != kSrcMidi || note > 127) return;
+    const uint32_t bit = 1u << (note & 31u);
+    if (status == 0x90) g_midi_held[note >> 5] |= bit;
+    else
+    {
+        if (!(g_midi_held[note >> 5] & bit)) return;
+        g_midi_held[note >> 5] &= ~bit;
+    }
+    note_push(status, note, vel);
+}
+
+static void midi_release_all(void)
+{
+    for (int i = 0; i < 128; i++)
+        if (g_midi_held[i >> 5] & (1u << (i & 31)))
+            note_push(0x80, (uint8_t)i, 0);
+    memset(g_midi_held, 0, sizeof g_midi_held);
+}
+
+/* The progression the CHORDS page edits lives in the extras (saved); the
+ * key, scale and chord size follow the panel and Settings. */
+static void prog_from_extras(void)
+{
+    g_seq.prog.count = extras.prog_count;
+    for (int i = 0; i < SEQ_MAX_CHORDS; i++)
+    {
+        g_seq.prog.chord[i].degree = extras.prog_degree[i];
+        g_seq.prog.chord[i].bars   = extras.prog_bars[i];
+    }
+}
+
+static void prog_edited(uint32_t now)
+{
+    extras.prog_count = g_seq.prog.count;
+    for (int i = 0; i < SEQ_MAX_CHORDS; i++)
+    {
+        extras.prog_degree[i] = g_seq.prog.chord[i].degree;
+        extras.prog_bars[i]   = g_seq.prog.chord[i].bars;
+    }
+    if (g_clk_ci >= g_seq.prog.count) g_clk_ci = 0;
+    mark_dirty(now);
+}
+
+/* The chord the sequencer is on now, -1 when stopped. */
+static int seq_chord_now(void)
+{
+    if (!g_seq_run) return -1;
+    return g_j3_clock ? g_clk_ci : seq_chord_index(&g_seq);
+}
+
+static void seq_set_run(bool run)
+{
+    g_seq_run = run;
+    if (run) { seq_play(&g_seq); g_clk_ci = 0; }
+    else     seq_stop(&g_seq);
+}
+
+/* J4..J7 belong to the chord while CV is the source; otherwise back to
+ * their knobs. Re-pointing at runtime is the matrix's documented way. */
+static void cv_route(int taken)
+{
+    if (taken == g_cv_routed) return;
+    g_cv_routed = taken;
+    VirtualKnob* const dest[CS_CV_INPUTS] = {&key, &retune, &amount, &harmony};
+    for (int i = 0; i < CS_CV_INPUTS; i++)
+    {
+        if (i < taken) cv_matrix.Jack((uint8_t)(1 + i)).Off();
+        else           cv_matrix.Jack((uint8_t)(1 + i)).To(*dest[i]);
+    }
+}
+
+static void chords_poll(uint32_t now)
+{
+    const int  src   = (int)source_s.Value();
+    const int  base  = 36 + 12 * (int)octave_s.Value();      /* C2 = 36 */
+    const int  n_cv  = 1 + (int)cv_ins_s.Value();
+    const int  cal   = (int)cv_cal_s.Value();
+    g_j3_clock = (int)j3_mode_s.Value() == 1;
+
+    const uint32_t e     = g_gate_edges;
+    const uint32_t edges = e - g_edges_seen;
+    g_edges_seen = e;
+
+    /* MIDI bytes are always drained; they reach the engine only when MIDI
+     * is the source (midi_note). */
+    rearmidi::Poll(midi_note);
+
+    if (src != g_src)
+    {
+        cs_release(&g_src_held, src_emit, nullptr);
+        midi_release_all();
+        g_src = src;
+        if (src == kSrcSeq) seq_set_run(g_seq_run);
+        cs_cv_init(&g_cv);
+    }
+    cv_route(src == kSrcCv ? n_cv : 0);
+
+    /* CV inputs, with or without the learned offsets; Learn averages the
+     * raw inputs over 256 polls (a quarter second) whatever the source. */
+    float raw[CS_CV_INPUTS], v[CS_CV_INPUTS];
+    for (int i = 0; i < CS_CV_INPUTS; i++)
+    {
+        raw[i] = hw.cv_jacks[1 + i].Volts();
+        v[i]   = raw[i] - (cal != 0 ? (float)extras.cv_off_mv[i] / 1000.0f : 0.0f);
+    }
+    /* Only a turn INTO Learn learns: a slot saved with Learn showing must
+     * not re-learn at boot from whatever is patched then. */
+    if (g_cal_prev < 0) g_cal_prev = cal;
+    if (cal == 2 && g_cal_prev != 2)
+    {
+        g_cal_n = 0;
+        for (int i = 0; i < CS_CV_INPUTS; i++) g_cal_sum[i] = 0.0f;
+    }
+    g_cal_prev = cal;
+    if (g_cal_n >= 0)
+    {
+        for (int i = 0; i < CS_CV_INPUTS; i++) g_cal_sum[i] += raw[i];
+        if (++g_cal_n == 256)
+        {
+            float avg[CS_CV_INPUTS];
+            for (int i = 0; i < CS_CV_INPUTS; i++) avg[i] = g_cal_sum[i] / 256.0f;
+            g_cal_mask       = (int)cs_cal_learn(avg, CS_CV_INPUTS, extras.cv_off_mv);
+            g_cal_show_until = 0;   /* armed: shown once Settings closes */
+            g_cal_n          = -1;
+            mark_dirty(now);
+        }
+    }
+
+    uint8_t notes[CS_MAX_NOTES];
+    if (src == kSrcSeq)
+    {
+        g_seq.prog.root  = (uint8_t)(k_key.last < 0 ? 0 : k_key.last);
+        g_seq.prog.scale = (uint8_t)cs_seq_scale(k_scale.last < 0 ? 1 : k_scale.last);
+        g_seq.prog.tones = (uint8_t)(3 + (int)tones_s.Value());
+        g_seq.bpm        = 40.0f + 200.0f * tempo_k.Value();
+        if (g_j3_clock)
+        {
+            if (edges && g_seq.prog.count)
+                g_clk_ci = (int)((g_clk_ci + edges) % g_seq.prog.count);
+        }
+        else
+            seq_process(&g_seq, now * 1000u, nullptr);   /* ms clock: GetUs() wraps early */
+        const int ci = seq_chord_now();
+        const int n  = ci < 0 ? 0 : cs_chord_notes(&g_seq.prog, ci, base, notes);
+        cs_hold(&g_src_held, notes, n, 100, src_emit, nullptr);
+    }
+    else if (src == kSrcCv)
+    {
+        static int ncv_held = 0;
+        const bool moved = cs_cv_poll(&g_cv, v, n_cv) || n_cv != ncv_held;
+        ncv_held = n_cv;
+        if (g_j3_clock ? edges != 0 : (moved || g_src_held.n == 0))
+            cs_hold(&g_src_held, notes, cs_cv_notes(&g_cv, n_cv, base, notes), 100,
+                    src_emit, nullptr);
+    }
+}
+
 /* ---- Gamepad punch effects (Haute42 in XInput mode, through the hub) --------
  *
  * The output runs through punch_fx.h in Launchpad mode; every gamepad button
@@ -716,6 +984,32 @@ static void pad_poll(void)
     pfx_hold(&g_pfx, settings.IsActive() ? -1 : g_pad_fx);
 }
 
+/* CHORDS page: a pad or side button pressed (see the map above). */
+static bool g_lp_chords = false;
+static void chords_pad(const lp::Event& e, uint32_t now)
+{
+    seq_prog_t& pr = g_seq.prog;
+    if (e.kind == lp::Kind::Side)
+    {
+        if (e.y == 0) seq_set_run(!g_seq_run);
+        if (e.y == 1 && pr.count > 1) { pr.count--; prog_edited(now); }
+        if (e.y == 2 && pr.count < SEQ_MAX_CHORDS) { pr.count++; prog_edited(now); }
+        return;
+    }
+    if (e.y < 7)
+    {
+        pr.chord[e.x].degree = (int8_t)(6 - e.y);
+        if (e.x >= pr.count) pr.count = (uint8_t)(e.x + 1);
+        prog_edited(now);
+    }
+    else if (e.x < pr.count)
+    {
+        uint8_t& b = pr.chord[e.x].bars;
+        b = b >= 8 ? 1 : (b >= 4 ? 8 : (b >= 2 ? 4 : 2));
+        prog_edited(now);
+    }
+}
+
 static void lp_poll(uint32_t now)
 {
     lp::Poll(now);
@@ -731,9 +1025,21 @@ static void lp_poll(uint32_t now)
             if (e.x == 2 && e.down && live)
             {
                 if (g_lp_play) lp_release_all();
-                g_lp_play = !g_lp_play;
+                g_lp_play   = !g_lp_play;   /* from CHORDS (play off): PLAY */
+                g_lp_chords = false;
             }
             if (e.x == 3 && e.down && live) g_hold_latch = !g_hold_latch;
+            if (e.x == 4 && e.down && live)
+            {
+                if (g_lp_play) lp_release_all();
+                g_lp_play   = false;
+                g_lp_chords = !g_lp_chords;
+            }
+            continue;
+        }
+        if (g_lp_chords)
+        {
+            if (live && e.down && e.kind != lp::Kind::Top) chords_pad(e, now);
             continue;
         }
         if (g_lp_play && e.kind == lp::Kind::Grid && e.y < 6)
@@ -830,9 +1136,46 @@ static void xl_frame(uint32_t now)
     }
 }
 
+static void lp_paint_tops(void)
+{
+    lp::SetTop(0, G_HARD ? lp::kRed : lp::kRedDim);
+    lp::SetTop(1, G_MUTED ? lp::kAmber : lp::kAmberDim);
+    lp::SetTop(2, g_lp_play ? lp::kGreen : lp::kGreenDim);
+    lp::SetTop(3, G_HOLD ? lp::kBlue : lp::kBlueDim);
+    lp::SetTop(4, g_lp_chords ? lp::kMagenta : lp::kMagentaDim);
+    lp::SetLogo(lp::kGreen);
+}
+
+static void lp_paint_chords(void)
+{
+    const seq_prog_t& pr = g_seq.prog;
+    const int playing = g_src == kSrcSeq ? seq_chord_now() : -1;
+    for (uint8_t x = 0; x < 8; x++)
+    {
+        const bool in = x < pr.count;
+        const int  row = 6 - pr.chord[x].degree;   /* degrees 0..6 have a row */
+        for (uint8_t y = 0; y < 7; y++)
+        {
+            uint8_t c = lp::kOff;
+            if (y == row) c = !in ? lp::kGrey : (x == playing ? lp::kGreen : lp::kCyan);
+            lp::SetGrid(x, y, c);
+        }
+        const uint8_t b = pr.chord[x].bars;
+        lp::SetGrid(x, 7, !in ? lp::kOff : b >= 8 ? lp::kRed : b >= 4 ? lp::kOrange
+                                          : b >= 2 ? lp::kAmber : lp::kAmberDim);
+    }
+    lp::SetSide(0, g_seq_run ? lp::kGreen : lp::kGreenDim);
+    lp::SetSide(1, lp::kGrey);
+    lp::SetSide(2, lp::kGrey);
+    for (uint8_t y = 3; y < 8; y++) lp::SetSide(y, lp::kOff);
+    lp_paint_tops();
+}
+
 static void lp_paint(void)
 {
     if (!lp::Connected()) return;
+    if (g_lp_chords) { lp_paint_chords(); return; }
+    for (uint8_t y = 0; y < 8; y++) lp::SetSide(y, lp::kOff);
     const int key_idx   = k_key.last   < 0 ? 0 : k_key.last;
     const int scale_idx = k_scale.last < 0 ? 1 : k_scale.last;
     const int sung      = G_VOICED ? ((G_NOTE10 + 5) / 10 % 12 + 12) % 12 : -1;
@@ -900,11 +1243,7 @@ static void lp_paint(void)
         }
         lp::SetGrid(x, 7, c);
     }
-    lp::SetTop(0, G_HARD ? lp::kRed : lp::kRedDim);
-    lp::SetTop(1, G_MUTED ? lp::kAmber : lp::kAmberDim);
-    lp::SetTop(2, g_lp_play ? lp::kGreen : lp::kGreenDim);
-    lp::SetTop(3, G_HOLD ? lp::kBlue : lp::kBlueDim);
-    lp::SetLogo(lp::kGreen);
+    lp_paint_tops();
 }
 
 /* Host report to /lpdiag.txt once, 17 s after boot, unless a Launchpad came up. */
@@ -967,20 +1306,22 @@ static void OnPoll(uint32_t now)
         }
     }
 
+    chords_poll(now);   /* held notes keep coming with Settings open */
+
     if (settings.IsActive())
     {
         /* Settings owns the buttons; drop momentaries, keep latches. */
         tg_hard.Reset();
         tg_mute.Reset();
         b2g.Reset();
-        apply_hard(tg_hard.latch || g_gate_state);
+        apply_hard(tg_hard.latch || j3_hard());
         apply_mute(tg_mute.latch);
         apply_hold(g_hold_latch || g_hold_gate);
         g_btn_swallow = (uint8_t)((1u << kButtonB1) | (1u << kButtonB2) | (1u << kButtonB3));
         return;
     }
     const bool hard = tg_hard.Poll(btn_live(kButtonB1) || g_lp_hard_down || g_xl_hard_down, now)
-                      || g_gate_state;
+                      || j3_hard();
     /* B2 stands down while B3 is held: B2+B3 held two seconds is the
      * Settings chord, and B2's own gesture would mute the harmonies on the
      * way in and, if B3 landed inside the tap window, flip the latch. */
@@ -1282,6 +1623,18 @@ static void OnRender(uint32_t t_ms)
     }
     L.SetButtonPair(kButtonB2, L.ScaleGlobal(b2));
 
+    if (g_cal_mask >= 0)
+    {
+        /* The last CV Learn's result, for 3 s after Settings closes. */
+        if (!g_cal_show_until) g_cal_show_until = t_ms + 3000u;
+        if (t_ms < g_cal_show_until)
+        {
+            L.SetButtonPair(kButtonB3, L.ScaleGlobal(g_cal_mask == 0xF ? kGreen
+                                                     : g_cal_mask ? kAmber : kRed));
+            return;
+        }
+        g_cal_mask = -1;
+    }
     if (pager.Page() != kPageSetup)
         L.SetButtonPair(kButtonB3, L.ScaleGlobal(kColSetup));
 }
@@ -1415,7 +1768,8 @@ int main(void)
      * same belt_on_midi). B1 steps Main -> Firmware -> Chord. */
     settings.Page(kSettingsChord).Name("Chord")
         .Help("What held notes do. Hold them on the Launchpad in PLAY (the "
-              "third top button). With **MIDI notes** on Harmony the harmony "
+              "third top button), or bring them from the sequencer, CV or "
+              "rear-header MIDI (the Sources page). With **MIDI notes** on Harmony the harmony "
               "voices sing the held notes; turn **Lead** to 0 and only they "
               "sound -- every note your own voice, re-pitched: Hide and Seek.");
     midi_mode_s = settings.Page(kSettingsChord).Pot(0)
@@ -1450,8 +1804,65 @@ int main(void)
     vel_k = settings.Page(kSettingsChord).Pot(4).Knob().Default(0.5f)
         .Ident("vel_sens").Name("Vel sens").Color(kColAmount)
         .Help("How much a held note's velocity sets its voice's level. The "
-              "Launchpad Mini MK3 has no velocity (its pads send 100), so this "
-              "is for keyboards and the chord sources to come.");
+              "Launchpad Mini MK3 has no velocity (its pads send 100), nor do "
+              "the sequencer and CV chords; rear-header MIDI does.");
+    octave_s = settings.Page(kSettingsChord).Pot(5)
+        .Selector(kOctaveLabels).Default(1)
+        .Ident("chord_oct").Name("Octave")
+        .Help("Where the sequencer's and the CV inputs' chords sit: the "
+              "sequencer's chord roots start at this C, and 0 V on a CV "
+              "chord input is this C (1 V/oct up from it). Keep the chord "
+              "near the voice -- the harmony voices are your voice "
+              "re-pitched.");
+
+    /* Settings page 4, Sources: where else held notes come from. */
+    settings.Page(kSettingsSources).Name("Sources")
+        .Help("Where held notes come from besides the Launchpad's PLAY pads: "
+              "**Seq**, the internal chord sequencer (its chords on the "
+              "Launchpad's CHORDS page, top 5); **CV**, 1 V/oct chord pitches "
+              "on J4-J7; **MIDI**, notes on the rear header from another Lab. "
+              "With MIDI notes on Harmony (Chord page) the harmony voices "
+              "sing them.");
+    source_s = settings.Page(kSettingsSources).Pot(0)
+        .Selector(kSourceLabels).Default(0)
+        .Ident("chord_src").Name("Chords from")
+        .Help("**Pads** (default): the Launchpad's PLAY pads only. **Seq**: "
+              "the internal chord sequencer. **CV**: J4-J7 (P6 says how many) "
+              "are chord pitches and stop modulating their knobs. **MIDI**: "
+              "notes on the rear header (USART1, header pin 7; never a "
+              "straight ribbon -- see the manual). A change lets go of every "
+              "note the old source held.");
+    j3_mode_s = settings.Page(kSettingsSources).Pot(1)
+        .Selector(kJ3Labels).Default(0)
+        .Ident("j3_mode").Name("J3")
+        .Help("**Hard gate** (default): a gate on J3 punches hard-tune. "
+              "**Chord clock**: each rising edge on J3 moves the sequencer to "
+              "its next chord (the tempo is not used), or, with CV, reads the "
+              "chord inputs (sample and hold). Hard-tune is then B1 only.");
+    tempo_k = settings.Page(kSettingsSources).Pot(2).Knob().Default(0.4f)
+        .Ident("chord_bpm").Name("Tempo").Color(kColRetune)
+        .Help("The sequencer's tempo, 40-240 BPM (120 at 0.4). A chord lasts "
+              "its bars of 4/4 at this tempo.");
+    tones_s = settings.Page(kSettingsSources).Pot(3)
+        .Selector(kTonesLabels).Default(0)
+        .Ident("chord_tones").Name("Chord")
+        .Help("The sequencer's chords as **Triads** (three notes) or "
+              "**Sevenths** (four: every harmony voice).");
+    cv_cal_s = settings.Page(kSettingsSources).Pot(4)
+        .Selector(kCvCalLabels).Default(1)
+        .Ident("cv_cal").Name("CV cal")
+        .Help("**On** (default): the CV chord inputs take off each one's "
+              "learned offset. **Off**: raw. **Learn**: with the sender "
+              "playing the reference chord (J4 0 V, J5 +4/12 V, J6 +7/12 V, "
+              "J7 +1 V: C E G C), turn to Learn; a quarter second later the "
+              "offsets are saved. Then back to On. B3 shows the result after "
+              "Settings closes: green all, amber some, red none.");
+    cv_ins_s = settings.Page(kSettingsSources).Pot(5)
+        .Selector(kCvInsLabels).Default(3)
+        .Ident("cv_ins").Name("CV ins")
+        .Help("How many CV chord inputs, from J4 up. The rest keep modulating "
+              "their knobs. An unpatched input reads 0 V -- the Octave's C -- "
+              "so leave it out here rather than unpatched.");
     humanize_k = settings.Page(kSettingsMain).Pot(4).Knob().Default(0.3f)
         .Ident("humanize").Name("Humanize").Color(kColAmount)
         .Help("Vibrato preserved through the correction, and a slow wander "
@@ -1536,6 +1947,13 @@ int main(void)
     if (!had_boot)
         for (uint8_t p = 0; p < kNumPots; p++)
             pager.SetStored(kPagePlay, p, phys[p], phys);
+
+    /* The chord sequencer: seq-alchemy's defaults, then the saved
+     * progression. MIDI in on the rear header listens from now on. */
+    seq_init(&g_seq, 1u);
+    prog_from_extras();
+    cs_cv_init(&g_cv);
+    rearmidi::Init();
 
     /* Report last session's peak on the P1 ring, then start recording this
      * one. Audio is already passing through during the readout. */

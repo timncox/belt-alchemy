@@ -38,7 +38,8 @@ CPP_SOURCES = \
     src/belt_alchemy.cpp \
     src/picker.cpp \
     src/launchpad.cpp \
-    src/usb_shared.cpp
+    src/usb_shared.cpp \
+    src/rear_midi.cpp
 
 # belt_core_alchemy.c #includes vendor/belt_core.c with calloc/free
 # redirected to SDRAM. Never list vendor/belt_core.c here as well —
@@ -49,7 +50,13 @@ C_SOURCES = \
     src/usbh_hub_midi.c \
     src/usb_audio.c \
     src/usbd_ctlreq_uac.c \
-    src/punch_fx.c
+    src/punch_fx.c \
+    src/chord_src.c \
+    src/vendor/seq.c
+
+# src/vendor/seq.[ch] = seq-alchemy core/seq.[ch] at worktree-core b4453ea,
+# byte-identical: the chord sequencer. seq-alchemy is the source of truth;
+# re-copy, never edit here.
 
 # ── Alchemy SDK, compiled straight from the submodule ───────────────────────
 CPP_SOURCES += $(sort $(shell find $(ALCHEMY_DIR)/framework/src -name '*.cpp'))

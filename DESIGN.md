@@ -75,10 +75,75 @@ Page 2 **CHORD** (2026-09-27): what held notes do.
 - **P3 HOLD**: Freeze (default) / Lock -- what HOLD does (below).
 - **P4 J8**: Formant (default) / Hold gate.
 - **P5 VEL SENS** (default 50).
+- **P6 OCTAVE**: C2 / C3 (default) / C4 / C5 -- where the sequencer's chord
+  roots start and what 0 V on a CV chord input is.
 
-The Launchpad's PLAY pads (below) are the note source for now. The chord
-sequencer and the front/back links of `docs/alchemy-chord-vocoder-design.md`
-feed the same `belt_on_midi`.
+Page 3 **SOURCES** (2026-10-02, the last page the SDK allows:
+`kSettingsMaxPages` = 4): where held notes come from besides the PLAY pads.
+- **P1 CHORDS FROM**: Pads (default) / Seq / CV / MIDI. One at a time; a
+  change releases every note the old source held.
+- **P2 J3**: Hard gate (default) / Chord clock.
+- **P3 TEMPO**: 40-240 BPM (default 120).
+- **P4 CHORD**: Triads (default) / Sevenths.
+- **P5 CV CAL**: Off / On (default) / Learn.
+- **P6 CV INS**: J4 / J4-J5 / J4-J6 / J4-J7 (default).
+
+Settings reopens on the page it was left on (the SDK keeps `page_`).
+
+### Chord sources (2026-10-02, phase 2 of `docs/alchemy-chord-vocoder-design.md`)
+
+Every source ends in `note_push()` → the audio callback's `belt_on_midi()`,
+exactly as the PLAY pads do; nothing new runs in the audio callback except
+J3's rising-edge counter. All of it runs in the 1 ms control poll
+(`chords_poll`), also while Settings is open. The HAL-free rules are in
+`src/chord_src.[ch]` (native test `test/test_chord_src.c`, ASan + UBSan).
+
+- **Seq.** `src/vendor/seq.[ch]` is seq-alchemy `core/seq.[ch]`
+  byte-identical (worktree-core b4453ea; unchanged through a4abb84 /
+  chord-out ea93d84). Its transport and progression run on the control
+  loop's millisecond clock (`System::GetUs()` wraps early on this SDK);
+  the chord is `seq_chord_index()`. Root = Belt's KEY, scale = Belt's SCALE
+  mapped to seq's (Chromatic → Major, Blues → Minor pentatonic; seq has
+  neither), tones = Triads / Sevenths: tone *i* of a chord on degree *d* is
+  scale degree *d* + 2*i* (seq.c's `note_for` for chord tones). The
+  progression (count, degree and bars per chord) is saved in `BeltExtras`.
+  Edited on the Launchpad CHORDS page (top 5; layout in the header of
+  `belt_alchemy.cpp`), which also has run / stop (side 1). `seq_t` (~19 KB)
+  is in SDRAM. A preset save pauses the poll, and the next poll catches up
+  in one step -- a chord can change up to that pause late.
+- **J3 = Chord clock.** Each rising edge (counted in `gate_poll_isr`, so a
+  trigger between two polls is not lost) moves the sequencer to its next
+  chord; the tempo and bars are not used. With CV it samples the inputs.
+  HARD is then B1 / the controllers only.
+- **CV.** `hw.cv_jacks[1..4].Volts()` (the SDK's calibrated input, ~±10 mV
+  in input mode), the learned offset taken off, smoothed (one-pole, ~5 ms),
+  then a Schmitt trigger per input: a note moves once the pitch is 0.65
+  semitone from it, to the nearest semitone, and has stayed 3 ms -- an input
+  parked on a boundary never chatters, a sender off by up to the ±41.7 mV
+  rounding margin still lands, and a jump commits once. The CV inputs in use
+  are taken off the matrix (`Jack(n).Off()`) and given back to KEY / RETUNE
+  / AMOUNT / HARMONY when CV stops being the source. **Calibration:** the
+  sender plays the reference chord J4 0 V / J5 +4/12 / J6 +7/12 / J7 +1 V
+  (C E G C); Learn averages 256 polls and stores measured − reference per
+  input (mV, in `BeltExtras`); an offset over 0.25 V is a wrong patch and is
+  refused. B3 shows the result for 3 s after Settings closes (green all,
+  amber some, red none). This compensates the SENDER: the ±50 mV class of
+  the MCP4728 jacks (J3-J6) is an output error on the other Lab.
+- **MIDI.** `src/rear_midi.[ch]`: libDaisy `UartHandler` on USART1, RX PB7 =
+  header pin 7 (`seed::D14`), 31,250 baud, circular DMA (DMA1_Stream5, which
+  nothing else in this firmware or the SDK uses; neither touches USART1 --
+  both checked by grep) into a 64-byte buffer in
+  `.sram1_bss`; the interrupt only copies bytes into a 256-byte ring, and
+  libDaisy's `MidiParser` reads them in the control loop. Not
+  `MidiUartHandler`: it parses in the interrupt and its event FIFO is 256 ×
+  ~140 B (sysex buffers) = ~36 KB of SRAM. Notes on any channel; note-on
+  velocity 0 = off. Clock, start / stop, CCs: ignored in this version.
+  Cable: pin 8 ↔ pin 7 crossed both ways plus grounds only -- pins 1 / 11 /
+  15 are −12 V / +12 V / 3V3A; **never a straight ribbon**.
+
+✅ emulator (alchemy-lab `emu-chords`, `make test-belt-chords`): every
+source, plus every tests/belt script against this build. ⚠️ Nothing on
+hardware: USART1 electrically, real CV accuracy, CPU of the extra poll work.
 
 **Hide and Seek** = MIDI NOTES Harmony, LEAD 0, Setup's Voice 1-4 intervals
 Off, then hold a chord and sing. Each held note is the singer's own voice
@@ -163,11 +228,11 @@ tuner pip lands on the zone the pot would select for that note. ⚠️ Unseen.
 
 | Jack | Role |
 |---|---|
-| J3 | **HARD gate** — raw ADC in the callback, +1.5 V assert / +0.5 V release on the magnitude of the deviation from the calibrated 0 V code (smack-alchemy's clock-jack reader) |
-| J4 | → KEY (12 zones across the CV range; not V/oct) |
-| J5 | → RETUNE |
-| J6 | → AMOUNT |
-| J7 | → HARMONY |
+| J3 | **HARD gate** — raw ADC in the callback, +1.5 V assert / +0.5 V release on the magnitude of the deviation from the calibrated 0 V code (smack-alchemy's clock-jack reader); or the **chord clock** (Settings, Sources, P2) |
+| J4 | → KEY (12 zones across the CV range; not V/oct), or chord pitch 1 (Sources: CV) |
+| J5 | → RETUNE, or chord pitch 2 |
+| J6 | → AMOUNT, or chord pitch 3 |
+| J7 | → HARMONY, or chord pitch 4 |
 | J8 | → FORMANT, or the **HOLD gate** (Settings, Chord page, P4) |
 
 V/oct into the harmony target needs the engine's Target mode, which is in
@@ -177,7 +242,11 @@ the obvious v0.2.
 ## 3. Persistence
 
 The SDK's **Presets** manage the pager (both pages), Settings (brightness,
-flex, humanize, wet; midi notes, lead, vel sens) and `BeltExtras` {`cpu_peak`}.
+flex, humanize, wet; midi notes, lead, vel sens; the Sources page) and
+`BeltExtras` {`cpu_peak`, `cpu_avg`, the chord progression, the CV offsets}.
+The chord-sources build changed both the Settings schema (Octave + the
+Sources page) and `BeltExtras` (schema 0x03), so its first boot resets
+Belt's saved state once.
 Adding the Chord page changed the Settings schema hash, so the first boot of
 the `hide-and-seek` build finds no valid Belt state and starts from Belt's
 first-boot defaults, once. Slot 0 is the working

@@ -16,9 +16,10 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
+	./$(BUILD)/test_chord_src
 
 $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
@@ -28,6 +29,11 @@ $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy
 $(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $@ -lm
+
+# The chord sources' rules on seq-alchemy's own core, under ASan + UBSan.
+$(BUILD)/test_chord_src: test_chord_src.c ../src/chord_src.c ../src/vendor/seq.c
+	@mkdir -p $(BUILD)
+	$(CC) -O1 -g -Wall -Wextra -I../src -fsanitize=address,undefined -fno-omit-frame-pointer $^ -o $@ -lm
 
 clean:
 	rm -rf $(BUILD)
