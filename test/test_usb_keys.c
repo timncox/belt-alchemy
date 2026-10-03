@@ -184,6 +184,17 @@ static void test_descriptors(void)
     CHECK(f.in_ep == 0x81 && f.out_ep == 0x01);
     CHECK(direct(&d) == 1);
 
+    /* KeyStep-32-style keyboard (Arturia; Tim's). SYNTHESIZED from the
+     * USB-MIDI 1.0 class layout, NOT dumped from the device: AC, then MS
+     * with two cables (two embedded + two external jacks each way), bulk
+     * OUT 0x02 / IN 0x81. Matched only as MIDIStreaming -- no Arturia id
+     * anywhere in the firmware. */
+    cfg_begin(&d, 2); ac(&d, 0); ms(&d, 1, 0, 2, 0x02, 0x81, 64); cfg_end(&d);
+    CHECK(umk_parse_cfg(d.b, d.n, &f) == UMK_KIND_MIDI);
+    CHECK(f.in_ep == 0x81 && f.out_ep == 0x02 && f.in_size == 64);
+    CHECK(direct(&d) == 1);
+    CHECK(umk_role(0x1C75, 0x0000, UMK_KIND_MIDI) == UMK_ROLE_KEYS);
+
     /* MIDI only on an alternate setting (alt 0 empty): never selected by
      * this host, so not taken. */
     cfg_begin(&d, 2); ac(&d, 0);
@@ -319,6 +330,39 @@ static void test_packets(void)
         CHECK(n == 2 && msg_is(&m[0], 0x80, 43, 0) && msg_is(&m[1], 0xB0, 64, 0));
         CHECK(umk_keys_release_all(&k, m, 3) == 0);
         CHECK(umk_keys_held_count(&k) == 0 && k.sustain == 0);
+    }
+    /* A sequencer / arpeggiator stream (KeyStep-style, synthesized): clock,
+     * start, stop, continue and active sensing (CIN F) between the notes,
+     * notes on two cables, a chord-mode note-on arriving while the same note
+     * is still held (overlap), then its off. Realtime never breaks the walk. */
+    {
+        const uint8_t p[] = {0x0F, 0xFA, 0x00, 0x00,  0x0F, 0xF8, 0x00, 0x00,
+                             0x09, 0x90, 60, 100,     0x19, 0x90, 64, 100,
+                             0x0F, 0xF8, 0x00, 0x00,  0x09, 0x90, 60, 90,   /* overlap */
+                             0x0F, 0xFE, 0x00, 0x00,  0x08, 0x80, 60, 0,
+                             0x18, 0x80, 64, 0,       0x0F, 0xFB, 0x00, 0x00,
+                             0x08, 0x80, 60, 0,       0x0F, 0xFC, 0x00, 0x00,
+                             0x09, 0x90, 67, 80,      0x0F, 0xF8, 0x00, 0x00,
+                             0x08, 0x80, 67, 0,       0x0F, 0xF8, 0x00, 0x00};
+        const int n = umk_keys_rx(&k, p, sizeof p, m, 32);
+        CHECK(n == 6);
+        CHECK(msg_is(&m[0], 0x90, 60, 100) && msg_is(&m[1], 0x90, 64, 100));
+        CHECK(msg_is(&m[2], 0x80, 60, 0) && msg_is(&m[3], 0x80, 64, 0));
+        CHECK(msg_is(&m[4], 0x90, 67, 80) && msg_is(&m[5], 0x80, 67, 0));
+        CHECK(umk_keys_held_count(&k) == 0);
+    }
+    /* A fast arpeggio: 100 transfers of off+on pairs, nothing left held. */
+    {
+        int total = 0;
+        for (int i = 0; i < 100; i++)
+        {
+            const uint8_t a = (uint8_t)(48 + i % 12), b = (uint8_t)(48 + (i + 1) % 12);
+            const uint8_t p[] = {0x09, 0x90, a, 100, 0x0F, 0xF8, 0, 0, 0x08, 0x80, a, 0,
+                                 0x09, 0x90, b, 100, 0x08, 0x80, b, 0};
+            total += umk_keys_rx(&k, p, sizeof p, m, 32);
+        }
+        CHECK(total == 400);
+        CHECK(umk_keys_held_count(&k) == 0);
     }
     /* the extremes of the range */
     {
