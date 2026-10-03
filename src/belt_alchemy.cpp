@@ -772,10 +772,26 @@ static void pad_poll(void)
                || g_pfx.echo_fb_gain > 0.0f;
 }
 
-/* The grid and the gamepad, from either backend (launchpad.h). */
+/* A USB-MIDI keyboard (launchpad.h keys::): its notes and sustain pedal go to
+ * the engine like the PLAY pads -- note-ons only while Settings is closed,
+ * releases and the pedal always. Notes 0-2 are belt_on_midi's reserved
+ * control notes (HARD / DOUBLE / MUTE momentaries), never a key's pitch. */
+static void keys_poll(void)
+{
+    uint8_t m[3];
+    while (keys::PopMsg(m))
+    {
+        if (m[0] != 0xB0 && m[1] < 3) continue;
+        if (m[0] == 0x90 && settings.IsActive()) continue;
+        note_push(m[0], m[1], m[2]);
+    }
+}
+
+/* The grid, the gamepad and a keyboard, from either backend (launchpad.h). */
 static void ctl_poll(void)
 {
     pad_poll();
+    keys_poll();
     lp::Event e;
     const bool live = !settings.IsActive();
     while (lp::PopEvent(&e))
@@ -1346,7 +1362,8 @@ static void OnRender(uint32_t t_ms)
             {0xFF, 0xC0, 0x00}, {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}};
         if (g_lp_stage < 5) b2 = kStage[g_lp_stage];   /* running: B2 is B2 again */
     }
-    if ((g_lp_mode || ctrl::Enabled()) && pad::Buttons()) b2 = {0xFF, 0xFF, 0xFF}; /* a gamepad button held */
+    if ((g_lp_mode || ctrl::Enabled()) && (pad::Buttons() || keys::Held()))
+        b2 = {0xFF, 0xFF, 0xFF};   /* a gamepad button or a keyboard key held */
     if (g_usb_audio)
     {
         static const LedPanel::Rgb kUac[4] = {
