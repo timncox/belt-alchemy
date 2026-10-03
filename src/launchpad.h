@@ -10,6 +10,10 @@
  * launchpad.{h,cpp}, usbh_hub_midi.{h,c}, usb_midi_keys.{h,c} (new; add
  * usb_midi_keys.c to the Makefile's C_SOURCES). A firmware that does not
  * call keys:: just drops what a keyboard plays.
+ * Then belt-alchemy hub-unplug, 2026-10-03: the hub driver notices a
+ * device unplugged from a hub port (port status read every 100 ms, one
+ * watched port at a time) and frees its slot; lp::, xl::, pad:: and keys::
+ * release whatever that device held. Same six files.
  *
  * The Lab's front port has no VBUS (Hermetic: "identical to ... the Daisy
  * itself, minus VBUS"), so the Launchpad needs 5 V injected -- by a PASSIVE
@@ -195,8 +199,12 @@ uint32_t ReportCount();  /* reports received, for a readout */
  * plugged straight in (through a passive 5 V injector) or through the hub.
  * Its notes and sustain pedal arrive as channel-1 messages, every cable and
  * channel merged: 90 n v, 80 n 00, B0 40 7F/00. Nothing is sent to it.
- * When it goes away (unplug seen as a host reset, or its slot closing) every
- * note it held is let go. The plain MIDI host (no hub) only serves a device
+ * When it goes away every note it held is let go, and the pedal: plugged
+ * straight in, at the host's disconnect; behind the hub, when the port
+ * check sees it gone -- within 100 ms x the hub's watched ports (up to
+ * 400 ms with four), during which it may still sound. Likewise a
+ * Launchpad's held pads, a Launch Control's held buttons and a gamepad's
+ * buttons are released when it is unplugged. The plain MIDI host (no hub) only serves a device
  * whose FIRST interface is Audio class with the MIDIStreaming interface
  * among the first two (/lpdiag.txt says "plain MIDI host can serve it");
  * anything else needs the hub.
