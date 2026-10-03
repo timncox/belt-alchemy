@@ -107,6 +107,15 @@ int main(void)
     printf("C3     -> %.2f Hz, note %.2f\n", freq, note);
     assert(fabs(note - 48.0) < 0.1);
 
+    /* F2, near the bottom of the tracked range (BELT_FMIN 85 Hz). YIN's
+     * longest lag was fixed at 260 for 22050 Hz analysis; at 48 kHz that is
+     * 92 Hz, so this note was out of reach and low notes glitched. */
+    run_sine(b, 87.3071, 1.0, &ph, NULL, 0);
+    note = get_num(b, "detected_note");
+    freq = get_num(b, "detected_freq");
+    printf("F2     -> %.2f Hz, note %.2f\n", freq, note);
+    assert(fabs(note - 41.0) < 0.1);
+
     /* 2. hard-tune pulls a sharp A back to A. C major, so A is a scale note. */
     belt_set_param(b, "key",    "0");
     belt_set_param(b, "scale",  "1");
