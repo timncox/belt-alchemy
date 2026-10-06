@@ -691,6 +691,13 @@ static void fire_grain(belt_t *b, const belt_voice_t *v, double t_o, float g) {
     /* keep the grain's content reach behind the write head: G*(1+g) <= L */
     float gmax = ((float)BELT_LATENCY - 64.0f) / G - 1.0f;
     g = clampf(g * v->formant_mul, 0.55f, gmax < 0.55f ? 0.55f : gmax);
+    /* ALCHEMY: the budget above assumes the mark sits at `want`, but the
+     * nearest mark can be up to half a period later. At 48k with L = 1152,
+     * a low note's reach is G*(1.5+g) -- 565*(1.5+0.93) at F2-ish, ~200
+     * samples past the write head into 16K-old ring data, heard as digital
+     * noise below ~90 Hz (Tim, 2026-10-06). Step back whole periods: the
+     * same point of the waveform one cycle earlier. */
+    while (m + (double)(G * g) + 2.0 > (double)b->w && m >= (double)G) m -= (double)G;
 
     int len = (int)(2.0f * G);
     if (len < 8) len = 8;
