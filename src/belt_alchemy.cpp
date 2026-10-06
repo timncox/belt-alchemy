@@ -859,6 +859,8 @@ static void cv_route(int taken)
     }
 }
 
+static uint32_t g_extras_seen = 0u;   /* extras.loads, last taken */
+
 static void chords_poll(uint32_t now)
 {
     const int  src   = (int)source_s.Value();
@@ -873,6 +875,15 @@ static void chords_poll(uint32_t now)
     const uint32_t e     = g_gate_edges;
     const uint32_t edges = e - g_edges_seen;
     g_edges_seen = e;
+
+    /* A slot load or a host's live write replaced the extras: the
+     * progression follows (HostLink runs on this same loop, so no race). */
+    if (extras.loads != g_extras_seen)
+    {
+        g_extras_seen = extras.loads;
+        prog_from_extras();
+        if (g_clk_ci >= g_seq.prog.count) g_clk_ci = 0;
+    }
 
     /* MIDI bytes are always drained; they reach the engine only when MIDI
      * is the source (midi_note). */
@@ -2012,6 +2023,7 @@ int main(void)
      * progression. MIDI in on the rear header listens from now on. */
     seq_init(&g_seq, 1u);
     prog_from_extras();
+    g_extras_seen = extras.loads;
     cs_cv_init(&g_cv);
     cs_cvdeg_init(&g_cvdeg);
     rearmidi::Init();

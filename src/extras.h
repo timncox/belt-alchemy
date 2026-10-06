@@ -36,6 +36,12 @@ struct BeltExtras : public alchemy::Serializable
     uint8_t prog_bars[8]   = {1, 1, 1, 1, 1, 1, 1, 1};
     int16_t cv_off_mv[4]   = {0, 0, 0, 0};
 
+    /* Not saved: bumped by every Deserialize -- a slot load, on the panel or
+     * over HostLink, or a host writing the live state (the web control
+     * page's chord editor). The main loop takes the progression from the
+     * extras when it changes; before this it did so only at boot. */
+    uint32_t loads = 0u;
+
     size_t SerializedSize() const override { return 8u + 17u + 8u; }
 
     void Serialize(uint8_t* out) const override
@@ -73,6 +79,7 @@ struct BeltExtras : public alchemy::Serializable
         std::memcpy(cv_off_mv, in + 25u, 8u);
         for (int i = 0; i < 4; i++)
             if (cv_off_mv[i] < -250 || cv_off_mv[i] > 250) cv_off_mv[i] = 0;
+        loads++;
         return true;
     }
 
