@@ -16,12 +16,13 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys $(BUILD)/test_hub_unplug rear_link
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys $(BUILD)/test_hub_unplug $(BUILD)/test_lab_link rear_link
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
 	./$(BUILD)/test_chord_src
 	./$(BUILD)/test_usb_keys
 	./$(BUILD)/test_hub_unplug
+	./$(BUILD)/test_lab_link
 
 # The back link end to end: seq-alchemy's own chord-out sender (another
 # repo; skipped when it is not there) -> Belt's rear_midi.cpp + libDaisy's
@@ -85,6 +86,11 @@ $(BUILD)/test_usb_keys: test_usb_keys.c ../src/usb_midi_keys.c
 $(BUILD)/test_hub_unplug: test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_midi_keys.c fake_usbh/usbh_core.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -DDMA_SECTION= -Ifake_usbh test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_midi_keys.c -o $@
+
+# Two Labs sharing controllers: both ends of src/lab_link.c wired together.
+$(BUILD)/test_lab_link: test_lab_link.c ../src/lab_link.c ../src/lab_link.h
+	@mkdir -p $(BUILD)
+	$(CC) -O1 -g -Wall -Wextra -I../src -fsanitize=address,undefined -fno-omit-frame-pointer test_lab_link.c ../src/lab_link.c -o $@
 
 clean:
 	rm -rf $(BUILD)

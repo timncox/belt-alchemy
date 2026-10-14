@@ -627,9 +627,10 @@ static B2Gesture b2g;
  * running. Hold B1 at power-up to boot in Mac mode whatever the setting says.
  */
 static bool in_scale(int n, int key_idx, int scale_idx);
-static const char* const kUsbLabels[3] = {"Mac", "Launchpad", "Audio"};
+static const char* const kUsbLabels[4] = {"Mac", "Launchpad", "Audio", "Link"};
 static SelectorHandle usb_port;
 static bool     g_lp_mode    = false;
+static bool     g_lp_link    = false; /* Link: Lab B, controllers relayed by another Lab */
 /* true = the front USB-C is a USB audio interface this boot (usb_audio.h):
  * computer -> J9/J10, J1/J2 -> computer, and the engine is bypassed. B2:
  * cyan waiting for a computer, yellow connected, green streaming. */
@@ -1349,7 +1350,8 @@ static void OnPoll(uint32_t now)
         if (g_lp_stage == 0 && now - g_lp_boot_ms > 2000u) g_lp_stage = 1;
         else if (g_lp_stage == 1 && now - g_lp_boot_ms > 2300u)
         {
-            lp::Init();
+            if (g_lp_link) lp::InitLink();
+            else lp::Init();
             g_lp_stage = 2;
         }
         else if (g_lp_stage >= 2)
@@ -2039,7 +2041,8 @@ int main(void)
         System::Delay(1);
     }
     force_mac = hw.buttons[kButtonB1].Pressed();
-    g_lp_mode    = (int)usb_port.Value() == 1 && !force_mac;
+    g_lp_link    = (int)usb_port.Value() == 3 && !force_mac;
+    g_lp_mode    = ((int)usb_port.Value() == 1 && !force_mac) || g_lp_link;
     g_usb_audio  = (int)usb_port.Value() == 2 && !force_mac;
     g_lp_boot_ms = System::GetNow();
     if (g_usb_audio) UAC_Start("Alchemy Lab");

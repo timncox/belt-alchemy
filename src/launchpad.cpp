@@ -9,11 +9,14 @@
 #include "usbh_midi.h"
 #include "usbh_hub_midi.h"
 #include "usb_midi_keys.h"
+#include "hid/usb_midi.h"
+#include "lab_link.h"
 
 extern "C" USBH_HandleTypeDef hUsbHostHS; /* libDaisy's host handle */
 
 namespace xl { void Flush_(); }
 namespace keys { void Push_(const umk_msg_t* m, int n); }
+namespace lp { void release_all_(); void redraw_(); }
 
 /* ============================================================== transport */
 /*
@@ -30,7 +33,13 @@ constexpr uint16_t kNovation = 0x1235;
 constexpr int kDirect   = 0;                         /* link id: no hub */
 constexpr int kHub0     = 1;                         /* link id: hub slot 0 */
 constexpr int kLinks    = 1 + HUBMIDI_MAX_DEVICES;
+constexpr int kVirtual  = kLinks;                    /* Lab B: a controller on Lab A */
 constexpr int kNone     = -1;
+
+/* Another Alchemy Lab in Link mode (lab_link.h). libDaisy's device-side MIDI
+ * keeps the stock ST ids, so the id only makes it a candidate: it counts as
+ * a Lab once it answers the hello. */
+constexpr uint16_t kLabVid = 0x0483, kLabPid = 0x5740;
 
 daisy::USBHostHandle g_usbh;
 bool                 g_direct_ready = false; /* MIDI class active, pipes open */
@@ -45,10 +54,38 @@ uint8_t              g_pad_last[6];         /* the last report's head, any type 
 
 uint32_t g_rx_count = 0, g_tx_count = 0;
 
+/* Lab A side: the linked Lab B and what is queued for it. */
+llk_host_t g_lab;
+int        g_lab_link  = kNone;
+uint8_t    g_lab_q[512];
+int        g_lab_qn    = 0;
+uint32_t   g_lab_hello = 0;   /* ms of the last hello */
+llk_state_t g_lab_was  = LLK_NONE;
+
+void lab_queue(const uint8_t* b, int n)
+{
+    if (g_lab_qn + n > (int)sizeof g_lab_q) return; /* full: drop, never block */
+    memcpy(g_lab_q + g_lab_qn, b, (size_t)n);
+    g_lab_qn += n;
+}
+
+/* Lab B side ("Link" mode): libDaisy's USB-MIDI device on the front port. */
+bool                     g_client = false;
+daisy::MidiUsbTransport  g_dev;
+llk_client_t             g_cl;
+uint8_t                  g_cl_presence = 0;
+uint8_t                  g_cl_out[512];
+int                      g_cl_outn     = 0;
+uint32_t                 g_cl_rx       = 0;
+/* Bytes arrive in the USB interrupt: a single-producer ring, drained by Poll. */
+uint8_t                  g_cl_ring[2048];
+volatile uint32_t        g_cl_head = 0, g_cl_tail = 0;
+
 bool via_hub() { return g_usbh.IsActiveClass(USBH_HUB_MIDI_CLASS); }
 
 bool link_ready(int link)
 {
+    if (link == kVirtual) return g_client;
     if (link == kDirect) return g_direct_ready && g_usbh.IsActiveClass(USBH_MIDI_CLASS);
     return HUBMIDI_DevReady(&hUsbHostHS, (uint8_t)(link - kHub0));
 }
@@ -66,6 +103,7 @@ void link_id(int link, uint16_t* vid, uint16_t* pid)
 
 uint16_t link_out_size(int link)
 {
+    if (link == kVirtual) return 0; /* Lab B sends its LEDs through client_flush */
     if (link == kDirect)
     {
         if (!hUsbHostHS.pActiveClass || !hUsbHostHS.pActiveClass->pData) return 0;
@@ -88,6 +126,7 @@ bool link_send(int link, uint8_t* buf, uint16_t len)
 /* Each device has its own transmit buffer: two transfers may be in flight. */
 uint8_t DMA_BUFFER_MEM_SECTION g_tx_mini[64];
 uint8_t DMA_BUFFER_MEM_SECTION g_tx_xl[64];
+uint8_t DMA_BUFFER_MEM_SECTION g_tx_lab[64];
 
 void mini_rx(uint8_t* buf, size_t len);
 void xl_rx(uint8_t* buf, size_t len);
@@ -95,6 +134,15 @@ void mini_bound();
 void xl_bound();
 void mini_dropped();
 void xl_dropped();
+void client_poll();
+void xl_redraw();
+void cl_isr(uint8_t* data, size_t size, void*);
+void cl_mini(uint8_t st, uint8_t d1, uint8_t d2, void*);
+void cl_xl(uint8_t st, uint8_t d1, uint8_t d2, void*);
+void cl_hello(void*);
+void cl_release(void*);
+void cl_presence(uint8_t bits, void*);
+void cl_pad(uint32_t mask, void*);
 
 /* XInput input report: type 0x00, length 0x14, wButtons, LT, RT, sticks. */
 void pad_rx(const uint8_t* buf, size_t len)
@@ -106,6 +154,13 @@ void pad_rx(const uint8_t* buf, size_t len)
     if (buf[5] > 64) b |= 1u << 17;
     g_pad_buttons = b;
     g_pad_reports++;
+    if (llk_host_b_owns(&g_lab))
+    {
+        uint8_t m[8];
+        int     n = 0;
+        llk_host_pad(&g_lab, b, m, &n);
+        lab_queue(m, n);
+    }
 }
 
 bool is_pad(int link)
@@ -113,7 +168,7 @@ bool is_pad(int link)
     return link != kDirect && HUBMIDI_DevKind((uint8_t)(link - kHub0)) == HUBMIDI_KIND_XINPUT;
 }
 
-bool is_keys(int link) { return (g_keys_links >> link) & 1u; }
+bool is_keys(int link) { return link < kLinks && ((g_keys_links >> link) & 1u); }
 
 void keys_rx(int link, const uint8_t* buf, size_t len)
 {
@@ -132,6 +187,12 @@ void keys_drop(int link)
 
 void dispatch(int link, uint8_t* buf, size_t len)
 {
+    if (link == g_lab_link)
+    {
+        uint8_t b[256];
+        llk_host_from_b(&g_lab, b, llk_from_usb(buf, (int)len, b, sizeof b));
+        return;
+    }
     if (is_pad(link)) { pad_rx(buf, len); return; }
     g_rx_count++;
     if (is_keys(link)) keys_rx(link, buf, len);
@@ -164,6 +225,7 @@ void on_disconnect(void*)
     g_pad_buttons  = 0;
     for (int l = 0; l < kLinks; l++)
         if (is_keys(l)) keys_drop(l);
+    if (g_lab_link != kNone) { llk_host_detach(&g_lab); g_lab_link = kNone; g_lab_qn = 0; }
 }
 
 /* Bind ready links to roles by id; drop roles whose link went away (the
@@ -175,16 +237,33 @@ void bind()
     if (g_xl_link != kNone && !link_ready(g_xl_link)) { xl_dropped(); g_xl_link = kNone; }
     for (int l = 0; l < kLinks; l++)
         if (is_keys(l) && !link_ready(l)) keys_drop(l);
+    if (g_lab_link != kNone && !link_ready(g_lab_link))
+    {
+        const bool had = llk_host_b_owns(&g_lab);
+        llk_host_detach(&g_lab);
+        g_lab_link = kNone;
+        g_lab_qn   = 0;
+        if (had) lp::redraw_(); /* Lab A's own LEDs come back */
+    }
     bool pad = false;
     for (int l = kHub0; l < kLinks; l++)
         if (link_ready(l) && is_pad(l)) pad = true;
     if (!pad) g_pad_buttons = 0;
     for (int l = 0; l < kLinks; l++)
     {
-        if (l == g_mini_link || l == g_xl_link || is_keys(l) || !link_ready(l) || is_pad(l))
+        if (l == g_mini_link || l == g_xl_link || l == g_lab_link || is_keys(l) || !link_ready(l)
+            || is_pad(l))
             continue;
         uint16_t vid = 0, pid = 0;
         link_id(l, &vid, &pid);
+        if (vid == kLabVid && pid == kLabPid && g_lab_link == kNone && l != kDirect)
+        {
+            g_lab_link  = l;
+            g_lab_qn    = 0;
+            g_lab_hello = 0;
+            llk_host_attach(&g_lab);
+            continue;
+        }
         const int role = umk_role(vid, pid, UMK_KIND_MIDI);
         if (role == UMK_ROLE_MINI && g_mini_link == kNone) { g_mini_link = l; mini_bound(); }
         else if (role == UMK_ROLE_XL && g_xl_link == kNone) { g_xl_link = l; xl_bound(); }
@@ -194,6 +273,59 @@ void bind()
             g_keys_links = (uint8_t)(g_keys_links | (1u << l));
         }
     }
+}
+
+void lab_poll(uint32_t now)
+{
+    if (g_lab_link == kNone) return;
+    uint8_t m[16];
+    int     n = 0;
+    if (g_lab.state == LLK_CANDIDATE && (g_lab_hello == 0 || now - g_lab_hello >= 500))
+    {
+        g_lab_hello = now ? now : 1;
+        n = llk_enc_hello(m);
+        lab_queue(m, n);
+        g_lab.hellos++;
+    }
+    if (g_lab.state == LLK_LINKED)
+    {
+        bool pad = false;
+        for (int l = kHub0; l < kLinks; l++)
+            if (link_ready(l) && is_pad(l)) pad = true;
+        const uint8_t bits = (uint8_t)((g_mini_link != kNone ? LLK_HAS_MINI : 0)
+                                       | (g_xl_link != kNone ? LLK_HAS_XL : 0) | (pad ? LLK_HAS_PAD : 0));
+        n = 0;
+        llk_host_presence(&g_lab, bits, m, &n);
+        lab_queue(m, n);
+    }
+    if (g_lab.state != g_lab_was)
+    {
+        g_lab_was = g_lab.state;
+        lp::redraw_(); /* the logo shows whose controllers they are */
+    }
+    if (g_lab_qn == 0) return;
+    uint16_t ep = link_out_size(g_lab_link);
+    if (ep < 4) return;
+    if (ep > sizeof g_tx_lab) ep = sizeof g_tx_lab;
+    int       used = 0;
+    const int len  = llk_to_usb(g_lab_q, g_lab_qn, g_tx_lab, ep, &used);
+    if (len == 0 || !link_send(g_lab_link, g_tx_lab, (uint16_t)len)) return; /* retry next poll */
+    memmove(g_lab_q, g_lab_q + used, (size_t)(g_lab_qn - used));
+    g_lab_qn -= used;
+}
+
+/* Focus moved between the Labs: whoever lost it lets go of what it held
+ * (Lab B is told by lab_link), and every LED is drawn again from the new
+ * owner's picture. */
+void focus_changed()
+{
+    if (llk_host_b_owns(&g_lab))
+    {
+        lp::release_all_();
+        uint8_t m[8];
+        lab_queue(m, llk_enc_hello(m)); /* B resends every LED (sends are unacknowledged) */
+    }
+    lp::redraw_();
 }
 
 /* ---------------------------------------------------------------- USB-MIDI */
@@ -332,10 +464,11 @@ void flush()
         /* Each changed LED goes out on both cables: two packets. */
         for (int k = 0; k < kCells && n + 2 <= max_pk && sent_n < 16; k++)
         {
-            const int i = (g_scan + k) % kCells;
-            if (g_want[i] == g_sent[i]) continue;
-            cell_packet(i, g_want[i], 0, &g_tx_mini[4 * n]);
-            cell_packet(i, g_want[i], 1, &g_tx_mini[4 * (n + 1)]);
+            const int     i    = (g_scan + k) % kCells;
+            const uint8_t want = llk_host_mini_led(&g_lab, i, g_want[i]);
+            if (want == g_sent[i]) continue;
+            cell_packet(i, want, 0, &g_tx_mini[4 * n]);
+            cell_packet(i, want, 1, &g_tx_mini[4 * (n + 1)]);
             sent_idx[sent_n++] = i;
             n += 2;
         }
@@ -351,7 +484,8 @@ void flush()
     }
     else
     {
-        for (int j = 0; j < sent_n; j++) g_sent[sent_idx[j]] = g_want[sent_idx[j]];
+        for (int j = 0; j < sent_n; j++)
+            g_sent[sent_idx[j]] = llk_host_mini_led(&g_lab, sent_idx[j], g_want[sent_idx[j]]);
         g_scan = (sent_idx[sent_n - 1] + 1) % kCells;
     }
 }
@@ -373,6 +507,7 @@ void Init()
 
 void Poll(uint32_t now)
 {
+    if (g_client) { client_poll(); return; }
     g_usbh.Process();
     /* libDaisy reads the whole configuration descriptor into a 256-byte
      * buffer, however long the device says it is (a big keyboard's can be
@@ -400,14 +535,77 @@ void Poll(uint32_t now)
     if (hUsbHostHS.device.DevDesc.idVendor == kNovation) g_diag.vid_ok = true;
 
     bind();
+    lab_poll(now);
     flush();
     xl::Flush_();
 }
 
+/* ------------------------------------------------------------ Link (Lab B) */
+
+void InitLink()
+{
+    for (int i = 0; i < kCells; i++) g_want[i] = g_sent[i] = kOff;
+    g_client = true;
+    const llk_client_cb_t cb = {cl_mini, cl_xl, cl_hello, cl_release, cl_presence, cl_pad, nullptr};
+    llk_client_init(&g_cl, &cb);
+    daisy::MidiUsbTransport::Config cfg;
+    cfg.periph         = daisy::MidiUsbTransport::Config::EXTERNAL;
+    cfg.tx_retry_count = 1;
+    g_dev.Init(cfg);
+    g_dev.StartRx(cl_isr, nullptr);
+}
+
+bool IsLinkClient() { return g_client; }
+uint8_t LinkState() { return g_client ? (uint8_t)(g_cl_presence ? LLK_LINKED : LLK_NONE) : (uint8_t)g_lab.state; }
+bool LinkFocusB() { return llk_host_b_owns(&g_lab); }
+
+void SetLinkFocus(bool b)
+{
+    if (g_client || g_lab.state != LLK_LINKED || b == (bool)g_lab.focus_b) return;
+    uint8_t m[16];
+    int     n = 0;
+    llk_host_set_focus(&g_lab, b ? 1 : 0, m, &n);
+    lab_queue(m, n);
+    focus_changed();
+}
+
+/* Up to 16 USB-MIDI packets of LED changes per call (a Mini cell is one, an
+ * XL LED four); returns bytes written. Marks them sent: Lab A's hello (at
+ * link-up and at every focus switch to B) asks for everything again. */
+int client_leds_(uint8_t* out, int budget)
+{
+    int n = 0;
+    if (g_need_init) { g_need_init = false; for (int i = 0; i < kCells; i++) g_sent[i] = kUnknown; }
+    for (int k = 0; k < kCells && budget > 0; k++)
+    {
+        const int i = (g_scan + k) % kCells;
+        if (g_want[i] == g_sent[i]) continue;
+        n += llk_enc_mini_led(out + n, i, g_want[i]);
+        g_sent[i] = g_want[i];
+        g_scan    = (i + 1) % kCells;
+        budget--;
+    }
+    return n;
+}
+
 bool Connected() { return g_mini_link != kNone; }
+
+void release_all_()
+{
+    release_held();
+    xl_dropped();
+    g_pad_buttons = 0;
+}
+
+void redraw_()
+{
+    for (int i = 0; i < kCells; i++) g_sent[i] = kUnknown;
+    xl_redraw();
+}
 
 uint8_t Stage()
 {
+    if (g_client) return g_cl_presence ? 3 : g_cl_rx ? 1 : 0;
     if (g_mini_link != kNone || g_xl_link != kNone || g_keys_links) return 3;
     for (int l = kHub0; l < kLinks; l++)
         if (link_ready(l) && is_pad(l)) return 3;
@@ -531,6 +729,15 @@ void mini_rx(uint8_t* buf, size_t len)
         if (cin != 0x8 && cin != 0x9 && cin != 0xB) continue; /* notes and CCs only */
         if (g_rx_cable < 0) g_rx_cable = cable;
         if (cable != g_rx_cable) continue; /* the same press may come on both */
+        if (!g_client)
+        {
+            uint8_t fwd[16];
+            int     fn = 0;
+            const llk_route_t r = llk_host_mini_in(&g_lab, buf[i + 1], d1, d2, fwd, &fn);
+            lab_queue(fwd, fn);
+            if (r == LLK_TOGGLED) { focus_changed(); continue; }
+            if (r != LLK_LOCAL) continue;
+        }
         const int row = d1 / 10, col = d1 % 10;
         if (row < 1 || row > 9 || col < 1 || col > 9) continue;
         const bool down = (st != 0x80) && d2 > 0;
@@ -679,17 +886,35 @@ void Flush_()
     int n = 0, sent_idx[4], sent_n = 0;
     for (int k = 0; k < kLeds && n + 4 <= max_pk && sent_n < 4; k++)
     {
-        const int i = (g_scan + k) % kLeds;
-        if (g_want[i] == g_sent[i]) continue;
+        const int     i    = (g_scan + k) % kLeds;
+        const uint8_t want = llk_host_xl_led(&g_lab, i, g_want[i]);
+        if (want == g_sent[i]) continue;
         const uint8_t sx[11] = {0xF0, 0x00, 0x20, 0x29, 0x02, 0x11, 0x78, kTemplate,
-                                (uint8_t)i, g_want[i], 0xF7};
+                                (uint8_t)i, want, 0xF7};
         n += sysex_packets(sx, 11, 0, &g_tx_xl[4 * n]);
         sent_idx[sent_n++] = i;
     }
     if (n == 0) return;
     if (!link_send(link, g_tx_xl, (uint16_t)(4 * n))) return;
-    for (int j = 0; j < sent_n; j++) g_sent[sent_idx[j]] = g_want[sent_idx[j]];
+    for (int j = 0; j < sent_n; j++) g_sent[sent_idx[j]] = llk_host_xl_led(&g_lab, sent_idx[j], g_want[sent_idx[j]]);
     g_scan = (sent_idx[sent_n - 1] + 1) % kLeds;
+}
+
+/* Lab B: XL LED changes for the link, up to `budget` LEDs. */
+int ClientLeds_(uint8_t* out, int budget)
+{
+    int n = 0;
+    if (g_need_template) { g_need_template = false; for (int i = 0; i < kLeds; i++) g_sent[i] = kUnknown; }
+    for (int k = 0; k < kLeds && budget > 0; k++)
+    {
+        const int i = (g_scan + k) % kLeds;
+        if (g_want[i] == g_sent[i]) continue;
+        n += llk_enc_xl_led(out + n, i, g_want[i]);
+        g_sent[i] = g_want[i];
+        g_scan    = (i + 1) % kLeds;
+        budget--;
+    }
+    return n;
 }
 
 } // namespace xl
@@ -702,6 +927,11 @@ void xl_dropped()
     for (int i = 0; i < 16; i++)
         if (xl::g_btn_down & (1u << i)) xl::push((uint8_t)(i / 8), (uint8_t)(i % 8), false);
     xl::g_btn_down = 0;
+}
+
+void xl_redraw()
+{
+    for (int i = 0; i < xl::kLeds; i++) xl::g_sent[i] = xl::kUnknown;
 }
 
 void xl_bound()
@@ -723,6 +953,16 @@ void xl_rx(uint8_t* buf, size_t len)
             const int nb = (cin == 0x5) ? 1 : (cin == 0x6) ? 2 : 3;
             for (int k = 0; k < nb; k++) sx_byte(buf[i + 1 + k]);
             continue;
+        }
+        if (!g_client && (cin == 0x8 || cin == 0x9 || cin == 0xB))
+        {
+            uint8_t fwd[4];
+            int     fn = 0;
+            if (llk_host_xl_in(&g_lab, buf[i + 1], d1, d2, fwd, &fn) == LLK_FORWARDED)
+            {
+                lab_queue(fwd, fn);
+                continue;
+            }
         }
         if (cin == 0xB && st == 0xB0)
         {
@@ -761,12 +1001,17 @@ namespace pad
 
 bool Connected()
 {
+    if (g_client) return (g_cl_presence & LLK_HAS_PAD) != 0;
     for (int l = kHub0; l < kLinks; l++)
         if (link_ready(l) && is_pad(l)) return true;
     return false;
 }
 
-uint32_t Buttons() { return Connected() ? g_pad_buttons : 0u; }
+uint32_t Buttons()
+{
+    if (!g_client && llk_host_b_owns(&g_lab)) return 0u;
+    return Connected() ? g_pad_buttons : 0u;
+}
 
 uint32_t ReportCount() { return g_pad_reports; }
 
@@ -822,3 +1067,75 @@ uint32_t MsgCount() { return g_msgs; }
 uint32_t DropCount() { return g_drops; }
 
 } // namespace keys
+
+/* ================================================================== Link client */
+
+namespace xl { int ClientLeds_(uint8_t* out, int budget); }
+namespace lp { int client_leds_(uint8_t* out, int budget); }
+
+namespace
+{
+
+void cl_isr(uint8_t* data, size_t size, void*)
+{
+    for (size_t i = 0; i < size; i++)
+    {
+        const uint32_t next = (g_cl_head + 1) % sizeof g_cl_ring;
+        if (next == g_cl_tail) return; /* full: drop, never block */
+        g_cl_ring[g_cl_head] = data[i];
+        g_cl_head            = next;
+    }
+}
+
+/* Relayed controller messages go through the same parsers as a device
+ * plugged straight in. */
+void cl_mini(uint8_t st, uint8_t d1, uint8_t d2, void*)
+{
+    uint8_t pk[4] = {(uint8_t)(st >> 4), st, d1, d2};
+    mini_rx(pk, 4);
+}
+void cl_xl(uint8_t st, uint8_t d1, uint8_t d2, void*)
+{
+    uint8_t pk[4] = {(uint8_t)(st >> 4), st, d1, d2};
+    xl_rx(pk, 4);
+}
+void cl_hello(void*)
+{
+    if (g_cl_outn + 5 <= (int)sizeof g_cl_out) g_cl_outn += llk_enc_hello_reply(g_cl_out + g_cl_outn);
+    lp::redraw_();
+}
+void cl_release(void*) { lp::release_all_(); }
+void cl_presence(uint8_t bits, void*)
+{
+    g_cl_presence = bits;
+    if ((bits & LLK_HAS_MINI) && g_mini_link == kNone) { g_mini_link = kVirtual; mini_bound(); }
+    else if (!(bits & LLK_HAS_MINI) && g_mini_link == kVirtual) { mini_dropped(); g_mini_link = kNone; }
+    if ((bits & LLK_HAS_XL) && g_xl_link == kNone) { g_xl_link = kVirtual; xl_bound(); }
+    else if (!(bits & LLK_HAS_XL) && g_xl_link == kVirtual) { xl_dropped(); g_xl_link = kNone; }
+    if (!(bits & LLK_HAS_PAD)) g_pad_buttons = 0;
+}
+void cl_pad(uint32_t mask, void*) { g_pad_buttons = mask; }
+
+void client_poll()
+{
+    uint8_t  b[256];
+    int      n    = 0;
+    uint32_t tail = g_cl_tail;
+    while (tail != g_cl_head && n < (int)sizeof b)
+    {
+        b[n++] = g_cl_ring[tail];
+        tail   = (tail + 1) % sizeof g_cl_ring;
+    }
+    g_cl_tail = tail;
+    if (n) { g_cl_rx += (uint32_t)n; llk_client_feed(&g_cl, b, n); }
+
+    /* One transfer's worth per millisecond: hello replies, then LEDs. */
+    uint8_t out[16 * 11];
+    int     o = 0;
+    if (g_cl_outn) { memcpy(out, g_cl_out, (size_t)g_cl_outn); o = g_cl_outn; g_cl_outn = 0; }
+    o += lp::client_leds_(out + o, 12);
+    if (o < (int)sizeof out - 11) o += xl::ClientLeds_(out + o, 1);
+    if (o) g_dev.Tx(out, (size_t)o);
+}
+
+} // namespace

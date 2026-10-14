@@ -14,6 +14,9 @@
  * device unplugged from a hub port (port status read every 100 ms, one
  * watched port at a time) and frees its slot; lp::, xl::, pad:: and keys::
  * release whatever that device held. Same six files.
+ * Then belt-alchemy lab-link, 2026-10-13: two Labs share the controllers
+ * (InitLink below). EIGHT files now: + lab_link.{h,c} (add lab_link.c to
+ * C_SOURCES).
  *
  * The Lab's front port has no VBUS (Hermetic: "identical to ... the Daisy
  * itself, minus VBUS"), so the Launchpad needs 5 V injected -- by a PASSIVE
@@ -110,6 +113,19 @@ int Report(char* buf, int cap);
 /* Diagnostics for a readout: packets received, transfers sent. */
 uint32_t RxCount();
 uint32_t TxCount();
+
+/* ---- Two Labs, one set of controllers (lab_link.h) ----
+ * Lab A runs Init() as usual; a Lab in Link mode plugged into its hub is
+ * found by itself (0483:5740 + a hello it answers). Lab B calls InitLink()
+ * INSTEAD of Init(): its front port becomes a USB-MIDI device and lp::,
+ * xl:: and pad:: then show the controllers Lab A relays, as if plugged in.
+ * Focus: top-left + top-right on the Launchpad together, or SetLinkFocus.
+ * The Launchpad logo shows whose controllers they are: green A, blue B. */
+void    InitLink();
+bool    IsLinkClient();   /* this Lab is Lab B */
+uint8_t LinkState();      /* 0 none, 1 a Lab-shaped device not answering yet, 2 linked */
+bool    LinkFocusB();     /* Lab A: Lab B owns the controllers now */
+void    SetLinkFocus(bool b);
 
 } // namespace lp
 
