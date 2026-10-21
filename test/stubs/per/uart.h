@@ -36,6 +36,7 @@ class UartHandler
         buf = b; size = n; fn = cb; fctx = ctx;
         return Result::OK;
     }
+    Result DmaListenStop() { fn = nullptr; return Result::OK; }
     bool IsListening() const { return fn != nullptr; }
 
     static inline uint8_t* buf = nullptr;

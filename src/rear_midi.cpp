@@ -40,13 +40,54 @@ void OnRx(uint8_t* data, size_t size, void* ctx, daisy::UartHandler::Result res)
     n_bytes = n_bytes + (uint32_t)size;
 }
 
+bool enabled = false;
+
 void Listen()
 {
     started = uart.DmaListenStart(dma_buf, kDmaBytes, OnRx, nullptr)
               == daisy::UartHandler::Result::OK;
 }
 
+/* The storm guard. libDaisy's DMA1_Stream5_IRQHandler returns WITHOUT
+ * clearing anything when no UART owns the stream -- which is the state a
+ * UART error leaves behind (the listen stops, the stream's flags stay set).
+ * The interrupt then re-fires forever: the control loop runs one
+ * instruction between entries and the panel and HostLink die while audio,
+ * at a higher slot, plays on. Caught on module 1 (2026-10-21) with the
+ * STALL_DIAG build: 3 of 8 samples in this IRQ, the loop parked just after
+ * HAL_UART_Receive_DMA. So the vector (the app's table is in SRAM) points
+ * here: libDaisy's handler runs as before, then a stopped listener's stream
+ * flags are cleared. */
+#ifdef STM32H750xx   /* hardware only; the native test has no DMA */
+using Isr = void (*)(void);
+Isr prev_dma5 = nullptr;
+
+extern "C" void rearmidi_dma5_guard(void)
+{
+    prev_dma5();
+    if (!uart.IsListening())
+        DMA1->HIFCR = DMA_HIFCR_CFEIF5 | DMA_HIFCR_CDMEIF5 | DMA_HIFCR_CTEIF5
+                      | DMA_HIFCR_CHTIF5 | DMA_HIFCR_CTCIF5;
+}
+#endif
+
 } // namespace
+
+void Enable(bool on)
+{
+    if (on && !enabled)
+    {
+        parser.Reset();
+        Listen();
+        enabled = true;
+    }
+    else if (!on && enabled)
+    {
+        if (uart.IsListening()) uart.DmaListenStop();
+        started = false;
+        enabled = false;
+    }
+}
 
 void Init()
 {
@@ -64,14 +105,25 @@ void Init()
     cfg.pin_config.tx = daisy::Pin();
     parser.Init();
     if (uart.Init(cfg) != daisy::UartHandler::Result::OK) return;
-    Listen();
+    /* libDaisy leaves the RX pin floating (GPIO_NOPULL). With nothing on
+     * the header that reads as noise -- framing errors -- so pull it up to
+     * the idle MIDI level. */
+#ifdef STM32H750xx
+    GPIOB->PUPDR = (GPIOB->PUPDR & ~(3u << (7u * 2u))) | (1u << (7u * 2u));
+    volatile uint32_t* vt  = reinterpret_cast<volatile uint32_t*>(SCB->VTOR);
+    const int          idx = 16 + (int)DMA1_Stream5_IRQn;
+    prev_dma5              = reinterpret_cast<Isr>(vt[idx]);
+    vt[idx]                = reinterpret_cast<uint32_t>(&rearmidi_dma5_guard);
+    __DSB();
+#endif
+    /* Listening starts with Enable(true): only while MIDI is the source. */
 }
 
 void Poll(NoteFn fn)
 {
     /* A UART error (an overrun, or noise on an unplugged pin) stops the
      * listen; start it again, as MidiHandler::Listen() does. */
-    if (started && !uart.IsListening())
+    if (enabled && started && !uart.IsListening())
     {
         parser.Reset();
         Listen();

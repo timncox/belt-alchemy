@@ -83,6 +83,7 @@ int main(int argc, char** argv)
     chord_midi_ring_init(&R);
 
     rearmidi::Init();
+    rearmidi::Enable(true);   /* listening is per source now */
 
     struct Ev { uint32_t ms; std::vector<uint8_t> b; };
     std::vector<Ev>               evs;

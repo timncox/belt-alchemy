@@ -28,8 +28,13 @@
 
 namespace rearmidi {
 
-/* Start listening. Call once, after the board's Init(). */
+/* Set up the UART (pulled-up RX, DMA storm guard). Call once, after the
+ * board's Init(). Does not listen: see Enable(). */
 void Init();
+
+/* Listen only while MIDI is the chord source: an idle receiver costs
+ * nothing and cannot be upset by whatever is (or isn't) on the header. */
+void Enable(bool on);
 
 /* Note callback: status 0x90 (note-on, vel > 0) or 0x80 (note-off, which
  * includes a note-on at velocity 0). */

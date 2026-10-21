@@ -885,8 +885,9 @@ static void chords_poll(uint32_t now)
         if (g_clk_ci >= g_seq.prog.count) g_clk_ci = 0;
     }
 
-    /* MIDI bytes are always drained; they reach the engine only when MIDI
-     * is the source (midi_note). */
+    /* The rear receiver runs only while MIDI is the source; its bytes reach
+     * the engine through midi_note. */
+    rearmidi::Enable(src == kSrcMidi);
     rearmidi::Poll(midi_note);
 
     if (src != g_src)
