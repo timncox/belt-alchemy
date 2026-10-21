@@ -85,6 +85,12 @@ endif
 ifeq ($(CPU_DIAG),1)
 C_DEFS += -DBELT_CPU_DIAG
 endif
+# STALL_DIAG=1 (with BUILD_DIR=build-stall): lockup catcher -- TIM7 watches
+# the control loop's heartbeat; a 1 s stall or a HardFault records PC/LR to
+# backup SRAM, resets, and the next boot appends /belt_stall.txt.
+ifeq ($(STALL_DIAG),1)
+C_DEFS += -DBELT_STALL_DIAG
+endif
 
 # ── Daisy bootloader build (BOOT_SRAM) ──────────────────────────────────────
 # The STM32H750 has 128 KB of internal flash; this app plus the SDK is well

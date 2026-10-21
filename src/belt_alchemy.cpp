@@ -1393,8 +1393,131 @@ static bool btn_live(uint8_t b)
     return down;
 }
 
+#ifdef BELT_STALL_DIAG
+/* make STALL_DIAG=1: a lockup catcher. The control loop bumps g_st_hb every
+ * poll; TIM7 (free in libDaisy) interrupts at 100 Hz at the highest priority
+ * and, once the heartbeat has not moved for 1 s, samples the interrupted
+ * PC/LR/xPSR off the exception frame 8 times (80 ms), stores them in backup
+ * SRAM (not zeroed at boot, kept across a system reset) and resets. A
+ * HardFault (libDaisy's handler only spins) is caught the same way through
+ * the RAM vector table. At the next boot the record is appended to
+ * /belt_stall.txt. Map the PCs with arm-none-eabi-addr2line -f -e the .elf. */
+struct StallRec
+{
+    uint32_t magic, kind, n, uptime_ms;
+    uint32_t pc[8], lr[8], psr[8];
+    uint32_t cfsr, hfsr, bfar, mmfar;
+};
+static constexpr uint32_t kStallMagic = 0xB5A11C47u;
+/* At a fixed address, not in .backup_sram: libDaisy's boot info lives at the
+ * start of backup SRAM where the bootloader expects it, so nothing may be
+ * linked in front of it. 2 KB in is clear of both. */
+static volatile StallRec& g_st_rec = *reinterpret_cast<volatile StallRec*>(0x38800800u);
+static volatile uint32_t g_st_hb, g_st_seen, g_st_still;
+alignas(32) static ALCHEMY_SDMMC_BSS FIL  s_st_fil;
+alignas(32) static ALCHEMY_SDMMC_BSS char s_st_buf[1024];
+static bool g_st_reported = false;
+
+extern "C" __attribute__((used)) void stall_tim7(uint32_t* frame)
+{
+    TIM7->SR = 0;
+    const uint32_t hb = g_st_hb;
+    if (hb != g_st_seen) { g_st_seen = hb; g_st_still = 0; return; }
+    const uint32_t t = ++g_st_still;
+    if (t < 100u) return;                      /* 1 s without a poll */
+    const uint32_t i = t - 100u;
+    if (i < 8u)
+    {
+        g_st_rec.pc[i]  = frame[6];
+        g_st_rec.lr[i]  = frame[5];
+        g_st_rec.psr[i] = frame[7];
+        return;
+    }
+    g_st_rec.kind      = 1u;
+    g_st_rec.n         = g_st_rec.n + 1u;
+    g_st_rec.uptime_ms = HAL_GetTick();
+    g_st_rec.magic     = kStallMagic;
+    __DSB();
+    NVIC_SystemReset();
+}
+
+extern "C" __attribute__((naked)) void TIM7_IRQHandler(void)
+{
+    __asm volatile("tst lr, #4\n ite eq\n mrseq r0, msp\n mrsne r0, psp\n b stall_tim7\n");
+}
+
+extern "C" __attribute__((used)) void stall_fault(uint32_t* frame)
+{
+    for (int i = 0; i < 8; i++) { g_st_rec.pc[i] = frame[6]; g_st_rec.lr[i] = frame[5]; g_st_rec.psr[i] = frame[7]; }
+    g_st_rec.cfsr      = SCB->CFSR;
+    g_st_rec.hfsr      = SCB->HFSR;
+    g_st_rec.bfar      = SCB->BFAR;
+    g_st_rec.mmfar     = SCB->MMFAR;
+    g_st_rec.kind      = 2u;
+    g_st_rec.n         = g_st_rec.n + 1u;
+    g_st_rec.uptime_ms = HAL_GetTick();
+    g_st_rec.magic     = kStallMagic;
+    __DSB();
+    NVIC_SystemReset();
+}
+
+extern "C" __attribute__((naked)) void stall_fault_entry(void)
+{
+    __asm volatile("tst lr, #4\n ite eq\n mrseq r0, msp\n mrsne r0, psp\n b stall_fault\n");
+}
+
+static void stall_install()
+{
+    __HAL_RCC_BKPRAM_CLK_ENABLE();
+    HAL_PWR_EnableBkUpAccess();
+    if (g_st_rec.magic != kStallMagic) g_st_reported = true;   /* nothing to report */
+    /* HardFault is vector 3; the app's table is in SRAM, so it is writable. */
+    ((volatile uint32_t*)SCB->VTOR)[3] = (uint32_t)&stall_fault_entry;
+    __DSB();
+    __HAL_RCC_TIM7_CLK_ENABLE();
+    TIM7->PSC  = 23999u;   /* 240 MHz timer clock -> 10 kHz */
+    TIM7->ARR  = 99u;      /* -> 100 Hz */
+    TIM7->EGR  = TIM_EGR_UG;
+    TIM7->SR   = 0;
+    TIM7->DIER = TIM_DIER_UIE;
+    HAL_NVIC_SetPriority(TIM7_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(TIM7_IRQn);
+    TIM7->CR1  = TIM_CR1_CEN;
+}
+
+static void stall_report(uint32_t now)
+{
+    if (g_st_reported || now < 3000u) return;
+    if (picker::Busy() || !sd.EnsureMounted(now)) return;
+    g_st_reported = true;
+    const char* kind = g_st_rec.kind == 2u ? "HARDFAULT" : "STALL";
+    int len = snprintf(s_st_buf, sizeof s_st_buf,
+                       "== %s #%lu (build %s) at %lu ms after boot\n", kind,
+                       (unsigned long)g_st_rec.n, BELT_GIT_HASH,
+                       (unsigned long)g_st_rec.uptime_ms);
+    for (int i = 0; i < 8; i++)
+        len += snprintf(s_st_buf + len, sizeof s_st_buf - len,
+                        "pc %08lx lr %08lx ipsr %3lu\n", (unsigned long)g_st_rec.pc[i],
+                        (unsigned long)g_st_rec.lr[i], (unsigned long)(g_st_rec.psr[i] & 0x1FFu));
+    if (g_st_rec.kind == 2u)
+        len += snprintf(s_st_buf + len, sizeof s_st_buf - len,
+                        "cfsr %08lx hfsr %08lx bfar %08lx mmfar %08lx\n",
+                        (unsigned long)g_st_rec.cfsr, (unsigned long)g_st_rec.hfsr,
+                        (unsigned long)g_st_rec.bfar, (unsigned long)g_st_rec.mmfar);
+    g_st_rec.magic = 0u;
+    if (f_open(&s_st_fil, "/belt_stall.txt", FA_WRITE | FA_OPEN_APPEND) != FR_OK) return;
+    UINT w = 0;
+    f_write(&s_st_fil, s_st_buf, (UINT)len, &w);
+    f_close(&s_st_fil);
+}
+#endif
+
 static void OnPoll(uint32_t now)
 {
+#ifdef BELT_STALL_DIAG
+    g_st_hb = g_st_hb + 1u;
+    stall_report(now);
+#endif
     if (g_usb_audio && UAC_RebootRequested())
     {
         static uint32_t asked = 0u;
@@ -2127,6 +2250,9 @@ int main(void)
     if (g_usb_audio) UAC_Start("Alchemy Lab");
 
     pfx_init(&g_pfx, g_pfx_ring, PFX_RING_FRAMES, g_pfx_echo, PFX_ECHO_FRAMES, 48000.0f);
+#ifdef BELT_STALL_DIAG
+    stall_install();
+#endif
 #ifdef BELT_CPU_DIAG
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->LAR = 0xC5ACCE55;
