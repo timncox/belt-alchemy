@@ -391,23 +391,35 @@ static void belt_analyze(belt_t *b) {
         if (tau_hi > YIN_TAUMAX) tau_hi = YIN_TAUMAX;
     }
 
+    /* The difference function is the engine's single heaviest loop: up to
+     * YIN_TAUMAX x YIN_W (283 x 512 at 48 kHz) multiply-adds in ONE audio
+     * block, and a low note always searches the full range. Four partial
+     * sums let the FPU overlap the multiply-adds instead of waiting on one
+     * accumulator (~5 -> ~2 cycles a sample on the Alchemy Lab's M7), and a
+     * full search after a lost capped pass carries on from where that pass
+     * stopped rather than redoing lags 1..tau_hi (same values: the running
+     * sum always starts at tau = 1). */
     int best = -1, voiced = 0;
+    float running = 0.0f;
+    int tau_done = 0;
+    float *d = b->d, *cm = b->cmnd;
+    d[0] = 0.0f; cm[0] = 1.0f;
     for (int pass = 0; pass < 2; pass++) {
-        float running = 0.0f;
-        float *d = b->d, *cm = b->cmnd;
-        d[0] = 0.0f; cm[0] = 1.0f;
-        for (int tau = 1; tau <= tau_hi; tau++) {
-            float s = 0.0f;
+        for (int tau = tau_done + 1; tau <= tau_hi; tau++) {
+            float s0 = 0.0f, s1 = 0.0f, s2 = 0.0f, s3 = 0.0f;
             const float *x = b->yin_buf;
             const float *y = b->yin_buf + tau;
-            for (int j = 0; j < YIN_W; j++) {
-                float diff = x[j] - y[j];
-                s += diff * diff;
+            for (int j = 0; j < YIN_W; j += 4) {
+                const float e0 = x[j] - y[j], e1 = x[j + 1] - y[j + 1];
+                const float e2 = x[j + 2] - y[j + 2], e3 = x[j + 3] - y[j + 3];
+                s0 += e0 * e0; s1 += e1 * e1; s2 += e2 * e2; s3 += e3 * e3;
             }
+            const float s = (s0 + s1) + (s2 + s3);
             d[tau] = s;
             running += s;
             cm[tau] = running > 1e-12f ? s * (float)tau / running : 1.0f;
         }
+        tau_done = tau_hi;
 
         best = -1;
         for (int tau = YIN_TAUMIN; tau <= tau_hi; tau++) {
@@ -426,7 +438,6 @@ static void belt_analyze(belt_t *b) {
         if (voiced || tau_hi == YIN_TAUMAX) break;
         tau_hi = YIN_TAUMAX;   /* tracking lost the note: full search */
     }
-    float *cm = b->cmnd;
     b->voiced = voiced;
     if (!voiced) return;
 
