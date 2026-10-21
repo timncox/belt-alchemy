@@ -1407,13 +1407,14 @@ struct StallRec
     uint32_t magic, kind, n, uptime_ms;
     uint32_t pc[8], lr[8], psr[8];
     uint32_t cfsr, hfsr, bfar, mmfar;
+    uint32_t audio0, audio1;   /* audio callbacks at the first / last sample */
 };
 static constexpr uint32_t kStallMagic = 0xB5A11C47u;
 /* At a fixed address, not in .backup_sram: libDaisy's boot info lives at the
  * start of backup SRAM where the bootloader expects it, so nothing may be
  * linked in front of it. 2 KB in is clear of both. */
 static volatile StallRec& g_st_rec = *reinterpret_cast<volatile StallRec*>(0x38800800u);
-static volatile uint32_t g_st_hb, g_st_seen, g_st_still;
+static volatile uint32_t g_st_hb, g_st_seen, g_st_still, g_st_abeat;
 alignas(32) static ALCHEMY_SDMMC_BSS FIL  s_st_fil;
 alignas(32) static ALCHEMY_SDMMC_BSS char s_st_buf[1024];
 static bool g_st_reported = false;
@@ -1421,11 +1422,25 @@ static bool g_st_reported = false;
 extern "C" __attribute__((used)) void stall_tim7(uint32_t* frame)
 {
     TIM7->SR = 0;
+    /* libDaisy runs DMA (audio), USB, SDMMC, I2C, QSPI... all at priority
+     * 0, which TIM7 at 0 cannot preempt. Once a second, move every other
+     * priority-0 IRQ to 1 (their order among themselves is unchanged), so a
+     * hang inside any of them is still sampled. Repeated because drivers
+     * started later (USB host, SD) set 0 again. */
+    static uint32_t demote = 0;
+    if (++demote >= 100u)
+    {
+        demote = 0;
+        for (int irq = 0; irq < 150; irq++)
+            if (irq != TIM7_IRQn && NVIC_GetPriority((IRQn_Type)irq) == 0u)
+                NVIC_SetPriority((IRQn_Type)irq, 1u);
+    }
     const uint32_t hb = g_st_hb;
     if (hb != g_st_seen) { g_st_seen = hb; g_st_still = 0; return; }
     const uint32_t t = ++g_st_still;
     if (t < 100u) return;                      /* 1 s without a poll */
     const uint32_t i = t - 100u;
+    if (i == 0u) g_st_rec.audio0 = g_st_abeat;
     if (i < 8u)
     {
         g_st_rec.pc[i]  = frame[6];
@@ -1433,6 +1448,7 @@ extern "C" __attribute__((used)) void stall_tim7(uint32_t* frame)
         g_st_rec.psr[i] = frame[7];
         return;
     }
+    g_st_rec.audio1    = g_st_abeat;
     g_st_rec.kind      = 1u;
     g_st_rec.n         = g_st_rec.n + 1u;
     g_st_rec.uptime_ms = HAL_GetTick();
@@ -1499,6 +1515,10 @@ static void stall_report(uint32_t now)
         len += snprintf(s_st_buf + len, sizeof s_st_buf - len,
                         "pc %08lx lr %08lx ipsr %3lu\n", (unsigned long)g_st_rec.pc[i],
                         (unsigned long)g_st_rec.lr[i], (unsigned long)(g_st_rec.psr[i] & 0x1FFu));
+    if (g_st_rec.kind == 1u)
+        len += snprintf(s_st_buf + len, sizeof s_st_buf - len,
+                        "audio callbacks during the 80 ms sample: %lu (about 30 = audio alive)\n",
+                        (unsigned long)(g_st_rec.audio1 - g_st_rec.audio0));
     if (g_st_rec.kind == 2u)
         len += snprintf(s_st_buf + len, sizeof s_st_buf - len,
                         "cfsr %08lx hfsr %08lx bfar %08lx mmfar %08lx\n",
@@ -1893,6 +1913,9 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
                           size_t                           size)
 {
     cpu.OnBlockStart();
+#ifdef BELT_STALL_DIAG
+    g_st_abeat = g_st_abeat + 1u;
+#endif
 #ifdef BELT_CPU_DIAG
     g_dg_t0 = DWT->CYCCNT;
 #endif
