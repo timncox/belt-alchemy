@@ -1328,6 +1328,53 @@ static void lp_write_report(uint32_t now)
     f_close(&s_lpdiag_fil);
 }
 
+#ifdef BELT_CPU_DIAG
+/* make CPU_DIAG=1: per-block DWT cycles of the whole callback and of
+ * belt_process, folded into 2 s windows; the last 40 windows are rewritten
+ * to /belt_diag.txt every 2 s. The budget for a 128-sample block at 48 kHz
+ * on a 480 MHz core is 1,280,000 cycles; "near" = over 90 % of it. */
+static constexpr uint32_t kDiagBudget = 480000000u / 48000u * kBlockSize;
+static volatile uint32_t  g_dg_blocks, g_dg_over, g_dg_near, g_dg_max_cb, g_dg_max_bp;
+static volatile uint64_t  g_dg_sum_cb;
+static uint32_t           g_dg_t0;
+static char               g_dg_lines[40][72];
+static uint32_t           g_dg_n, g_dg_last_ms;
+alignas(32) static ALCHEMY_SDMMC_BSS FIL  s_dg_fil;
+alignas(32) static ALCHEMY_SDMMC_BSS char s_dg_buf[40 * 72 + 128];
+
+static void cpu_diag_write(uint32_t now)
+{
+    if (now - g_dg_last_ms < 2000u) return;
+    g_dg_last_ms = now;
+    __disable_irq();
+    const uint32_t blocks = g_dg_blocks, over = g_dg_over, near_ = g_dg_near;
+    const uint32_t max_cb = g_dg_max_cb, max_bp = g_dg_max_bp;
+    const uint64_t sum = g_dg_sum_cb;
+    g_dg_blocks = g_dg_over = g_dg_near = g_dg_max_cb = g_dg_max_bp = 0u;
+    g_dg_sum_cb = 0u;
+    __enable_irq();
+    const uint32_t avg = blocks ? (uint32_t)(sum / blocks) : 0u;
+    snprintf(g_dg_lines[g_dg_n % 40u], 72, "%6lu %5lu %4lu %4lu %3lu%% %3lu%% %3lu%%\n",
+             (unsigned long)(now / 1000u), (unsigned long)blocks, (unsigned long)over,
+             (unsigned long)near_, (unsigned long)(avg / (kDiagBudget / 100u)),
+             (unsigned long)(max_cb / (kDiagBudget / 100u)),
+             (unsigned long)(max_bp / (kDiagBudget / 100u)));
+    g_dg_n++;
+    if (picker::Busy() || !sd.EnsureMounted(now)) return;
+    int len = snprintf(s_dg_buf, sizeof s_dg_buf,
+                       "belt cpu diag, budget %lu cyc/128-block\n"
+                       " t_s blocks over near avg  max  max_engine\n",
+                       (unsigned long)kDiagBudget);
+    const uint32_t first = g_dg_n > 40u ? g_dg_n - 40u : 0u;
+    for (uint32_t i = first; i < g_dg_n; i++)
+        len += snprintf(s_dg_buf + len, sizeof s_dg_buf - len, "%s", g_dg_lines[i % 40u]);
+    if (f_open(&s_dg_fil, "/belt_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
+    UINT w = 0;
+    f_write(&s_dg_fil, s_dg_buf, (UINT)len, &w);
+    f_close(&s_dg_fil);
+}
+#endif
+
 /* Buttons still down when Settings closed: ignored until they are let go.
  * The SDK closes Settings on the B2 or B3 press itself, and this poll sees
  * that same press a moment later; without this the press that leaves
@@ -1541,6 +1588,9 @@ static void OnFrame(void)
      * limiter; this is a ceiling on write frequency, not a write rate.
      */
     if (g_lp_mode) { lp_paint(); xl_frame(now); lp_write_report(now); }
+#ifdef BELT_CPU_DIAG
+    cpu_diag_write(now);
+#endif
 
     /* The USB port only takes effect at power-up, so a change is saved as
      * soon as Settings closes -- nobody should have to wait before cycling. */
@@ -1720,6 +1770,9 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
                           size_t                           size)
 {
     cpu.OnBlockStart();
+#ifdef BELT_CPU_DIAG
+    g_dg_t0 = DWT->CYCCNT;
+#endif
 
     /* Audio interface mode: the jacks belong to the computer. */
     if (g_usb_audio)
@@ -1756,7 +1809,14 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
     }
 
     note_drain(B);   /* pad notes from the control loop, before the block */
+#ifdef BELT_CPU_DIAG
+    const uint32_t bp0 = DWT->CYCCNT;
+#endif
     belt_process(B, bufi, bufi, (int)size);
+#ifdef BELT_CPU_DIAG
+    const uint32_t bp = DWT->CYCCNT - bp0;
+    if (bp > g_dg_max_bp) g_dg_max_bp = bp;
+#endif
 
     const float k = 1.0f / 32768.0f;
     for (size_t i = 0; i < size; i++)
@@ -1768,6 +1828,16 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
     /* The gamepad's punch effects, last on the output. */
     if (g_lp_mode) pfx_process(&g_pfx, out[0], out[1], (uint32_t)size);
 
+#ifdef BELT_CPU_DIAG
+    {
+        const uint32_t cb = DWT->CYCCNT - g_dg_t0;
+        g_dg_blocks = g_dg_blocks + 1u;
+        g_dg_sum_cb = g_dg_sum_cb + cb;
+        if (cb > g_dg_max_cb) g_dg_max_cb = cb;
+        if (cb > kDiagBudget) g_dg_over = g_dg_over + 1u;
+        else if (cb > kDiagBudget / 10u * 9u) g_dg_near = g_dg_near + 1u;
+    }
+#endif
     cpu.OnBlockEnd();
 }
 
@@ -2057,6 +2127,12 @@ int main(void)
     if (g_usb_audio) UAC_Start("Alchemy Lab");
 
     pfx_init(&g_pfx, g_pfx_ring, PFX_RING_FRAMES, g_pfx_echo, PFX_ECHO_FRAMES, 48000.0f);
+#ifdef BELT_CPU_DIAG
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->LAR = 0xC5ACCE55;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+#endif
     hw.StartAudio(AudioCallback);
     cpu.Reset();
 

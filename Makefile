@@ -80,6 +80,11 @@ C_DEFS += -DBELT_VERSION=\"$(BELT_VERSION)\" -DBELT_GIT_HASH=\"$(BELT_GIT_HASH)\
 ifeq ($(BENCH_USB),1)
 C_DEFS += -DBELT_BENCH_USB
 endif
+# CPU_DIAG=1 (with BUILD_DIR=build-diag): per-block callback cycles into
+# /belt_diag.txt every 2 s. A measuring tool, never a release.
+ifeq ($(CPU_DIAG),1)
+C_DEFS += -DBELT_CPU_DIAG
+endif
 
 # ── Daisy bootloader build (BOOT_SRAM) ──────────────────────────────────────
 # The STM32H750 has 128 KB of internal flash; this app plus the SDK is well
