@@ -16,7 +16,7 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys $(BUILD)/test_hub_unplug rear_link
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys $(BUILD)/test_hub_unplug rear_link sysex
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
 	./$(BUILD)/test_chord_src
@@ -88,3 +88,10 @@ $(BUILD)/test_hub_unplug: test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_mi
 
 clean:
 	rm -rf $(BUILD)
+
+sysex: $(BUILD)/test_sysex
+	./$(BUILD)/test_sysex
+
+$(BUILD)/test_sysex: test_sysex.cpp ../src/sysex_codec.h
+	@mkdir -p $(BUILD)
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -fsanitize=address,undefined -I../src test_sysex.cpp -o $@

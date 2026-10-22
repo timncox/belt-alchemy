@@ -55,6 +55,7 @@
 #include "picker.h"
 #include "launchpad.h"
 #include "usb_shared.h"
+#include "sysex_transport.h"
 #include "usb_audio.h"
 #include "punch_fx.h"
 #include "ff.h"
@@ -321,6 +322,8 @@ static const char* const kOctaveLabels[4] = {"C2", "C3", "C4", "C5"};
 static daisy::UsbHandle          bench_usb;
 static hostlink::CdcUsbTransport bench_cdc;
 #endif
+/* Phone role: HostLink over USB-MIDI SysEx (an iPhone app via CoreMIDI). */
+static SysExUsbTransport phone_link;
 
 /* ---- host shim ------------------------------------------------------------ */
 
@@ -627,7 +630,7 @@ static B2Gesture b2g;
  * running. Hold B1 at power-up to boot in Mac mode whatever the setting says.
  */
 static bool in_scale(int n, int key_idx, int scale_idx);
-static const char* const kUsbLabels[3] = {"Mac", "Launchpad", "Audio"};
+static const char* const kUsbLabels[4] = {"Mac", "Launchpad", "Audio", "Phone"};
 static SelectorHandle usb_port;
 static bool     g_lp_mode    = false;
 /* true = the front USB-C is a USB audio interface this boot (usb_audio.h):
@@ -2272,6 +2275,14 @@ int main(void)
     g_usb_audio  = (int)usb_port.Value() == 2 && !force_mac;
     g_lp_boot_ms = System::GetNow();
     if (g_usb_audio) UAC_Start("Alchemy Lab");
+    /* Phone: the front port enumerates as USB-MIDI and HostLink rides in
+     * SysEx. The SDK starts its transport at the first Poll, so this is in
+     * time. */
+    if ((int)usb_port.Value() == 3 && !force_mac)
+    {
+        phone_link.Init();
+        host.Transport(phone_link);
+    }
 
     pfx_init(&g_pfx, g_pfx_ring, PFX_RING_FRAMES, g_pfx_echo, PFX_ECHO_FRAMES, 48000.0f);
 #ifdef BELT_STALL_DIAG

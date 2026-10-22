@@ -39,7 +39,8 @@ CPP_SOURCES = \
     src/picker.cpp \
     src/launchpad.cpp \
     src/usb_shared.cpp \
-    src/rear_midi.cpp
+    src/rear_midi.cpp \
+    src/sysex_transport.cpp
 
 # belt_core_alchemy.c #includes vendor/belt_core.c with calloc/free
 # redirected to SDRAM. Never list vendor/belt_core.c here as well —
