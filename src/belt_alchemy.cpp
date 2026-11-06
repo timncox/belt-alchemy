@@ -32,6 +32,11 @@
 #include "alchemy/host_link/cdc_transport.h"
 #include "alchemy/host_link/host.h"
 #include "alchemy/storage/fs_extension.h"
+#include "alchemy/host_link/cdc_transport.h"
+#include "midi_usb_transport.h"
+#include "led_mirror.h"
+#include "phone_ext.h"
+#include "switch_transport.h"
 #include "alchemy/storage/sd_card.h"
 #include "alchemy/surface/control_loop.h"
 #include "alchemy/surface/cv_matrix.h"
@@ -284,6 +289,25 @@ static hostlink::Host host(presets, "belt_alchemy", "Belt",
 static BeltExtras  extras;
 static KnobHandle  flex_k, humanize_k, wet_k;
 
+/* The front USB-C's HostLink: serial (Mac mode, the web programmer and
+ * Control page) or USB MIDI (Phone mode, the iPhone app). The Host gets the
+ * switch before BootLoad(); the real transport is chosen once the USB port
+ * setting is known. The phone block adds the LED screen, firmware switching
+ * from the card, and button presses (phone_ext.h). */
+static phone::SwitchTransport              front_link;
+static daisy::UsbHandle                    front_usb;
+static hostlink::CdcUsbTransport           front_cdc;
+static hostlink::MidiUsbHostTransport      front_midi;
+static phone::LedMirror<kLedTotal>         led_mirror;
+static phone::PhoneExtension               phone_ext;
+/* The panel USB-C: the DFM's external pins on V2, the Seed's port on V1
+ * (the same choice Host::Start makes for its default serial link). */
+#if defined(ALCHEMY_BOARD_V2)
+static constexpr daisy::UsbHandle::UsbPeriph kFrontUsb = daisy::UsbHandle::FS_EXTERNAL;
+#else
+static constexpr daisy::UsbHandle::UsbPeriph kFrontUsb = daisy::UsbHandle::FS_INTERNAL;
+#endif
+
 #ifdef BELT_BENCH_USB
 /* HostLink on the Seed's own micro-USB instead of the front panel, for the
  * bench-bootloader setup where the front port is not serving anything. */
@@ -492,13 +516,15 @@ static void apply_mute(bool on)
  * running. Hold B1 at power-up to boot in Mac mode whatever the setting says.
  */
 static bool in_scale(int n, int key_idx, int scale_idx);
-static const char* const kUsbLabels[3] = {"Mac", "Launchpad", "Audio"};
+static const char* const kUsbLabels[4] = {"Mac", "Launchpad", "Audio", "Phone"};
 static SelectorHandle usb_port;
 static bool     g_lp_mode    = false;
 /* true = the front USB-C is a USB audio interface this boot (usb_audio.h):
  * computer -> J9/J10, J1/J2 -> computer, and the engine is bypassed. B2:
  * cyan waiting for a computer, yellow connected, green streaming. */
 static bool     g_usb_audio  = false;
+/* true = the front USB-C is USB MIDI carrying HostLink, for the iPhone app. */
+static bool     g_phone      = false;
 static uint8_t  g_lp_stage   = 0;
 static uint32_t g_lp_boot_ms = 0;
 static bool     g_lp_hard_down = false;
@@ -787,6 +813,9 @@ static void OnFrame(void)
 {
     const uint32_t now = System::GetNow();
     int            v;
+
+    /* A firmware switch started from the phone runs here, page open or not. */
+    picker::Service(now);
 
     /* The PLAY page is worth a flash write too. It used to follow the pots
      * at every boot, so saving it bought nothing; now that a saved PLAY page
@@ -1110,6 +1139,9 @@ static void fault_forever(void)
 int main(void)
 {
     hw.Init(daisy::SaiHandle::Config::SampleRate::SAI_48KHZ, kBlockSize);
+    /* Every frame the panel shows is copied for the phone's screen. */
+    led_mirror.Wrap(hw.strip);
+    hw.leds.Init(led_mirror, hw.Layout());
     cpu.Init(hw.SampleRate(), (int)hw.BlockSize());
     versio_alloc_init(g_pool, VERSIO_POOL_BYTES);
     gate_calibrate();
@@ -1140,8 +1172,9 @@ int main(void)
               "for a Launchpad Mini MK3 and a Launch Control XL (5 V from a "
               "powered dongle). **Audio**: the Lab is a USB audio interface, "
               "2 in (J1/J2) and 2 out (J9/J10) at 48 kHz, and the engine is "
-              "bypassed. From the next power-up; hold B1 while powering up "
-              "for Mac mode once.");
+              "bypassed. **Phone**: the front USB-C is USB MIDI, for the "
+              "iPhone app (screen, knobs, samples, firmware). From the next "
+              "power-up; hold B1 while powering up for Mac mode once.");
     settings.UseBrightness();
     settings.UsePresets(presets);
     flex_k = settings.Page(kSettingsMain).Pot(1).Knob().Default(0.0f)
@@ -1177,7 +1210,10 @@ int main(void)
                jk_cv_hrm, jk_cv_fmt, jk_out_l, jk_out_r)
         .Buttons(bt_hard, bt_harm, bt_setup)
         .Attach(manual)
-        .Extend(fs_ext);
+        .Extend(fs_ext)
+        .Extend(phone_ext)
+        .Transport(front_link);
+    phone_ext.Screen(led_mirror).Firmware(picker::Remote());
 #ifdef BELT_BENCH_USB
     bench_cdc.Init(bench_usb, daisy::UsbHandle::FS_INTERNAL, "Belt (bench)");
     host.Transport(bench_cdc);
@@ -1258,8 +1294,23 @@ int main(void)
     force_mac = hw.buttons[kButtonB1].Pressed();
     g_lp_mode    = (int)usb_port.Value() == 1 && !force_mac;
     g_usb_audio  = (int)usb_port.Value() == 2 && !force_mac;
+    g_phone      = (int)usb_port.Value() == 3 && !force_mac;
     g_lp_boot_ms = System::GetNow();
     if (g_usb_audio) UAC_Start("Alchemy Lab");
+#ifndef BELT_BENCH_USB
+    /* The front port's HostLink, now that its mode is known. Launchpad and
+     * Audio modes start their own USB stacks above and never poll the host. */
+    if (g_phone)
+    {
+        front_midi.Init(front_usb, kFrontUsb, "Alchemy Lab");
+        front_link.Use(front_midi);
+    }
+    else if (!g_lp_mode && !g_usb_audio)
+    {
+        front_cdc.Init(front_usb, kFrontUsb, "Belt");
+        front_link.Use(front_cdc);
+    }
+#endif
 
     pfx_init(&g_pfx, g_pfx_ring, PFX_RING_FRAMES, g_pfx_echo, PFX_ECHO_FRAMES, 48000.0f);
     hw.StartAudio(AudioCallback);

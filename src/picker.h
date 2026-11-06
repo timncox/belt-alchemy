@@ -33,6 +33,8 @@
 
 #include <cstdint>
 
+#include "phone_ext.h"
+
 namespace alchemy {
 class Settings;
 class SdCard;
@@ -60,5 +62,13 @@ void Install(alchemy::Settings&   settings,
 /* True while an erase / write / verify is in flight (the main loop can hold
  * off autosaves and other flash traffic). */
 bool Busy();
+
+/* The same flashing, started from HostLink (the iPhone app's firmware page,
+ * phone_ext.h) instead of the pots. Works with the Settings page closed. */
+phone::IFirmwareSwitcher& Remote();
+
+/* Steps a flash started through Remote(): call once per control frame. Does
+ * nothing otherwise; the pots' own flash still steps from the page. */
+void Service(uint32_t now_ms);
 
 } // namespace picker

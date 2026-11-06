@@ -84,6 +84,7 @@ struct State
     uint32_t erased   = 0;          /* erase offset */
     float    progress = 0.0f;       /* 0..1 for the FLASH ring */
     const char* err   = "";
+    bool        remote = false;     /* this flash was started over HostLink */
 };
 
 State g;
@@ -390,6 +391,7 @@ void fill_ring(LedPanel& L, uint8_t pot, const ArcGeometry& geo, float frac,
 void FlashTick(SettingsSlot& slot, float phys, uint32_t t_ms)
 {
     (void)slot;
+    if (g.remote) return;   /* picker::Service() steps it */
     switch (g.st)
     {
         case St::Listed:
@@ -491,9 +493,96 @@ void DfuTickTracked(SettingsSlot& slot, float phys, uint32_t t_ms)
     DfuTick(slot, phys, t_ms);
 }
 
+/* ---- HostLink remote (the iPhone app) ------------------------------------ */
+
+bool in_flight()
+{
+    return g.st == St::Comparing || g.st == St::Erasing || g.st == St::Writing
+        || g.st == St::Verifying || g.st == St::Done;
+}
+
+uint32_t s_done_frames = 0;
+
+class RemoteSwitcher final : public phone::IFirmwareSwitcher
+{
+  public:
+    int List(uint32_t now_ms) override
+    {
+        if (in_flight()) return g.count;   /* never rescan under a flash */
+        scan(now_ms);
+        if (g.st == St::NoCard)
+            return -(int)alchemy::hostlink::Status::FsNoCard;
+        return g.count;
+    }
+    const char* Name(int i) const override { return (i >= 0 && i < g.count) ? g.name[i] : ""; }
+    uint32_t    Size(int i) const override { return (i >= 0 && i < g.count) ? g.size[i] : 0u; }
+
+    uint8_t Start(const char* name, uint32_t now_ms) override
+    {
+        using alchemy::hostlink::Status;
+        if (in_flight()) return (uint8_t)Status::Busy;
+        scan(now_ms);   /* the app may just have uploaded it */
+        if (g.st == St::NoCard) return (uint8_t)Status::FsNoCard;
+        int idx = -1;
+        for (int i = 0; i < g.count; i++)
+            if (strcmp(g.name[i], name) == 0) { idx = i; break; }
+        if (idx < 0) return (uint8_t)Status::FsNoFile;
+        g.sel         = idx;
+        g.flash_armed = false;
+        g.remote      = true;
+        s_done_frames = 0;
+        begin_flash(now_ms);
+        if (g.st == St::Error) g.remote = false;
+        return (uint8_t)Status::Ok;   /* errors show in FW_STATUS */
+    }
+
+    phone::FwState State() const override
+    {
+        switch (g.st)
+        {
+            case St::Comparing: return phone::kFwComparing;
+            case St::Erasing:   return phone::kFwErasing;
+            case St::Writing:   return phone::kFwWriting;
+            case St::Verifying: return phone::kFwVerifying;
+            case St::Done:      return phone::kFwDone;
+            case St::Same:      return phone::kFwSame;
+            case St::Error:     return phone::kFwError;
+            default:            return phone::kFwIdle;
+        }
+    }
+    float       Progress() const override { return g.progress; }
+    const char* Error() const override { return g.st == St::Error ? g.err : ""; }
+};
+
+RemoteSwitcher s_remote;
+
 } // namespace
 
 namespace picker {
+
+phone::IFirmwareSwitcher& Remote() { return s_remote; }
+
+void Service(uint32_t now_ms)
+{
+    (void)now_ms;
+    if (!g.remote) return;
+    switch (g.st)
+    {
+        case St::Comparing: step_compare(); break;
+        case St::Erasing:   step_erase();  break;
+        case St::Writing:   step_write();  break;
+        case St::Verifying: step_verify(); break;
+        case St::Done:
+            /* Give the app a few frames to read "done" before the reboot. */
+            if (++s_done_frames > 30u)
+                daisy::System::ResetToBootloader(
+                    daisy::System::BootloaderMode::DAISY_SKIP_TIMEOUT);
+            break;
+        default:   /* Same, Error, or the page took over: hand back */
+            g.remote = false;
+            break;
+    }
+}
 
 void Install(Settings& settings, uint8_t page, SdCard& sd, AlchemyLab& hw)
 {

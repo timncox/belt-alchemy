@@ -1,7 +1,7 @@
 /*
- * usb_shared -- the front USB-C's role (Mac / Launchpad / Audio) as ONE
+ * usb_shared -- the front USB-C's role (Mac / Launchpad / Audio / Phone) as ONE
  * setting for every firmware on the card, kept in /alchemy/usb.cfg ("mac",
- * "launchpad" or "audio"). Each firmware still has its own USB port
+ * "launchpad", "audio" or "phone"). Each firmware still has its own USB port
  * selector; at boot it adopts the card's value, and a change in any
  * firmware's Settings is written back here, so switching firmware in the
  * picker keeps the mode.
@@ -17,8 +17,10 @@ namespace usbshared
 {
 
 /* -1 = no file (or unreadable), 0 = Mac, 1 = Launchpad, 2 = Audio (the
- * Lab as a USB audio interface, usb_audio.h). A firmware without an Audio
- * choice treats 2 as Mac. Waits up to
+ * Lab as a USB audio interface, usb_audio.h), 3 = Phone (USB MIDI carrying
+ * HostLink, for the iPhone app). A firmware without an Audio choice treats
+ * 2 as Mac; an older copy of this file reads "phone" as -1 and keeps its
+ * own setting. Waits up to
  * timeout_ms for the card to mount. Call from main(), before the loop. */
 int Load(alchemy::SdCard& sd, uint32_t timeout_ms);
 
