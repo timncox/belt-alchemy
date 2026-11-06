@@ -36,6 +36,7 @@
 #include "midi_usb_transport.h"
 #include "led_mirror.h"
 #include "phone_ext.h"
+#include "phone_state.h"
 #include "switch_transport.h"
 #include "alchemy/storage/sd_card.h"
 #include "alchemy/surface/control_loop.h"
@@ -105,6 +106,15 @@ static int  G_VOICED = 0;
 static int  G_MASK   = 0;      /* harmony voices with an interval set */
 static bool G_HARD   = false;  /* effective hard-tune state */
 static bool G_MUTED  = false;  /* harmonies muted */
+
+/* For the phone's screen (phone_ext.h STATE): the sung pitch every frame,
+ * the pot a hand last moved, and the audio peaks since the phone last read. */
+static phone::Trace<64>         g_pitch_trace;
+static uint16_t                 g_frame_no = 0;
+static volatile float           g_in_peak  = 0.0f;
+static volatile float           g_out_peak = 0.0f;
+static bool                     g_ph_hard_down = false;   /* held on the phone */
+static bool                     g_ph_mute_down = false;
 
 /* ---- colours ------------------------------------------------------------ */
 
@@ -281,6 +291,7 @@ static Pager       pager = Pager(kNumAppPages, kNumPots)
 static constexpr uint8_t kHomeSlot = 14u;
 static Presets     presets(hw.seed.qspi);
 static Settings    settings(hw, &pager);
+static phone::TouchTracker<kNumAppPages, kNumPots> g_touch;
 static CvMatrix    cv_matrix(kNumCvInputs);
 static SdCard      sd;
 static hostlink::FsExtension fs_ext(sd);
@@ -774,7 +785,8 @@ static void OnPoll(uint32_t now)
         apply_mute(tg_mute.latch);
         return;
     }
-    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed() || g_lp_hard_down || g_xl_hard_down, now)
+    const bool hard = tg_hard.Poll(hw.buttons[kButtonB1].Pressed() || g_lp_hard_down || g_xl_hard_down
+                                  || g_ph_hard_down, now)
                       || g_gate_state;
     /* B2 stands down while B3 is held: B2+B3 held two seconds is the
      * Settings chord, and B2's own gesture would mute the harmonies on the
@@ -782,7 +794,8 @@ static void OnPoll(uint32_t now)
     const bool b3   = hw.buttons[kButtonB3].Pressed();
     if (b3) tg_mute.Reset();
     const bool mute = b3 ? tg_mute.latch
-                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed() || g_lp_mute_down || g_xl_mute_down, now);
+                         : tg_mute.Poll(hw.buttons[kButtonB2].Pressed() || g_lp_mute_down || g_xl_mute_down
+                                       || g_ph_mute_down, now);
     apply_hard(hard);
     apply_mute(mute);
 }
@@ -876,7 +889,10 @@ static void OnFrame(void)
             G_VOICED = voiced;
             G_MASK   = mask;
         }
+        g_pitch_trace.Push(phone::SungCents(G_NOTE10, G_CENTS, G_VOICED != 0));
     }
+    g_frame_no++;
+    g_touch.Update(now, [](uint8_t pg, uint8_t pot) { return pager.Stored(pg, pot); });
 
     /* Worst block this session. Clamped: an overrunning callback can report
      * over 100%, and the readout wants 0..1. */
@@ -1100,11 +1116,16 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
      * Converting at the boundary keeps the engine bit-identical to the Move
      * build, so any difference in sound is a shim bug. The engine sums the
      * two inputs to mono for analysis and keeps the dry path stereo. */
+    float pk = g_in_peak;
     for (size_t i = 0; i < size; i++)
     {
         bufi[2 * i]     = f2i(in[0][i]);
         bufi[2 * i + 1] = f2i(in[1][i]);
+        const float a = fabsf(in[0][i]), b = fabsf(in[1][i]);
+        if (a > pk) pk = a;
+        if (b > pk) pk = b;
     }
+    g_in_peak = pk;
 
     belt_process(B, bufi, bufi, (int)size);
 
@@ -1118,7 +1139,101 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
     /* The gamepad's punch effects, last on the output. */
     if (g_lp_mode) pfx_process(&g_pfx, out[0], out[1], (uint32_t)size);
 
+    float po = g_out_peak;
+    for (size_t i = 0; i < size; i++)
+    {
+        const float a = fabsf(out[0][i]), b = fabsf(out[1][i]);
+        if (a > po) po = a;
+        if (b > po) po = b;
+    }
+    g_out_peak = po;
+
     cpu.OnBlockEnd();
+}
+
+/* ---- the phone's own screen (phone_ext.h STATE, PRESS) ------------------------ */
+
+/*
+ * The iPhone app draws its own screen for Belt rather than the LED rings:
+ * the note being sung against its target, the harmony voices, the pot a hand
+ * last moved, HARD and the mute. Belt's tail of the STATE reply, tag 'B' v1:
+ *   u8 key, u8 scale, u8 harm[4] (interval index 0..11, 0 = off),
+ *   u8 flags (bit0 voiced, bit1 hard on, bit2 harmonies muted,
+ *             bit3 hard latched, bit4 mute latched, bit5 J3 gate high),
+ *   s16 sung (MIDI cents, INT16_MIN unvoiced), s16 cents from the target,
+ *   then the pitch trace: u16 last, u8 n, s16 × n (one per control frame).
+ */
+class BeltState : public phone::IStateSource
+{
+  public:
+    void Header(phone::StateHeader& h, uint32_t now) override
+    {
+        h.frame        = g_frame_no;
+        h.page         = pager.Page();
+        h.flags        = uint8_t((settings.IsActive() ? 1u : 0u) | (picker::Busy() ? 2u : 0u));
+        h.touch_page   = g_touch.Page();
+        h.touch_pot    = g_touch.Pot();
+        h.touch_age_ms = g_touch.AgeMs(now);
+        float av       = cpu.GetAvgCpuLoad();
+        av             = av < 0.0f ? 0.0f : (av > 1.0f ? 1.0f : av);
+        h.cpu          = (uint8_t)lroundf(av * 255.0f);
+        h.in_level     = phone::LevelByte(g_in_peak);
+        h.out_level    = phone::LevelByte(g_out_peak);
+        g_in_peak      = 0.0f;   /* peaks since the phone last read */
+        g_out_peak     = 0.0f;
+    }
+
+    void Tail(hostlink::FrameWriter& w, uint16_t since, uint32_t now) override
+    {
+        (void)now;
+        w.U8('B');
+        w.U8(1u);
+        w.U8((uint8_t)(k_key.last < 0 ? 0 : k_key.last));
+        w.U8((uint8_t)(k_scale.last < 0 ? 1 : k_scale.last));
+        const Knob* hv[4] = {&k_h1, &k_h2, &k_h3, &k_h4};
+        for (const Knob* k : hv) w.U8((uint8_t)(k->last < 0 ? 0 : k->last));
+        w.U8((uint8_t)((G_VOICED ? 1u : 0u) | (G_HARD ? 2u : 0u) | (G_MUTED ? 4u : 0u)
+                       | (tg_hard.latch ? 8u : 0u) | (tg_mute.latch ? 16u : 0u)
+                       | (g_gate_state ? 32u : 0u)));
+        w.U16((uint16_t)phone::SungCents(G_NOTE10, G_CENTS, G_VOICED != 0));
+        w.U16((uint16_t)(int16_t)G_CENTS);
+        g_pitch_trace.Write(w, since, 32u);
+    }
+};
+static BeltState belt_state;
+
+/* B1 HARD and B2 HARMONIES from the phone, the same gestures as the panel:
+ * a tap flips the latch, down / up hold it (button 0 = B1, 1 = B2). */
+static bool phone_press(uint8_t button, uint8_t gesture, void* ctx)
+{
+    (void)ctx;
+    if (button > 1u || gesture > 2u) return false;
+    Toggle& t    = button == 0u ? tg_hard : tg_mute;
+    bool&   down = button == 0u ? g_ph_hard_down : g_ph_mute_down;
+    if (gesture == 0u) t.latch = !t.latch;
+    else               down = (gesture == 1u);
+    return true;
+}
+
+/* Tells two modules apart on the phone: FNV-1a of the MCU's 96-bit ID. */
+static uint32_t unit_id(void)
+{
+#ifdef UID_BASE
+    const volatile uint32_t* uid = (const volatile uint32_t*)UID_BASE;
+#else
+    const volatile uint32_t* uid = (const volatile uint32_t*)0x1FF1E800UL;
+#endif
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 3; i++)
+    {
+        const uint32_t w = uid[i];
+        for (int b = 0; b < 4; b++)
+        {
+            h ^= (w >> (8 * b)) & 0xFFu;
+            h *= 16777619u;
+        }
+    }
+    return h ? h : 1u;
 }
 
 /* ---- boot ------------------------------------------------------------------ */
@@ -1213,7 +1328,8 @@ int main(void)
         .Extend(fs_ext)
         .Extend(phone_ext)
         .Transport(front_link);
-    phone_ext.Screen(led_mirror).Firmware(picker::Remote());
+    phone_ext.Screen(led_mirror).Firmware(picker::Remote())
+        .State(belt_state).Press(phone_press, nullptr).Unit(unit_id());
 #ifdef BELT_BENCH_USB
     bench_cdc.Init(bench_usb, daisy::UsbHandle::FS_INTERNAL, "Belt (bench)");
     host.Transport(bench_cdc);

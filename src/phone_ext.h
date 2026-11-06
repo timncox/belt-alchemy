@@ -7,9 +7,12 @@
  * slots (§3), and samples as the filesystem block (§8, 0x50–0x5F).  This
  * block adds the rest, each piece optional:
  *
- *   0x70 PHONE_INFO   → u8 status, u8 version (1), u8 flags, u16 led_count,
- *                       str layout ("alchemy-lab-v2")
- *                       flags: bit0 SCREEN, bit1 firmware switching, bit2 PRESS
+ *   0x70 PHONE_INFO   → u8 status, u8 version (2), u8 flags, u16 led_count,
+ *                       str layout ("alchemy-lab-v2"), u32 unit
+ *                       flags: bit0 SCREEN, bit1 firmware switching, bit2 PRESS,
+ *                       bit3 STATE.  unit tells two modules apart (a hash of
+ *                       the MCU's unique ID; 0 = unknown); version 1 ends
+ *                       after the layout
  *   0x71 SCREEN       → u8 status, u32 frame, u16 n, u8 rgb[3n]
  *                       the LED frame last shown on the panel (led_mirror.h)
  *   0x72 FW_LIST      → u8 status, u8 count, { str name, u32 size } × count
@@ -23,6 +26,18 @@
  *                       4 verifying, 5 done (rebooting), 6 same image, 7 error
  *   0x75 PRESS        ← u8 button, u8 gesture (0 tap, 1 down, 2 up) → u8 status
  *                       a panel button, for firmwares that wire it up
+ *   0x76 STATE        ← [u16 since] → u8 status, u16 frame, u8 page, u8 flags,
+ *                       u8 touch_page, u8 touch_pot, u16 touch_age_ms,
+ *                       u8 cpu, u8 in_level, u8 out_level, then the
+ *                       firmware's own tail (u8 tag, u8 version, …)
+ *                       what the phone's own screen shows beyond the knob
+ *                       values: which page is up, which pot a hand last
+ *                       moved and how long ago, load and levels.  flags:
+ *                       bit0 Settings open, bit1 firmware switch running.
+ *                       Levels are peaks since the last read, 0 = −60 dBFS
+ *                       or below, 255 = 0 dBFS.  touch_* are 0xFF for none.
+ *                       since is the last trace sample the phone already
+ *                       has, for a tail that streams one (Belt's pitch).
  *
  * Unknown or unwired commands answer UNSUPPORTED, so the app shows only
  * what this firmware can do.  Hardware-free: the firmware passes in its LED
@@ -47,6 +62,7 @@ enum Cmd : uint8_t
     kFwFlash  = 0x73,
     kFwStatus = 0x74,
     kPress    = 0x75,
+    kState    = 0x76,
     kLast     = 0x7F,   /* block reserved through here */
 };
 
@@ -74,21 +90,52 @@ class IFirmwareSwitcher
 
 using PressFn = bool (*)(uint8_t button, uint8_t gesture, void* ctx);
 
+/** The generic part of a STATE reply; see the table above. */
+struct StateHeader
+{
+    uint16_t frame        = 0;
+    uint8_t  page         = 0;
+    uint8_t  flags        = 0;
+    uint8_t  touch_page   = 0xFFu;
+    uint8_t  touch_pot    = 0xFFu;
+    uint16_t touch_age_ms = 0xFFFFu;
+    uint8_t  cpu          = 0;
+    uint8_t  in_level     = 0;
+    uint8_t  out_level    = 0;
+};
+
+/** What a firmware tells the phone's screen, called from the HostLink
+ *  service (the main loop, never the audio callback). */
+class IStateSource
+{
+  public:
+    virtual ~IStateSource() = default;
+    virtual void Header(StateHeader& h, uint32_t now_ms) = 0;
+    /** Its own fields after the header: u8 tag, u8 version, then anything
+     *  that fits the reply.  @p since is the phone's last trace sample. */
+    virtual void Tail(alchemy::hostlink::FrameWriter& w, uint16_t since, uint32_t now_ms) = 0;
+};
+
+/** A level byte for STATE from a linear peak (1.0 = full scale). */
+uint8_t LevelByte(float peak);
+
 class PhoneExtension : public alchemy::hostlink::IHostlinkExtension
 {
   public:
-    static constexpr uint8_t kVersion = 1u;
+    static constexpr uint8_t kVersion = 2u;
 
     PhoneExtension& Screen(const ILedSource& leds) { leds_ = &leds; return *this; }
     PhoneExtension& Firmware(IFirmwareSwitcher& fw) { fw_ = &fw; return *this; }
     PhoneExtension& Press(PressFn fn, void* ctx) { press_ = fn; press_ctx_ = ctx; return *this; }
     PhoneExtension& Layout(const char* name) { layout_ = name; return *this; }
+    PhoneExtension& State(IStateSource& s) { state_ = &s; return *this; }
+    PhoneExtension& Unit(uint32_t id) { unit_ = id; return *this; }
 
     uint8_t FirstCmd() const override { return kInfo; }
     uint8_t LastCmd() const override { return kLast; }
     void    Handle(const alchemy::hostlink::ParsedFrame& f,
                    alchemy::hostlink::FrameWriter& w, uint32_t now_ms) override;
-    const char* DescriptorRootJson() const override { return "\"phone\":{\"v\":1}"; }
+    const char* DescriptorRootJson() const override { return "\"phone\":{\"v\":2}"; }
 
   private:
     const ILedSource*  leds_      = nullptr;
@@ -96,6 +143,8 @@ class PhoneExtension : public alchemy::hostlink::IHostlinkExtension
     PressFn            press_     = nullptr;
     void*              press_ctx_ = nullptr;
     const char*        layout_    = "alchemy-lab-v2";
+    IStateSource*      state_     = nullptr;
+    uint32_t           unit_      = 0;
 };
 
 } // namespace phone
