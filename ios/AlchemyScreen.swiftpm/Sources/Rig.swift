@@ -11,6 +11,7 @@
 // module emulator on a Mac over TCP (EmulatorLink), each with the
 // on-screen controllers (VirtualDevices) if they're switched on.
 
+import CoreMIDI
 import Foundation
 import SwiftUI
 import AlchemyLink

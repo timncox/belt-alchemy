@@ -74,7 +74,8 @@ private struct AddFollow: View {
     @Environment(\.dismiss) private var dismiss
     @State private var from: ControlTarget?
     @State private var to: ControlTarget?
-    @State private var lo = 0.0, hi = 1.0
+    @State private var lo = 0.0
+    @State private var hi = 1.0
 
     var body: some View {
         NavigationStack {
