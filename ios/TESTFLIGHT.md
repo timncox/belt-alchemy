@@ -39,7 +39,7 @@ export BUNDLE_ID=com.timcox.alchemyscreen
 # 1. the protocol core's tests
 (cd ios/AlchemyLink && swift test)
 
-# 2. a simulator build first; the app has never been compiled, so fix what it reports
+# 2. a simulator build first, to catch anything before signing
 cd ios/AlchemyScreen
 xcodegen generate
 xcodebuild -project AlchemyScreen.xcodeproj -scheme AlchemyScreen \
@@ -94,7 +94,7 @@ Paste this into Claude Code from the belt-alchemy folder:
 > ios/TESTFLIGHT.md and follow it. My team ID is ABCDE12345 and my
 > bundle ID is com.timcox.alchemyscreen. Run the AlchemyLink tests, then
 > generate the Xcode project and build the app for the iOS Simulator.
-> The SwiftUI app has never been compiled, so fix the compile errors in
+> If it reports compile errors, fix them in
 > ios/AlchemyScreen.swiftpm/Sources, keeping the changes small and not
 > touching the HostLink protocol or the firmware. Run it in the simulator
 > and check the demo module on every tab. Then run testflight.sh with

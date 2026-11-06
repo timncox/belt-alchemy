@@ -43,8 +43,10 @@ What the app does now:
 
 ## Testing without hardware
 
-Nothing below has been compiled in Xcode yet (AlchemyLink's tests run on
-Linux; the app's files are only syntax-checked).
+Built with Xcode 27.2 and run in the iOS Simulator on iPad and iPhone
+(Nov 6): the demo, on-screen devices, Learn, mappings, routes, Link, and
+notes routed to two emulated modules. The AUv3 loads through the system in
+the Simulator. It has not been tried in a host app or run on a real module.
 
 **Demo in the Simulator.** Run the app in an iPhone or iPad simulator,
 then Connect > Try two demo modules: two pretend modules (Left and Right,
@@ -71,6 +73,9 @@ app". In zsh:
     build/belt-phone/emu --usb phone --hostlink 5071 --flash ~/.alchemy-emu/left.bin
     build/belt-phone/emu --usb phone --hostlink 5072 --flash ~/.alchemy-emu/right.bin --nomic
 
+The first plays the Mac's mic out of its speakers, so use headphones, or add
+`--nomic` to it too (say, on a call). Esc, `q` or closing a window quits it.
+
 Then in the app, Connect > Emulator > Connect to the module emulator. Left
 is 127.0.0.1:5071 and Right 127.0.0.1:5072 (editable; on a real iPhone or
 iPad, type the Mac's address). The app retries every 2 s until they answer,
@@ -79,5 +84,5 @@ mode, and firmware switching lists nothing.
 After pulling new firmware, run `rm -rf build/belt-phone` before `make`,
 because the emulator's build doesn't notice engine changes.
 
-Not yet built in Xcode or run on a module. The firmware's Phone+Audio USB
+Not yet run on a module. The firmware's Phone+Audio USB
 mode (audio and the app over one cable) is built but untested on hardware.

@@ -178,7 +178,7 @@ then can't talk to the phone. The hub with the phone on it is simpler.
   near 100%), and about 13 ms round trip plus iOS buffering. iOS takes one
   audio interface at a time, so with two modules only one carries audio.
 
-## AUv3 (written, not yet built in Xcode)
+## AUv3 (built; loads in the Simulator, not yet tried in a host app)
 
 An Audio Unit extension (a MIDI processor, "aumi", subtype `AlSc`,
 manufacturer `Alch`, shown as "Alchemy Lab: Alchemy Screen"), embedded in

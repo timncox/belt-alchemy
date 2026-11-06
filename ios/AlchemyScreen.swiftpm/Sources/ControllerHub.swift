@@ -230,7 +230,11 @@ final class ControllerHub: ObservableObject {
     }
 
     private func reconcilePads() {
-        let pads = GCController.controllers().filter { $0.extendedGamepad != nil }
+        var pads = GCController.controllers().filter { $0.extendedGamepad != nil }
+        #if targetEnvironment(simulator)
+        // The Simulator's own stand-in, there with nothing connected.
+        pads.removeAll { $0.vendorName == "Gamepad" && $0.productCategory == "MFi" }
+        #endif
         for (id, p) in plugged where p.gamepad != nil && !pads.contains(where: { $0 === p.gamepad }) { unplug(id) }
         for c in pads where !plugged.values.contains(where: { $0.gamepad === c }) {
             let id = "gc:\(ObjectIdentifier(c).hashValue)"
