@@ -54,9 +54,9 @@ struct SamplesTab: View {
             .navigationTitle("Samples")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .bottomBar) {
+                // Not .bottomBar: inside a TabView it sits behind the tab bar.
+                ToolbarItemGroup(placement: .navigationBarLeading) {
                     Button { newFolder = true } label: { Label("New folder", systemImage: "folder.badge.plus") }
-                    Spacer()
                     Button { recording = true } label: { Label("Record", systemImage: "mic") }
                         .disabled(store.transfer != nil)
                     Button { importing = true } label: { Label("Add files", systemImage: "plus") }

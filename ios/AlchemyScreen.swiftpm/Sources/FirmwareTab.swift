@@ -44,7 +44,8 @@ struct FirmwareTab: View {
             .navigationTitle("Firmware")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .bottomBar) {
+                // Not .bottomBar: inside a TabView it sits behind the tab bar.
+                ToolbarItem(placement: .navigationBarLeading) {
                     Button { importing = true } label: { Label("Add a .bin", systemImage: "plus") }
                         .disabled(busy || store.transfer != nil)
                 }
