@@ -1,25 +1,33 @@
 # Connecting modules, and what comes when
 
-## Three ways to connect
+## The setup: a USB-C hub
 
-1. **One module on the USB-C port.** Phone mode, plain USB-C cable. Fastest.
-2. **Two modules on a USB-C hub, with the phone or iPad plugged into the hub.**
-   The phone is the USB host; iOS sees two class-compliant USB MIDI devices,
-   both called "Alchemy Lab". The app pairs each one's in and out by their
-   CoreMIDI entity and unique ID, never by name, and tells the modules apart
-   by the unit number in Phone INFO (a hash of the STM32's unique ID).
-   The modules take no power from USB (their USB-C has no VBUS), so an
-   unpowered hub should do; a powered one only matters for charging the
-   phone at the same time.
-3. **Two modules, each on its own Bluetooth MIDI adapter.** A USB-host
-   Bluetooth adapter such as a CME WIDI Uhost on each module's USB-C, paired
-   from the app (Connect > Pair a Bluetooth MIDI adapter). Rename the
-   adapters in CME's app so they're easy to tell apart; the app still goes
-   by unit number. Over Bluetooth the app asks for the screen about 6 times a
-   second instead of 15 and writes knobs at most 20 times a second; the
-   pitch graph still gets every frame, it just arrives in bigger pieces.
-   Files and firmware work but are slow (about 4 KB/s), and the app says so
-   before a big one.
+The default, and what the first TestFlight is for:
+
+- Set each module's USB port to Phone.
+- A USB-C hub plugged into the iPhone or iPad, and a USB-C cable from the
+  hub to each Alchemy Lab.
+- Power the hub from a battery or the case's USB, through the hub's
+  power-in (USB-C PD) port, which can also charge the phone.
+
+The phone is the USB host; iOS sees two class-compliant USB MIDI devices,
+both called "Alchemy Lab". The app pairs each one's in and out by their
+CoreMIDI entity and unique ID, never by name, and tells the modules apart by
+the unit number in Phone INFO (a hash of the STM32's unique ID), so "Left"
+and "Right" stay put whichever hub port they're in. The modules draw no
+power from USB (their USB-C has no VBUS), so the hub's power only runs the
+hub and charges the phone.
+
+One module also works on a plain USB-C cable with no hub.
+
+## Other ways to connect (not the default)
+
+**Two modules, each on its own Bluetooth MIDI adapter.** A USB-host
+Bluetooth adapter such as a CME WIDI Uhost on each module's USB-C, paired
+from the app (Connect > Pair a Bluetooth MIDI adapter). Over Bluetooth the
+app asks for the screen about 6 times a second instead of 15 and writes
+knobs at most 20 times a second. Files and firmware work but are slow
+(about 4 KB/s), and the app says so before a big one.
 
 One Bluetooth adapter on a hub serving both modules doesn't work: the Uhost
 takes only the first USB MIDI device and doesn't support hubs.
@@ -38,16 +46,11 @@ Unchecked:
 
 ## Wi-Fi
 
-A plain USB Wi-Fi dongle can't work: the module has no Wi-Fi driver or
-network stack, and its port is full speed only. iOS network MIDI also merges
-every peer into one session, so two modules' replies would arrive mixed.
-
-Idea, not built: a small ESP32-S3 board (for example Waveshare's
-ESP32-S3-Zero, 23.5 x 18 mm, native USB-C, antenna on the board) as USB
-host to the module and a Wi-Fi bridge, with our own firmware. The app talks
-to each bridge separately, so nothing merges. It needs 5 V on its 5V pin,
-since the module's port gives no power. Left's bridge makes the network;
-Right's bridge and the phone join it.
+Not planned; the hub does everything. A plain USB Wi-Fi dongle can't work
+(the module has no Wi-Fi driver, and its port is full speed only), and iOS
+network MIDI merges every peer into one session, so two modules' replies
+would mix. A Wi-Fi bridge (a small box per module or one for both, with its
+own software) was sketched and set aside on Nov 6.
 
 ## Linking the two modules (built, untested on hardware)
 

@@ -76,8 +76,10 @@ can install it right away from the TestFlight app. External testers need
 Apple's Beta App Review for the first build.
 
 The app declares no encryption (`ITSAppUsesNonExemptEncryption` is NO),
-so uploads don't stop at the export compliance question. It is iPhone
-only for now.
+so uploads don't stop at the export compliance question. It runs on
+iPhone and iPad, and carries the AUv3 extension (AlchemyAU) inside it;
+automatic signing registers the extension's bundle ID (your bundle ID plus
+`.AlchemyAU`) along with the app's.
 
 **Later:** Xcode Cloud can do this on every push to the branch. In Xcode,
 Product > Xcode Cloud > Create Workflow, with an archive action and a

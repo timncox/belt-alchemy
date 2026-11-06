@@ -16,7 +16,8 @@ front USB-C in Belt's Phone USB mode (HostLink carried in USB MIDI SysEx).
 
 What the app does now:
 
-- One module, two on a USB-C hub, or two each on a Bluetooth MIDI adapter.
+- Two modules on a USB-C hub plugged into the phone (the default; see PLAN.md),
+  one module on a plain cable, or two each on a Bluetooth MIDI adapter.
   Modules are told apart by the unit number they report, so a name ("Left",
   or one you give it) follows a module from cable to adapter.
 - On iPad, two modules side by side; on iPhone, a switch at the top.
