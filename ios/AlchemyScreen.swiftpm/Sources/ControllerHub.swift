@@ -813,7 +813,7 @@ final class ControllerHub: ObservableObject {
         if !isHere(r.from) { return ("\(endpointName(r.from)) isn't connected.", true) }
         if !isHere(r.to) { return ("\(endpointName(r.to)) isn't connected.", true) }
         guard let u = r.to.unit else { return nil }
-        if noNotes.contains(u) { return ("This module's firmware doesn't play notes yet.", true) }
+        if noNotes.contains(u) { return ("This module's firmware doesn't play notes (needs v5 or later).", true) }
         if unsupported.contains(u) || rig?.module(unit: u)?.hasCtrl != true {
             return ("This module's firmware has no controller support (CTRL), so it can't play notes.", true)
         }

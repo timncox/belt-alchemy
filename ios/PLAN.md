@@ -56,9 +56,14 @@ goes through the app. No TRS MIDI cables are needed.
 - **Modules as sources:** Belt's sung note and its harmonies can go out as
   MIDI notes to another device, such as the Daisy Patch.
 - **Modules as destinations:** notes go to a module through CTRL (types 6
-  and 7). Belt on this branch can't play notes yet, so the route says
-  "This module's firmware doesn't play notes yet" and sends nothing. CCs to
-  a module act only through mappings you Learn; CC 64 is its sustain pedal.
+  and 7). Belt plays them as held notes, with the sustain pedal, exactly
+  like a USB keyboard on the module in Launchpad mode (firmware v5 or
+  later). Up to 10 held notes and 4 voices; a new note takes the oldest
+  note's voice. In Harmony mode a held note replaces a voice's interval; in
+  Target mode the newest held note is the correction target. Firmware
+  without notes leaves bit 3 out, and the route says so and sends nothing.
+  CCs to a module act only through mappings you Learn; CC 64 is its sustain
+  pedal.
 - **Where:** on iPad, the Routing tab (List or Matrix). On iPhone, Controls
   > MIDI routing. Routes are saved by device name.
 - **Background:** routing pauses while the app is in the background.

@@ -76,6 +76,8 @@ is 127.0.0.1:5071 and Right 127.0.0.1:5072 (editable; on a real iPhone or
 iPad, type the Mac's address). The app retries every 2 s until they answer,
 and reconnects next launch. The emulator carries no audio in Phone+Audio
 mode, and firmware switching lists nothing.
+After pulling new firmware, run `rm -rf build/belt-phone` before `make`,
+because the emulator's build doesn't notice engine changes.
 
 Not yet built in Xcode or run on a module. The firmware's Phone+Audio USB
 mode (audio and the app over one cable) is built but untested on hardware.
