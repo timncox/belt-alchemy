@@ -450,6 +450,7 @@ static void OnPoll(uint32_t now)
     }
 
     static bool was_settings = false;
+    static bool deaf         = false;   /* until every button is let go */
     if (settings.IsActive())
     {
         g_b1 = g_b2 = g_b3 = Btn{};
@@ -462,11 +463,17 @@ static void OnPoll(uint32_t now)
         /* The pots moved under Settings (and a preset may have loaded). */
         was_settings = false;
         g_rearm      = true;
+        deaf         = true;   /* the B3 tap that left Settings is not a stop */
     }
 
     const bool b1 = hw.buttons[kButtonB1].Pressed();
     const bool b2 = hw.buttons[kButtonB2].Pressed();
     const bool b3 = hw.buttons[kButtonB3].Pressed();
+    if (deaf)
+    {
+        if (b1 || b2 || b3) return;
+        deaf = false;
+    }
 
     if (b2 && b3) g_chord = true;
 

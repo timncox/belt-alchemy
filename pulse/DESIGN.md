@@ -100,6 +100,14 @@ preset round-trip, gates low while stopped, every CV target's scaling
 and clamping, CV ignored while J7/J8 are outputs, CV on one output
 leaving the others alone.
 
+Emulator (alchemy-lab `emu-custom`, `make test-custom`): 5 scripts, 60
+checks — boot; all eight first-boot outputs' edge counts (8 / 16 / 32 / 2 /
+6 in 4 s, matching the engine); stop/start and the B3 light; tap tempo;
+24 PPQN on J1 at 100 BPM; J2 resets; BPM from the MASTER layer; the J7/J8
+Settings switch, CV A on RATIO (x1 → x32 at +5 V) and CV B on LEVEL. It
+caught one firmware bug: the B3 tap that leaves Settings also stopped the
+clock (fixed in 0.2.1: buttons are ignored until all are released).
+
 ## 4. Persistence
 
 The whole state (12-byte master with the two CV routes + 8 × 24 bytes) rides in the SDK preset blob as

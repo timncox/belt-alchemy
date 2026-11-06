@@ -1,0 +1,62 @@
+# Pulse: stop/start on B3, tap tempo on B2, external clock on J1, reset on J2.
+wait 3000
+expect booted
+tap b3                       # stop
+wait 300
+expect led b3 red
+mark
+wait 1500
+expect edges 3 = 0
+expect edges 9 = 0
+tap b3                       # start, from the top
+wait 100
+expect led b3 green
+mark
+wait 2000
+expect edges 3 > 3           # 120 BPM again
+expect edges 3 < 6
+# tap tempo: four taps a second apart = 60 BPM
+tap b2
+wait 1000
+tap b2
+wait 1000
+tap b2
+wait 1000
+tap b2
+wait 200
+mark
+wait 4000
+expect edges 3 > 2           # out 1 now one gate a second
+expect edges 3 < 6
+expect edges 4 > 6           # out 2 eighths: two a second
+expect edges 4 < 10
+# J1: 24 PPQN at 100 BPM (a pulse every 25 ms) takes over
+clock 1 25
+wait 1500
+mark
+wait 6000
+expect edges 3 > 8           # 100 BPM: 10 quarters in 6 s
+expect edges 3 < 12
+expect edges 5 > 36          # sixteenth trigs follow it: 40
+expect edges 5 < 44
+# J2 resets: each pulse restarts the bar, so out 4's bar gate rises
+# every time (without resets it rises once every 2.4 s at 100 BPM)
+mark
+pulse 2
+wait 700
+pulse 2
+wait 700
+pulse 2
+wait 700
+pulse 2
+wait 300
+expect edges 6 > 2           # at most 2 without the resets
+# clock gone: back to the tapped 60 BPM after a few silent periods
+clock 1 0
+wait 1500
+mark
+wait 4000
+expect edges 3 > 2
+expect edges 3 < 6
+expect finite
+expect alive

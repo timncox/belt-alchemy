@@ -1,0 +1,19 @@
+# Pulse: the eight first-boot outputs at 120 BPM (pulse_engine Defaults).
+wait 3000
+expect booted
+expect led b3 green          # running
+mark
+wait 4000
+expect edges 3 = 8           # out 1: quarter gates, 2 a second
+expect edges 4 = 16          # out 2: eighths
+expect edges 5 = 32          # out 3: sixteenth trigs
+expect edges 6 < 3           # out 4: one gate a bar (every 2 s)
+expect edges 6 > 1
+expect edges 9 = 6           # out 7: 3-in-8 euclid on eighths, 2 bars
+expect cvrange 7 > 2         # out 5: two-bar sine, offset -2.5 V
+expect cvrange 8 > 1         # out 6: four-bar triangle
+expect cvrange 10 > 0.5      # out 8: a random level each beat
+expect cv 7 < 2.6
+expect cv 7 > -2.6
+expect finite
+expect alive

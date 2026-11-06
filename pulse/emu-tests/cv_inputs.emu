@@ -1,0 +1,65 @@
+# Pulse: Settings switches J7/J8 to CV inputs; on the MASTER layer P4 aims
+# CV A at a setting of the selected output, P5 does the same for CV B.
+wait 3000
+expect booted
+# Settings: B2 + B3 held 2 s; page 1, P2 = J7/J8: Outputs | CV in
+press b3
+wait 50
+press b2
+wait 2300
+release b2
+release b3
+wait 400
+pot 2 0                      # cross the stored "Outputs"
+wait 200
+pot 2 1                      # CV in
+wait 300
+tap b3                       # leave Settings
+wait 500
+# CV A -> RATIO of output 1
+press b2
+wait 500
+pot 4 0                      # catch at Off
+wait 100
+pot 4 0.115                  # zone 1 of 13: Ratio
+wait 300
+release b2
+wait 300
+cv 7 5                       # +5 V: x1 becomes x32
+wait 300
+mark
+wait 1000
+expect edges 3 > 56          # 64 gates a second
+expect edges 4 > 3           # out 2 unchanged: 4 a second
+expect edges 4 < 6
+cv 7 0                       # back to x1
+wait 1200
+mark
+wait 2000
+expect edges 3 > 3
+expect edges 3 < 6
+# CV B -> LEVEL of output 2: -5 V silences it
+tap b1                       # select output 2
+wait 300
+press b2
+wait 500
+pot 5 0
+wait 100
+pot 5 0.346                  # zone 4 of 13: Level
+wait 300
+release b2
+wait 300
+cv 8 -5
+wait 300
+mark
+wait 1500
+expect edges 4 = 0
+expect edges 3 > 1           # out 1 still runs
+cv 8 0
+wait 300
+mark
+wait 1500
+expect edges 4 > 4
+expect finite
+expect alive
+snapshot /tmp/pulse_cv.bmp

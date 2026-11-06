@@ -1,0 +1,18 @@
+# Pulse: hold B2 for the MASTER layer; P1 sets the BPM (10-300).
+wait 3000
+expect booted
+press b2
+wait 500                     # held past a tap: MASTER layer
+pot 1 0                      # cross the stored 120 BPM so the pot catches
+wait 100
+pot 1 0.1724                 # (60 - 10) / 290 = 60 BPM
+wait 300
+release b2
+wait 1000
+mark
+wait 4000
+expect edges 3 > 2           # one quarter a second
+expect edges 3 < 6
+expect edges 5 > 14          # sixteenth trigs: 16
+expect edges 5 < 18
+expect alive
