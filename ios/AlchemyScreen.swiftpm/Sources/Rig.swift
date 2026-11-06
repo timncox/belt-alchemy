@@ -23,6 +23,9 @@ final class Rig: ObservableObject {
     @AppStorage("knownDevices") private var knownRaw = ""
     @AppStorage("nicknames") private var nicknamesRaw = ""
     @AppStorage("controls") private var controlsRaw = ""
+    @AppStorage("linking") private var linkingRaw = ""
+    /// How the two modules are linked (shared key, follows, split harmonies).
+    @Published private(set) var linking = LinkSettings() { didSet { saveLinking() } }
 
     private var hub: MIDIHub?
     private var trying: Set<MIDIUniqueID> = []
@@ -35,6 +38,9 @@ final class Rig: ObservableObject {
     init() {
         if let d = controlsRaw.data(using: .utf8), let m = try? JSONDecoder().decode(ControlMatrix.self, from: d) {
             controls = m
+        }
+        if let d = linkingRaw.data(using: .utf8), let l = try? JSONDecoder().decode(LinkSettings.self, from: d) {
+            linking = l
         }
         do {
             let h = try MIDIHub()
@@ -78,6 +84,7 @@ final class Rig: ObservableObject {
         declined.remove(d.id)
         let m = ModuleStore(device: d, kind: d.kind, transport: link)
         m.onLost = { [weak self] m in self?.lost(m) }
+        m.onChange = { [weak self] m, c in self?.moduleChanged(m, c) }
         modules.append(m)
         trying.insert(d.id)
         if selectedID == nil { selectedID = m.id }
@@ -95,6 +102,7 @@ final class Rig: ObservableObject {
             if let d = m.device { self.trying.remove(d.id) }
             if m.phase == .ready, let d = m.device { self.known.insert(d.id) }
             self.sortModules()
+            self.applyLinksOnJoin()
         }
     }
 
@@ -133,6 +141,7 @@ final class Rig: ObservableObject {
             let fake = FakeModule(viaSysEx: true, unit: 0xBE17_0001 + UInt32(i), name: "Belt (demo)")
             let m = ModuleStore(device: nil, kind: .demo, transport: fake)
             m.onLost = { [weak self] m in self?.remove(m) }
+            m.onChange = { [weak self] m, c in self?.moduleChanged(m, c) }
             modules.append(m)
         }
         selectedID = modules.first?.id
@@ -205,4 +214,99 @@ final class Rig: ObservableObject {
     private func saveControls() {
         if let d = try? JSONEncoder().encode(controls), let s = String(data: d, encoding: .utf8) { controlsRaw = s }
     }
+
+    // MARK: linking the two modules
+
+    /// The linked modules, left first (lowest unit first, as named).
+    var linkUnits: [UInt32] { ready.map(\.unit) }
+    var canLink: Bool { ready.count >= 2 }
+
+    /// True while the Rig itself is writing a linked knob, so that write
+    /// isn't copied back to the module it came from (which would fight a
+    /// hand still on the pot).
+    private var applyingLinks = false
+
+    private func moduleChanged(_ m: ModuleStore, _ changes: [String: Double]) {
+        guard canLink, !applyingLinks else { return }
+        let units = linkUnits
+        for (field, v) in changes {
+            if linking.splitHarmonies, let slot = LinkEngine.planSlot(unit: m.unit, field: field, units: units) {
+                let idx = BeltFields.voiceIndex(v)
+                if linking.plan[slot] != idx { linking.plan[slot] = idx }
+            }
+            write(LinkEngine.propagate(unit: m.unit, field: field, value: v, settings: linking, units: units))
+        }
+    }
+
+    private func write(_ w: [ControlTarget: Double]) {
+        applyingLinks = true
+        defer { applyingLinks = false }
+        for (t, v) in w { module(unit: t.unit)?.set(fieldId: t.field, v) }
+    }
+
+    /// Left's key and scale onto the others.
+    private func copyKey() {
+        guard let left = ready.first else { return }
+        for f in [BeltFields.key, BeltFields.scale] {
+            guard let v = left.values[f] else { continue }
+            write(Dictionary(uniqueKeysWithValues: ready.dropFirst().map { (ControlTarget(unit: $0.unit, field: f), v) }))
+        }
+    }
+
+    func setShareKey(_ on: Bool) {
+        linking.shareKey = on
+        if on { copyKey() }
+    }
+
+    func setSplit(_ on: Bool) {
+        guard on != linking.splitHarmonies else { return }
+        if on, let left = ready.first {
+            linking.plan = LinkEngine.plan(fromLeftVoices: BeltFields.voices.map { left.values[$0] ?? BeltFields.voiceOff })
+        }
+        linking.splitHarmonies = on
+        if on { copyKey(); write(LinkEngine.splitWrites(plan: linking.plan, units: linkUnits)) }
+        else if canLink {
+            // Back to all four voices on the left; the right keeps its two.
+            write([ControlTarget(unit: ready[0].unit, field: BeltFields.voices[2]): BeltFields.voiceValue(linking.plan[2]),
+                   ControlTarget(unit: ready[0].unit, field: BeltFields.voices[3]): BeltFields.voiceValue(linking.plan[3])])
+        }
+    }
+
+    func setPlan(_ slot: Int, _ interval: Int) {
+        guard linking.plan.indices.contains(slot) else { return }
+        linking.plan[slot] = interval
+        if linking.splitHarmonies { write(LinkEngine.splitWrites(plan: linking.plan, units: linkUnits)) }
+    }
+
+    /// Add "this knob drives that one"; refused if it would bounce back.
+    @discardableResult
+    func addFollow(_ f: Follow) -> Bool {
+        guard !LinkEngine.makesLoop(f, with: linking.follows) else {
+            notice = "That would link a knob back to itself through the other module."
+            return false
+        }
+        linking.follows.append(f)
+        if let v = module(unit: f.from.unit)?.values[f.from.field] {
+            write(LinkEngine.propagate(unit: f.from.unit, field: f.from.field, value: v,
+                                       settings: LinkSettings.only(f), units: linkUnits))
+        }
+        return true
+    }
+
+    func removeFollow(_ id: UUID) { linking.follows.removeAll { $0.id == id } }
+
+    /// A second module came in: bring it into line with what's linked.
+    private func applyLinksOnJoin() {
+        guard canLink else { return }
+        if linking.keyShared { copyKey() }
+        if linking.splitHarmonies { write(LinkEngine.splitWrites(plan: linking.plan, units: linkUnits)) }
+    }
+
+    private func saveLinking() {
+        if let d = try? JSONEncoder().encode(linking), let s = String(data: d, encoding: .utf8) { linkingRaw = s }
+    }
+}
+
+extension LinkSettings {
+    static func only(_ f: Follow) -> LinkSettings { var s = LinkSettings(); s.follows = [f]; return s }
 }

@@ -33,6 +33,9 @@ struct RootView: View {
                     ModulesView().tabItem { Label("Modules", systemImage: "rectangle.split.2x1") }
                     PadView().tabItem { Label("Pad", systemImage: "hand.point.up.left") }
                     ControlsView().tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
+                    if rig.modules.count >= 2 {
+                        LinkView().tabItem { Label("Link", systemImage: "link") }
+                    }
                     NavigationStack { ConnectView(embedded: true) }
                         .tabItem { Label("Connect", systemImage: "cable.connector") }
                 }
@@ -49,8 +52,27 @@ struct RootView: View {
 struct ModulesView: View {
     @EnvironmentObject var rig: Rig
     @Environment(\.horizontalSizeClass) private var hsc
+    @AppStorage("oneScreen") private var oneScreen = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            if rig.canLink {
+                Picker("View", selection: $oneScreen) {
+                    Text(hsc == .regular ? "Side by side" : "Each module").tag(false)
+                    Text("One screen").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal).padding(.top, 6)
+            }
+            if oneScreen && rig.canLink {
+                CombinedScreen()
+            } else {
+                columns
+            }
+        }
+    }
+
+    @ViewBuilder private var columns: some View {
         if hsc == .regular && rig.modules.count >= 2 {
             HStack(spacing: 0) {
                 ModuleColumn(module: rig.modules[0])

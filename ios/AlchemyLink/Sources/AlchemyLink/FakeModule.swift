@@ -65,8 +65,8 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
              "disp": ["kind": "brightness", "lo": 0.1, "hi": 1.0] as [String: Any]],
             ["id": "s0.1", "name": "Tracking", "off": 4, "type": "enum", "zones": 3, "page": 0, "pot": 1,
              "disp": ["kind": "enum", "labels": ["Fast", "Normal", "Smooth"]] as [String: Any]],
-            ["id": "usb", "name": "USB port", "off": 5, "type": "enum", "zones": 4, "page": 0, "pot": 5,
-             "disp": ["kind": "enum", "labels": ["Mac", "Launchpad", "Audio", "Phone"]] as [String: Any]],
+            ["id": "usb", "name": "USB port", "off": 5, "type": "enum", "zones": 5, "page": 0, "pot": 5,
+             "disp": ["kind": "enum", "labels": ["Mac", "Launchpad", "Audio", "Phone", "Phone+Audio"]] as [String: Any]],
         ]
         let size = settingsOff + 6
         let module: [String: Any] = ["id": "belt_alchemy", "name": name, "fw": "demo",

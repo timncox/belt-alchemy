@@ -19,6 +19,11 @@
  * turns ours into HostLink bytes in a lock-free ring (IRQ writes, Poll
  * reads).  Overflow drops bytes; COBS + CRC make that a host retry.
  *
+ * Phone+Audio mode: InitOnAudio() instead of Init() runs the same rings,
+ * decoder and ping-pong transmit over the MIDI interface of usb_audio.c's
+ * composite device (UAC_StartWithMidi, usb_phone_audio_desc.h) rather than
+ * libDaisy's MIDI device, so HostLink reaches the same handlers.
+ *
  * One instance per system (the receive callback has no context pointer),
  * and not at the same time as a CdcUsbTransport on the same port: the
  * port is either serial or MIDI from power-up.
@@ -62,6 +67,13 @@ class MidiUsbHostTransport : public IHostTransport
               daisy::UsbHandle::UsbPeriph periph,
               const char* product_name = nullptr);
 
+    /**
+     * Phone+Audio: HostLink over the USB MIDI interface of the composite
+     * audio device (usb_audio.h UAC_StartWithMidi). Call before
+     * UAC_StartWithMidi, so no packet arrives without a receiver.
+     */
+    void InitOnAudio();
+
     size_t Read(uint8_t* dst, size_t max) override;
     size_t Write(const uint8_t* src, size_t n) override;
     size_t WriteSpace() const override;
@@ -72,6 +84,8 @@ class MidiUsbHostTransport : public IHostTransport
 
   private:
     static void RxTrampoline(uint8_t* buf, uint32_t* len);
+    static void RxTrampolineAudio(const uint8_t* buf, uint32_t len);
+    bool        Transmit(uint8_t* buf, size_t n);
     void        OnRx(const uint8_t* buf, uint32_t len);
 
     static constexpr size_t kRxRing = detail::Pow2(kMaxWire * 3u);
@@ -81,6 +95,7 @@ class MidiUsbHostTransport : public IHostTransport
 
     daisy::UsbHandle*           usb_    = nullptr;
     daisy::UsbHandle::UsbPeriph periph_ = daisy::UsbHandle::FS_INTERNAL;
+    bool                        on_audio_ = false;   /* Phone+Audio */
     hlmidi::Decoder             decoder_;
 
     uint8_t           rx_[kRxRing];

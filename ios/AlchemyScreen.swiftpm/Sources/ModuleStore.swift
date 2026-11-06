@@ -59,6 +59,9 @@ final class ModuleStore: ObservableObject, Identifiable {
 
     /// Called once when the module stops answering or is unplugged.
     var onLost: ((ModuleStore) -> Void)?
+    /// Knobs that moved, by hand on the module or from the app: the Rig
+    /// copies them to the other module where they're linked.
+    var onChange: ((ModuleStore, [String: Double]) -> Void)?
 
     private var client: HostLinkClient?
     private var live: [UInt8] = []
@@ -145,7 +148,14 @@ final class ModuleStore: ObservableObject, Identifiable {
                 }
                 if tick % liveEvery == 0 && dirty.isEmpty && !flushing && !transferring {
                     let b = try await c.getLive()
-                    if dirty.isEmpty && !flushing, let d = desc { live = b; values = d.decode(b) }
+                    if dirty.isEmpty && !flushing, let d = desc {
+                        live = b
+                        let fresh = d.decode(b)
+                        var moved: [String: Double] = [:]
+                        for (k, v) in fresh where abs((values[k] ?? v) - v) > 0.002 { moved[k] = v }
+                        values = fresh
+                        if !moved.isEmpty { onChange?(self, moved) }
+                    }
                 }
                 misses = 0
             } catch {
@@ -185,9 +195,11 @@ final class ModuleStore: ObservableObject, Identifiable {
     func set(_ f: Field, _ v: Double) {
         guard !f.severs else { return }
         let q = f.isEnum ? v.rounded() : f.quantize(v)
+        guard values[f.id] != q else { return }
         values[f.id] = q
         dirty[f.id] = q
         flush()
+        onChange?(self, [f.id: q])
     }
 
     private func flush() {
@@ -222,6 +234,7 @@ final class ModuleStore: ObservableObject, Identifiable {
         values[f.id] = q
         dirty[f.id] = q
         flush()
+        onChange?(self, [f.id: q])
     }
 
     /// A pot on the LED screen: the field at that position on the knob page

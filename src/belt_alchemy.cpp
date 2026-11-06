@@ -301,7 +301,8 @@ static BeltExtras  extras;
 static KnobHandle  flex_k, humanize_k, wet_k;
 
 /* The front USB-C's HostLink: serial (Mac mode, the web programmer and
- * Control page) or USB MIDI (Phone mode, the iPhone app). The Host gets the
+ * Control page) or USB MIDI (Phone mode, the iPhone app; Phone+Audio, the
+ * same MIDI inside usb_audio.c's composite device). The Host gets the
  * switch before BootLoad(); the real transport is chosen once the USB port
  * setting is known. The phone block adds the LED screen, firmware switching
  * from the card, and button presses (phone_ext.h). */
@@ -527,7 +528,8 @@ static void apply_mute(bool on)
  * running. Hold B1 at power-up to boot in Mac mode whatever the setting says.
  */
 static bool in_scale(int n, int key_idx, int scale_idx);
-static const char* const kUsbLabels[4] = {"Mac", "Launchpad", "Audio", "Phone"};
+static const char* const kUsbLabels[5] = {"Mac", "Launchpad", "Audio", "Phone",
+                                          "Phone+Audio"};
 static SelectorHandle usb_port;
 static bool     g_lp_mode    = false;
 /* true = the front USB-C is a USB audio interface this boot (usb_audio.h):
@@ -536,6 +538,12 @@ static bool     g_lp_mode    = false;
 static bool     g_usb_audio  = false;
 /* true = the front USB-C is USB MIDI carrying HostLink, for the iPhone app. */
 static bool     g_phone      = false;
+/* true = Phone+Audio (USB port 4): ONE composite device, usb_audio.c's
+ * audio interface plus Phone mode's MIDI (usb_phone_audio_desc.h). Unlike
+ * Audio mode the engine runs: the phone's stream is added to J1/J2 at
+ * Belt's input, Belt's output goes to J9/J10 and back to the phone, and the
+ * app keeps HostLink over the MIDI interface. Untested on hardware. */
+static bool     g_phone_audio = false;
 static uint8_t  g_lp_stage   = 0;
 static uint32_t g_lp_boot_ms = 0;
 static bool     g_lp_hard_down = false;
@@ -754,7 +762,7 @@ static void lp_write_report(uint32_t now)
 
 static void OnPoll(uint32_t now)
 {
-    if (g_usb_audio && UAC_RebootRequested())
+    if ((g_usb_audio || g_phone_audio) && UAC_RebootRequested())
     {
         static uint32_t asked = 0u;
         if (!asked) asked = now ? now : 1u;
@@ -1116,12 +1124,28 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
      * Converting at the boundary keeps the engine bit-identical to the Move
      * build, so any difference in sound is a shim bug. The engine sums the
      * two inputs to mono for analysis and keeps the dry path stereo. */
+    /* Phone+Audio: the phone's stream (silence until it plays) joins the
+     * jacks at Belt's input. ReadHost also times the codec for the USB
+     * clock steering, so it runs every block. */
+    static float s_ph[2][kBlockSize];
+    if (g_phone_audio)
+    {
+        float* ph[2] = {s_ph[0], s_ph[1]};
+        UAC_ReadHost(ph, size);
+    }
+
     float pk = g_in_peak;
     for (size_t i = 0; i < size; i++)
     {
-        bufi[2 * i]     = f2i(in[0][i]);
-        bufi[2 * i + 1] = f2i(in[1][i]);
-        const float a = fabsf(in[0][i]), b = fabsf(in[1][i]);
+        float l = in[0][i], r = in[1][i];
+        if (g_phone_audio)
+        {
+            l += s_ph[0][i];
+            r += s_ph[1][i];
+        }
+        bufi[2 * i]     = f2i(l);
+        bufi[2 * i + 1] = f2i(r);
+        const float a = fabsf(l), b = fabsf(r);
         if (a > pk) pk = a;
         if (b > pk) pk = b;
     }
@@ -1138,6 +1162,9 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
 
     /* The gamepad's punch effects, last on the output. */
     if (g_lp_mode) pfx_process(&g_pfx, out[0], out[1], (uint32_t)size);
+
+    /* Phone+Audio: Belt back to the phone, as it leaves J9/J10. */
+    if (g_phone_audio) UAC_WriteHost(out, size);
 
     float po = g_out_peak;
     for (size_t i = 0; i < size; i++)
@@ -1288,7 +1315,10 @@ int main(void)
               "powered dongle). **Audio**: the Lab is a USB audio interface, "
               "2 in (J1/J2) and 2 out (J9/J10) at 48 kHz, and the engine is "
               "bypassed. **Phone**: the front USB-C is USB MIDI, for the "
-              "iPhone app (screen, knobs, samples, firmware). From the next "
+              "iPhone app (screen, knobs, samples, firmware). **Phone+Audio**: "
+              "Phone and a 2-in/2-out audio interface on one cable: the "
+              "phone's audio joins J1/J2 at Belt's input and hears Belt's "
+              "output (untested on hardware). From the next "
               "power-up; hold B1 while powering up for Mac mode once.");
     settings.UseBrightness();
     settings.UsePresets(presets);
@@ -1411,17 +1441,30 @@ int main(void)
     g_lp_mode    = (int)usb_port.Value() == 1 && !force_mac;
     g_usb_audio  = (int)usb_port.Value() == 2 && !force_mac;
     g_phone      = (int)usb_port.Value() == 3 && !force_mac;
+    g_phone_audio = (int)usb_port.Value() == 4 && !force_mac;
     g_lp_boot_ms = System::GetNow();
     if (g_usb_audio) UAC_Start("Alchemy Lab");
 #ifndef BELT_BENCH_USB
+    /* Phone+Audio: the MIDI receiver goes in before the device starts. */
+    if (g_phone_audio)
+    {
+        front_midi.InitOnAudio();
+        front_link.Use(front_midi);
+    }
+#endif
+    /* (A bench build still brings the composite device up, with HostLink
+     * on the bench port and the MIDI interface unattended.) */
+    if (g_phone_audio) UAC_StartWithMidi("Alchemy Lab");
+#ifndef BELT_BENCH_USB
     /* The front port's HostLink, now that its mode is known. Launchpad and
-     * Audio modes start their own USB stacks above and never poll the host. */
+     * Audio modes start their own USB stacks above and never poll the host;
+     * Phone+Audio's is above. */
     if (g_phone)
     {
         front_midi.Init(front_usb, kFrontUsb, "Alchemy Lab");
         front_link.Use(front_midi);
     }
-    else if (!g_lp_mode && !g_usb_audio)
+    else if (!g_lp_mode && !g_usb_audio && !g_phone_audio)
     {
         front_cdc.Init(front_usb, kFrontUsb, "Belt");
         front_link.Use(front_cdc);

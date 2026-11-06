@@ -4,6 +4,13 @@
  * USB audio interface (usb_audio.c) has three interfaces and the stock
  * check rejects every request to interface 2 (the recording stream).
  *
+ * Phone+Audio mode (usb_phone_audio_desc.h) adds a fourth interface, the
+ * USB MIDI one, number 3. It needs no change here: USBD_StdItfReq admits
+ * wIndex <= USBD_MAX_NUM_INTERFACES, so 3 already lets interfaces 0-3
+ * through (libDaisy's 1 let 0-1 through, which is why 2 failed). Raising it
+ * to 4 would also pass interface 4, which no layout has; usb_audio.c
+ * rejects interfaces a mode does not have in its own SET_INTERFACE.
+ *
  * Linked before libdaisy.a, it defines every symbol of the archive's
  * usbd_ctlreq.o, so that member is never pulled in. CDC (HostLink) has one
  * interface pair and is unaffected by the higher limit.
@@ -33,7 +40,7 @@
 #include "usbd_ioreq.h"
 
 #undef USBD_MAX_NUM_INTERFACES
-#define USBD_MAX_NUM_INTERFACES 3U
+#define USBD_MAX_NUM_INTERFACES 3U   /* admits wIndex 0..3, see above */
 
 #ifdef USE_USBD_COMPOSITE
 #include "usbd_composite_builder.h"

@@ -7,6 +7,7 @@
 #include "usbd_core.h"
 #include "usbd_ctlreq.h"
 #include "usbd_ioreq.h"
+#include "usb_phone_audio_desc.h"   /* Phone+Audio: the 4-interface layout */
 
 extern PCD_HandleTypeDef hpcd_USB_OTG_HS; /* libDaisy usbd_conf.c */
 
@@ -26,6 +27,12 @@ extern PCD_HandleTypeDef hpcd_USB_OTG_HS; /* libDaisy usbd_conf.c */
 #define ITF_AC      0u
 #define ITF_OUT     1u
 #define ITF_IN      2u
+#define ITF_MS      3u      /* Phone+Audio only: MIDIStreaming            */
+
+/* Phone+Audio (UAC_StartWithMidi): USB MIDI bulk endpoints for HostLink. */
+#define EP_MIDI_OUT PA_EP_MIDI_OUT
+#define EP_MIDI_IN  PA_EP_MIDI_IN
+#define MIDI_PKT    PA_MIDI_PKT
 
 /* Ring sizing (frames). The audio callback moves 128 frames at a time on
  * Mark (Smack too), so the fills swing by a block; the targets sit a block
@@ -105,6 +112,15 @@ static const uint8_t k_cfg[CFG_LEN] = {
 };
 _Static_assert(sizeof k_cfg == CFG_LEN, "configuration descriptor length");
 _Static_assert(CFG_LEN == 174u, "UAC1 2-in/2-out, no feedback, is 174 bytes");
+/* The Phone+Audio descriptor (usb_phone_audio_desc.h) repeats this one's
+ * audio part with its own constants; they must agree with these. */
+_Static_assert(PA_RATE == UAC_RATE && PA_CH == UAC_CH && PA_SUBFRAME == UAC_SUBFRAME
+               && PA_PKT_MAX == UAC_PKT_MAX, "Phone+Audio format = Audio mode's");
+_Static_assert(PA_EP_AUDIO_OUT == EP_OUT && PA_EP_AUDIO_IN == EP_IN
+               && PA_ITF_AC == ITF_AC && PA_ITF_OUT == ITF_OUT && PA_ITF_IN == ITF_IN
+               && PA_ITF_MS == ITF_MS, "Phone+Audio interfaces = Audio mode's + MS");
+_Static_assert(PA_AS_LEN == AS_OUT_LEN && PA_AS_LEN == AS_IN_LEN
+               && PA_AC_CS_LEN == AC_CS_LEN + 1u, "Phone+Audio audio part = Audio mode's");
 
 static uint8_t k_dev[USB_LEN_DEV_DESC] = {
     0x12, USB_DESC_TYPE_DEVICE,
@@ -186,6 +202,16 @@ static USBD_DescriptorsTypeDef s_desc = {
 static USBD_HandleTypeDef s_dev;
 static volatile uint8_t   s_started;
 static volatile uint8_t   s_reboot_req;
+
+/* Phone+Audio: the MIDIStreaming interface (0 = Audio mode, 3 interfaces).
+ * Receive runs in the USB interrupt and hands each bulk packet to s_midi_rx;
+ * transmit is one transfer at a time from the app's loop. */
+static uint8_t                 s_midi;
+static UAC_MidiRxFn volatile   s_midi_rx;
+static uint8_t                 s_midi_rx_pkt[MIDI_PKT];
+static volatile uint8_t        s_midi_open;      /* configured, EPs open    */
+static volatile uint8_t        s_midi_tx_busy;
+static volatile uint16_t       s_midi_tx_len;    /* for the zero-length end */
 
 /* Frames as signed 24-bit in int32, L then R. */
 static int32_t           s_out_ring[RING][UAC_CH];
@@ -388,10 +414,39 @@ static void arm_out(USBD_HandleTypeDef *pdev, int rx_parity)
 
 static void send_in(USBD_HandleTypeDef *pdev);
 
+/* Phone+Audio: the MIDI bulk pair lives as long as the configuration, as
+ * in libDaisy's MIDI class (Phone mode). */
+static void midi_open(USBD_HandleTypeDef *pdev)
+{
+    USBD_LL_OpenEP(pdev, EP_MIDI_IN, USBD_EP_TYPE_BULK, MIDI_PKT);
+    pdev->ep_in[EP_MIDI_IN & 0xFu].is_used    = 1u;
+    pdev->ep_in[EP_MIDI_IN & 0xFu].maxpacket  = MIDI_PKT;
+    USBD_LL_OpenEP(pdev, EP_MIDI_OUT, USBD_EP_TYPE_BULK, MIDI_PKT);
+    pdev->ep_out[EP_MIDI_OUT & 0xFu].is_used   = 1u;
+    pdev->ep_out[EP_MIDI_OUT & 0xFu].maxpacket = MIDI_PKT;
+    s_midi_tx_busy = 0u;
+    s_midi_tx_len  = 0u;
+    s_midi_open    = 1u;
+    USBD_LL_PrepareReceive(pdev, EP_MIDI_OUT, s_midi_rx_pkt, MIDI_PKT);
+}
+
+static void midi_close(USBD_HandleTypeDef *pdev)
+{
+    if (!s_midi_open) return;
+    s_midi_open = 0u;
+    USBD_LL_FlushEP(pdev, EP_MIDI_IN);
+    USBD_LL_CloseEP(pdev, EP_MIDI_IN);
+    pdev->ep_in[EP_MIDI_IN & 0xFu].is_used = 0u;
+    USBD_LL_CloseEP(pdev, EP_MIDI_OUT);
+    pdev->ep_out[EP_MIDI_OUT & 0xFu].is_used = 0u;
+    s_midi_tx_busy = 0u;
+    s_midi_tx_len  = 0u;
+}
+
 static uint8_t c_init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
 {
-    (void)pdev;
     (void)cfgidx;
+    if (s_midi) midi_open(pdev);
     return (uint8_t)USBD_OK;
 }
 
@@ -400,6 +455,7 @@ static uint8_t c_deinit(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
     (void)cfgidx;
     out_stream(pdev, 0u);
     in_stream(pdev, 0u);
+    if (s_midi) midi_close(pdev);
     return (uint8_t)USBD_OK;
 }
 
@@ -429,8 +485,11 @@ static uint8_t c_setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req)
         {
             const uint8_t itf = LOBYTE(req->wIndex);
             const uint8_t alt = LOBYTE(req->wValue);
+            /* Audio mode: interfaces 0-2. Phone+Audio adds 3 (MIDI), which,
+             * like the AudioControl interface, has only alt 0. */
+            const uint8_t n_itf = s_midi ? PA_NUM_ITF : (uint8_t)(ITF_IN + 1u);
             if (pdev->dev_state != USBD_STATE_CONFIGURED || alt > 1u
-                || (itf == ITF_AC && alt != 0u) || itf > ITF_IN)
+                || ((itf == ITF_AC || itf == ITF_MS) && alt != 0u) || itf >= n_itf)
             {
                 USBD_CtlError(pdev, req);
                 return (uint8_t)USBD_FAIL;
@@ -509,7 +568,19 @@ static uint8_t c_ep0_rx_ready(USBD_HandleTypeDef *pdev)
 
 static uint8_t c_data_in(USBD_HandleTypeDef *pdev, uint8_t epnum)
 {
-    (void)pdev;
+    if (s_midi && epnum == (EP_MIDI_IN & 0x7Fu))
+    {
+        /* A transfer that filled its last packet ends with a zero-length
+         * packet, as libDaisy's class does in Phone mode, so the host's
+         * MIDI driver does not sit on it waiting for more. */
+        const uint16_t len = s_midi_tx_len;
+        s_midi_tx_len = 0u;
+        if (len && (len % MIDI_PKT) == 0u && s_midi_open)
+            USBD_LL_Transmit(pdev, EP_MIDI_IN, NULL, 0u);
+        else
+            s_midi_tx_busy = 0u;
+        return (uint8_t)USBD_OK;
+    }
     if (epnum == (EP_IN & 0x7Fu))
     {
         s_in_busy = 0u;
@@ -523,6 +594,16 @@ static uint8_t c_data_in(USBD_HandleTypeDef *pdev, uint8_t epnum)
 
 static uint8_t c_data_out(USBD_HandleTypeDef *pdev, uint8_t epnum)
 {
+    if (s_midi && epnum == EP_MIDI_OUT)
+    {
+        /* USB-MIDI event packets, decoded in this interrupt (as Phone mode's
+         * receive callback is), then the endpoint is re-armed. */
+        const UAC_MidiRxFn rx = s_midi_rx;
+        const uint32_t     n  = USBD_LL_GetRxDataSize(pdev, epnum);
+        if (rx && n) rx(s_midi_rx_pkt, n <= MIDI_PKT ? n : MIDI_PKT);
+        if (s_midi_open) USBD_LL_PrepareReceive(pdev, EP_MIDI_OUT, s_midi_rx_pkt, MIDI_PKT);
+        return (uint8_t)USBD_OK;
+    }
     if (epnum != EP_OUT || !s_out_on) return (uint8_t)USBD_OK;
 
     const int      rxpar  = (int)((out_ep_regs()->DOEPCTL >> 16) & 1u);
@@ -683,6 +764,11 @@ static uint8_t c_iso_out_incomplete(USBD_HandleTypeDef *pdev, uint8_t epnum)
 
 static uint8_t *c_cfg(uint16_t *len)
 {
+    if (s_midi)
+    {
+        *len = (uint16_t)sizeof k_cfg_phone_audio;
+        return (uint8_t *)(uintptr_t)k_cfg_phone_audio;
+    }
     *len = (uint16_t)sizeof k_cfg;
     return (uint8_t *)(uintptr_t)k_cfg;
 }
@@ -706,10 +792,18 @@ static USBD_ClassTypeDef s_class = {
 
 /* ---- public ----------------------------------------------------------------- */
 
-void UAC_Start(const char *product)
+static void start(const char *product, uint8_t with_midi)
 {
     if (s_started) return;
     if (product) s_product = product;
+    s_midi = with_midi;
+    if (with_midi)
+    {
+        /* Another interface layout: another bcdDevice, so no host reuses a
+         * cached Audio-mode configuration for it. */
+        k_dev[12] = LO(PA_BCD_DEVICE);
+        k_dev[13] = HI(PA_BCD_DEVICE);
+    }
 
     /* The codec's clock becomes steerable (before the SAI starts). */
     pll3_relock();
@@ -730,6 +824,14 @@ void UAC_Start(const char *product)
     HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 0x40);
     HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 0x10);
     HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 2, 0x100);
+    /* Phone+Audio: TX3 for the MIDI bulk IN (EP 0x83), right after TX2.
+     * 656 of 1024 words; usb_phone_audio_desc.h has the table. */
+    if (with_midi)
+    {
+        _Static_assert(PA_FIFO_RX == 0x100 && PA_FIFO_TX0 == 0x40 && PA_FIFO_TX1 == 0x10
+                       && PA_FIFO_TX2 == 0x100, "the table matches the split above");
+        HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 3, PA_FIFO_TX3);
+    }
 
     /* Start-of-frame drives the IN packets, the feedback and the rate
      * measurement; libDaisy leaves it masked. */
@@ -741,7 +843,48 @@ void UAC_Start(const char *product)
     s_started = 1u;
 }
 
+void UAC_Start(const char *product)
+{
+    start(product, 0u);
+}
+
+void UAC_StartWithMidi(const char *product)
+{
+    start(product, 1u);
+}
+
+void UAC_MidiSetRx(UAC_MidiRxFn fn)
+{
+    s_midi_rx = fn;
+}
+
+uint8_t UAC_MidiTransmit(const uint8_t *buf, uint16_t len)
+{
+    if (!s_midi || !len || s_dev.dev_state != USBD_STATE_CONFIGURED) return 0u;
+    /* The HAL's transmit read-modify-writes the shared FIFO-empty mask that
+     * the interrupt also updates (EP0), so start it with interrupts off. It
+     * only programs the endpoint: the interrupt fills the FIFO. */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    uint8_t ok = 0u;
+    if (s_midi_open && !s_midi_tx_busy)
+    {
+        s_midi_tx_busy = 1u;
+        s_midi_tx_len  = len;
+        ok = USBD_LL_Transmit(&s_dev, EP_MIDI_IN, (uint8_t *)(uintptr_t)buf, len) == USBD_OK;
+        if (!ok) { s_midi_tx_busy = 0u; s_midi_tx_len = 0u; }
+    }
+    __set_PRIMASK(primask);
+    return ok;
+}
+
 void UAC_Process(const float *const *in, float **out, size_t frames)
+{
+    UAC_ReadHost(out, frames);
+    UAC_WriteHost(in, frames);
+}
+
+void UAC_ReadHost(float **out, size_t frames)
 {
     const uint32_t total = s_codec_frames + (uint32_t)frames;
     s_codec_frames = total;
@@ -794,7 +937,10 @@ void UAC_Process(const float *const *in, float **out, size_t frames)
     {
         for (size_t i = 0; i < frames; i++) out[0][i] = out[1][i] = 0.0f;
     }
+}
 
+void UAC_WriteHost(const float *const *in, size_t frames)
+{
     /* J1/J2 -> computer */
     if (s_in_on)
     {

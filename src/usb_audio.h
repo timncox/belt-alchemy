@@ -29,6 +29,12 @@
  * (PB14/PB15), then re-splits its FIFOs for the isochronous endpoints.
  * Needs usbd_ctlreq_uac.c (ST's usbd_ctlreq.c allowing 3 interfaces).
  *
+ * Phone+Audio (UAC_StartWithMidi): the same device plus a USB MIDI
+ * interface (3, bulk EP 0x03 / 0x83) inside the audio function, so an
+ * iPhone gets the audio streams and HostLink-over-SysEx on one cable. The
+ * descriptor, the endpoint table and the FIFO split are in
+ * usb_phone_audio_desc.h. Untested on hardware.
+ *
  * Shared by copy with smack-alchemy and belt-alchemy.
  */
 #ifndef USB_AUDIO_H
@@ -44,10 +50,31 @@ extern "C" {
 /* Bring the device up on the front USB-C. Call once, from main(). */
 void UAC_Start(const char *product);
 
+/* Phone+Audio: UAC_Start's device with a USB MIDI interface added (see
+ * usb_phone_audio_desc.h). Call instead of UAC_Start, once, from main(). */
+void UAC_StartWithMidi(const char *product);
+
+/* Phone+Audio MIDI. The receive callback runs in the USB interrupt with
+ * each bulk packet (USB-MIDI event packets, up to 64 bytes); set it before
+ * UAC_StartWithMidi. Transmit starts one transfer (any length; the buffer
+ * must stay untouched until the next call is accepted) and returns 1, or 0
+ * while the previous one is still going or no host has configured the
+ * device. Call it from the app's loop only. */
+typedef void (*UAC_MidiRxFn)(const uint8_t *buf, uint32_t len);
+void    UAC_MidiSetRx(UAC_MidiRxFn fn);
+uint8_t UAC_MidiTransmit(const uint8_t *buf, uint16_t len);
+
 /* From the audio callback: in = the codec inputs (to the computer),
  * out = the codec outputs (from the computer). Non-interleaved, 2 channels.
  * Writes silence to out while the computer is not playing. */
 void UAC_Process(const float *const *in, float **out, size_t frames);
+
+/* UAC_Process in its two halves, for a firmware that runs its own audio in
+ * between (Phone+Audio: the phone's stream into the engine, the engine back
+ * to the phone). Once per audio block each, ReadHost first: it also times
+ * the codec for the clock steering. UAC_Process is exactly the two. */
+void UAC_ReadHost(float **out, size_t frames);
+void UAC_WriteHost(const float *const *in, size_t frames);
 
 enum
 {

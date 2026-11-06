@@ -38,26 +38,35 @@ Unchecked:
 
 ## Wi-Fi
 
-Not recommended. iOS network MIDI has one session that merges every peer's
-input, so replies from two modules would arrive mixed, and the boxes that
-bridge USB MIDI to the network (iConnectivity mioXM) are bulky, wired
-Ethernet and expensive.
+A plain USB Wi-Fi dongle can't work: the module has no Wi-Fi driver or
+network stack, and its port is full speed only. iOS network MIDI also merges
+every peer into one session, so two modules' replies would arrive mixed.
 
-## Linking the two modules (sketch, not built)
+Idea, not built: a small ESP32-S3 board (for example Waveshare's
+ESP32-S3-Zero, 23.5 x 18 mm, native USB-C, antenna on the board) as USB
+host to the module and a Wi-Fi bridge, with our own firmware. The app talks
+to each bridge separately, so nothing merges. It needs 5 V on its 5V pin,
+since the module's port gives no power. Left's bridge makes the network;
+Right's bridge and the phone join it.
 
-The app is the hub; the modules never talk to each other directly. What fits
-at control rate:
+## Linking the two modules (built, untested on hardware)
+
+The app is the hub; the modules never talk to each other directly.
+AlchemyLink/Linking.swift holds the rules and is tested; the app's Link tab
+sets them up.
 
 - Shared key and scale: change either, the other follows.
-- One knob or a preset driving both (Retune on both, or Left's Harmony
-  driving Right's Doubler).
-- Harmonies split across the two: Left sings voices 1 and 2, Right 3 and 4.
-- One combined screen on iPad: both pitch graphs on one set of note lanes.
+- Follows: one knob drives a knob on the other module over a range you set.
+  A follow that would loop back is refused.
+- Split harmonies: Left sings plan voices 1 and 2 in its Voice 1/2, Right
+  sings 3 and 4; both modules' Voice 3/4 are off and the key is shared.
+- One screen: both pitch graphs on one set of note lanes (Left orange,
+  Right cyan), on iPad or iPhone.
 
-What wireless (or even USB through the phone) rules out: anything that
-needs the two in step to the millisecond. Clock, gates and audio stay on
-patch cables between the modules; the round trip through the phone is a few ms over USB
-and about 25 ms or more over Bluetooth, and it wobbles.
+Writes the app makes for a link are not echoed back to the module they came
+from. Everything runs at control rate: clock, gates and audio stay on patch
+cables between the modules, because the round trip through the phone is a
+few ms over USB and about 25 ms or more over Bluetooth, and it wobbles.
 
 A cable between the two modules' USB-C ports: possible in principle (one
 module hosts the other with the Launchpad host code, the 5 V injector, and
@@ -67,37 +76,88 @@ then can't talk to the phone. The hub with the phone on it is simpler.
 ## The mic, and audio
 
 - Built: the mic as a control source (level and pitch).
-- Later: record a short clip in the app and put it on the module's card as a
-  sample, for firmwares that play samples (Belt doesn't). Over USB a 5 s
-  mono clip at 48 kHz takes a few seconds; over Bluetooth, minutes.
-- Live mic into Belt today: the phone's audio out (a USB-C audio adapter, or
-  the hub's audio jack if it has one) into the module's input with a cable.
-- USB audio in Phone mode: feasible, not built. The firmware already has a
-  class-compliant USB Audio mode (src/usb_audio.c: 2 in, 2 out, 48 kHz,
-  24-bit), but it's one role per boot. Putting the audio interfaces and the
-  MIDI interface in one device is standard USB Audio 1; the work is the
-  descriptors, endpoint FIFO room on the full-speed core, and allowing four
-  interfaces in usbd_ctlreq_uac.c. Then the phone could send its mic to Belt
-  and hear Belt back over the one cable. iOS takes one audio interface at a
-  time, so with two modules only one would carry audio.
+- Built: record a clip (48 kHz mono WAV, up to 30 s) in Samples, play it
+  back, and put it on the module's card. Over USB a 5 s clip takes a few
+  seconds; over Bluetooth, minutes. Belt itself doesn't play samples.
+- Live mic into Belt without USB audio: the phone's audio out (a USB-C
+  audio adapter, or the hub's audio jack) into the module's input.
+- Built in firmware, untested on hardware: USB port setting "Phone+Audio"
+  (value 4). One composite USB Audio 1 device: audio in and out (2 ch,
+  48 kHz, 24-bit) plus the MIDI interface the app uses. The engine keeps
+  running: the phone's audio is added to J1/J2 at Belt's input, and Belt's
+  output goes to J9/J10 and back to the phone. Checked on the bench in code
+  only (descriptor test, 148 checks). To check on hardware: that iOS and
+  macOS accept it, dropouts while the app is busy (audio and MIDI share one
+  receive FIFO), clock steering, CPU headroom (the engine already peaks
+  near 100%), and about 13 ms round trip plus iOS buffering. iOS takes one
+  audio interface at a time, so with two modules only one carries audio.
 
-## AUv3 (plan, not built)
+## AUv3 (written, not yet built in Xcode)
 
-An Audio Unit extension (a MIDI processor, "aumi") sharing AlchemyLink, so
-AUM, Loopy Pro and other hosts can load it: the modules' knobs as AU
-parameters the host can automate, the pad as a view, and MIDI in and out
-through the host. The extension reaches the modules with CoreMIDI like the
-app does; a host and the app can't both hold the link, so the app gives way
-while a host has it. Audio from the modules into iOS effects is a separate
-path, through an audio interface or the USB audio above.
+An Audio Unit extension (a MIDI processor, "aumi", subtype `AlSc`,
+manufacturer `Alch`, shown as "Alchemy Lab: Alchemy Screen"), embedded in
+the app, so AUM, Loopy Pro and other hosts can load it. Sources in
+`AlchemyAU/`; the target is `AlchemyAU` in `AlchemyScreen/project.yml`. The
+parts that don't need Apple frameworks are in AlchemyLink with tests:
+`AUParams.swift` (addresses, ranges, CC map), `BeltParamDriver.swift` (one
+module's knobs as parameters, coalesced writes, readback) and
+`SeqTagTransport.swift` (sharing a module with the app).
+
+- **Parameters**: two groups, Module A and Module B (lowest unit number
+  first, the app's Left and Right), each with Belt's twelve performance
+  knobs (Key, Scale, Retune, Amount, Harmony, Formant, Voice 1-4, Doubler,
+  Spread) and HARD and Mute. Address = slot << 8 | param: A is 0x000-0x00D,
+  B is 0x100-0x10D, in that order. Key, Scale and the Voices are indexed
+  (named as on the module), the rest 0-100 %, Formant -100 to +100, HARD and
+  Mute on/off. Fixed: hosts save automation against them.
+- **Host to module**: a change goes out at once as a running-state write
+  (HARD and Mute as a button tap, only when the module's state differs),
+  one write in flight and at most one per control period, so a fast lane
+  never backs up. Every ~400 ms the extension reads the knobs and STATE
+  back; a parameter the host changed in the last second is left alone.
+- **MIDI**: everything in goes out to the host's MIDI output. CC 20-33 also
+  move Module A's fourteen parameters in the order above, CC 52-65 Module
+  B's (any channel; for HARD and Mute 64 and up is on).
+- **View**: both modules' names and link, the knobs as sliders, HARD and
+  Mute as buttons.
+
+Known limits:
+
+- **The app and the extension can both hold a module**, each with its own
+  CoreMIDI connection, and both send HostLink. Both hear every reply. A
+  reply carries its request's sequence number, but both clients number from
+  1, so on their own they would take each other's replies (the test
+  `testTwoHostsShareOneModule` shows it happening). The extension tags its
+  numbers (top bit set) and drops replies that aren't its own, so it is
+  safe; the app ignores the extension's tagged replies until its own count
+  passes 32 767 (about 35 minutes of polling), after which a rare
+  mismatched reply is possible on the app's side. Polling doubles while both
+  are connected. The module has one HostLink parser and one blob transfer,
+  so a long frame (descriptor, files) or a running-state write from each at
+  the same moment can fail its checksum once and be retried.
+  **Recommendation: close the app's connection to the module (or the app)
+  while a host uses the extension.** Later, in the app (not done): let go of
+  the module while the extension has it (an App Group flag, or pausing when
+  the app goes to the background), and start the app's sequence numbers in
+  the lower half explicitly.
+- **Finding modules by name only.** The extension connects devices whose
+  name contains "alchemy". The app also remembers devices that answered
+  under another name (a renamed Bluetooth adapter), but that list is in the
+  app's own defaults and the extension runs in another process. Keep
+  "Alchemy" in the adapters' names, or share the list through an App Group.
+- **Session recall**: the host restores the parameters, but a module that
+  connects afterwards keeps its own state (it may be mid-song) and the
+  parameters follow it.
+- Audio from the modules into iOS effects is a separate path, through an
+  audio interface or the USB audio above. The extension has one silent
+  output bus because some hosts want one on a MIDI processor.
 
 ## Phases
 
-1. **First TestFlight (this build):** one or two modules over USB, a hub or
-   Bluetooth; Belt's screen; split screen on iPad; the XY pad with pressure
-   and loops; tilt, turn and mic as controls; knobs, presets, files,
-   firmware.
-2. **Then:** linking the two modules (shared key, one knob driving both,
-   split harmonies, a combined screen), and mic clips to the card.
-3. **Later:** the AUv3, and USB audio in Phone mode (firmware work, test on
-   hardware first).
+1. **First TestFlight:** one or two modules over USB, a hub or Bluetooth;
+   Belt's screen; split screen on iPad; the XY pad with pressure and loops;
+   tilt, turn and mic as controls; knobs, presets, files, firmware.
+2. **Built, same build:** linking (shared key, follows, split harmonies,
+   one screen) and mic clips to the card.
+3. **Built, test separately:** the AUv3 (try it in AUM first) and the
+   Phone+Audio firmware mode (try it on one module before relying on it).

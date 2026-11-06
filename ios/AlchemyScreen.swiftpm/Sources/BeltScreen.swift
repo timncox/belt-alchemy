@@ -26,7 +26,7 @@ struct BeltScreen: View {
             }
             Tuner(belt: belt)
             ZStack(alignment: .top) {
-                PitchGraph(trace: store.trace, belt: belt)
+                PitchGraph(lines: [PitchLine(trace: store.trace, belt: belt, color: .orange)])
                     .frame(minHeight: 160)
                 if let f = store.touchedField {
                     HStack(spacing: 8) {
@@ -73,7 +73,7 @@ private struct PageChips: View {
 }
 
 /// The sung note, its target, and a needle for the cents between them.
-private struct Tuner: View {
+struct Tuner: View {
     let belt: BeltState
 
     var body: some View {
@@ -106,28 +106,39 @@ private struct Tuner: View {
     }
 }
 
+struct PitchLine {
+    var trace: [Double?]
+    var belt: BeltState
+    var color: Color
+}
+
 /// The last few seconds of sung pitch over the key's note lanes. Scale
 /// notes are brighter, the root brightest; the target lane is lit; the
-/// harmony voices sit at the right edge.
-private struct PitchGraph: View {
-    let trace: [Double?]
-    let belt: BeltState
+/// harmony voices sit at the right edge. With two modules, both lines share
+/// the lanes (the first module's key).
+struct PitchGraph: View {
+    let lines: [PitchLine]
 
     var body: some View {
         Canvas { ctx, size in
-            let recent = trace.suffix(120).compactMap { $0 }
-            let centre = (belt.target.map(Double.init) ?? recent.last ?? 64).rounded()
+            guard let first = lines.first else { return }
+            let key = first.belt.key, scale = first.belt.scale
+            let centre: Double = {
+                for l in lines { if let t = l.belt.target, l.belt.voiced { return Double(t) } }
+                for l in lines { if let r = l.trace.suffix(120).compactMap({ $0 }).last { return r.rounded() } }
+                return 64
+            }()
             let span = 9.0                                   // semitones each side
             let lo = centre - span, hi = centre + span
             let y = { (n: Double) in size.height * CGFloat((hi - n) / (hi - lo)) }
             let plotW = size.width - 34
 
             for n in Int(lo)...Int(hi) {
-                let inScale = BeltTheory.inScale(n, key: belt.key, scale: belt.scale)
-                let root = ((n - belt.key) % 12 + 12) % 12 == 0
+                let inScale = BeltTheory.inScale(n, key: key, scale: scale)
+                let root = ((n - key) % 12 + 12) % 12 == 0
                 let yy = y(Double(n))
                 var p = Path(); p.move(to: CGPoint(x: 0, y: yy)); p.addLine(to: CGPoint(x: plotW, y: yy))
-                let isTarget = belt.target == n && belt.voiced
+                let isTarget = lines.contains { $0.belt.target == n && $0.belt.voiced }
                 let a = isTarget ? 0.55 : root ? 0.3 : inScale ? 0.14 : 0.04
                 ctx.stroke(p, with: .color(isTarget ? .green.opacity(a) : .white.opacity(a)), lineWidth: isTarget ? 2 : 1)
                 if inScale {
@@ -136,26 +147,30 @@ private struct PitchGraph: View {
                 }
             }
 
-            // The trace, newest at the right; gaps where nothing was sung.
-            guard trace.count > 1 else { return }
             let dx = plotW / CGFloat(ModuleStore.traceLength - 1)
-            let x0 = plotW - CGFloat(trace.count - 1) * dx
-            var path = Path(), pen = false
-            for (i, v) in trace.enumerated() {
-                guard let n = v, n > lo - 1, n < hi + 1 else { pen = false; continue }
-                let pt = CGPoint(x: x0 + CGFloat(i) * dx, y: y(n))
-                if pen { path.addLine(to: pt) } else { path.move(to: pt); pen = true }
-            }
-            ctx.stroke(path, with: .color(.orange), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+            for line in lines {
+                let trace = line.trace
+                guard trace.count > 1 else { continue }
+                // The trace, newest at the right; gaps where nothing was sung.
+                let x0 = plotW - CGFloat(trace.count - 1) * dx
+                var path = Path(), pen = false
+                for (i, v) in trace.enumerated() {
+                    guard let n = v, n > lo - 1, n < hi + 1 else { pen = false; continue }
+                    let pt = CGPoint(x: x0 + CGFloat(i) * dx, y: y(n))
+                    if pen { path.addLine(to: pt) } else { path.move(to: pt); pen = true }
+                }
+                ctx.stroke(path, with: .color(line.color),
+                           style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
 
-            if let last = trace.last ?? nil, belt.voiced {
-                let p = CGPoint(x: plotW, y: y(last))
-                ctx.fill(Path(ellipseIn: CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)), with: .color(.orange))
-                if !belt.muted {
-                    for h in belt.harmonyNotes.compactMap({ $0 }) where Double(h) > lo && Double(h) < hi {
-                        let q = CGPoint(x: plotW, y: y(Double(h)))
-                        ctx.fill(Path(ellipseIn: CGRect(x: q.x - 4, y: q.y - 4, width: 8, height: 8)),
-                                 with: .color(Color(hex: "#c060ff")!))
+                if let last = trace.last ?? nil, line.belt.voiced {
+                    let p = CGPoint(x: plotW, y: y(last))
+                    ctx.fill(Path(ellipseIn: CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)), with: .color(line.color))
+                    if !line.belt.muted {
+                        for h in line.belt.harmonyNotes.compactMap({ $0 }) where Double(h) > lo && Double(h) < hi {
+                            let q = CGPoint(x: plotW, y: y(Double(h)))
+                            ctx.stroke(Path(ellipseIn: CGRect(x: q.x - 4, y: q.y - 4, width: 8, height: 8)),
+                                       with: .color(line.color), lineWidth: 2)
+                        }
                     }
                 }
             }
@@ -165,7 +180,7 @@ private struct PitchGraph: View {
     }
 }
 
-private struct Voices: View {
+struct Voices: View {
     let belt: BeltState
     var body: some View {
         HStack(spacing: 8) {
@@ -229,7 +244,7 @@ private struct BeltButton: View {
     }
 }
 
-private struct Meters: View {
+struct Meters: View {
     let st: ModuleState
     var body: some View {
         HStack(spacing: 14) {

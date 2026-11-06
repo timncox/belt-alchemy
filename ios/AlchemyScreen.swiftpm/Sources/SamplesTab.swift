@@ -10,6 +10,7 @@ import AlchemyLink
 struct SamplesTab: View {
     @EnvironmentObject var store: ModuleStore
     @State private var importing = false
+    @State private var recording = false
     @State private var newFolder = false
     @State private var folderName = ""
 
@@ -56,10 +57,13 @@ struct SamplesTab: View {
                 ToolbarItemGroup(placement: .bottomBar) {
                     Button { newFolder = true } label: { Label("New folder", systemImage: "folder.badge.plus") }
                     Spacer()
+                    Button { recording = true } label: { Label("Record", systemImage: "mic") }
+                        .disabled(store.transfer != nil)
                     Button { importing = true } label: { Label("Add files", systemImage: "plus") }
                         .disabled(store.transfer != nil)
                 }
             }
+            .sheet(isPresented: $recording) { MicClipView(folder: store.cwd) }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.audio, .data], allowsMultipleSelection: true) { result in
                 if case let .success(urls) = result { store.upload(urls) }
             }
