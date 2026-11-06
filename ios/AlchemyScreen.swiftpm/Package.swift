@@ -19,7 +19,12 @@ let package = Package(
             appIcon: .placeholder(icon: .bolt),
             accentColor: .presetColor(.orange),
             supportedDeviceFamilies: [.phone, .pad],
-            supportedInterfaceOrientations: [.portrait, .landscapeLeft, .landscapeRight]
+            supportedInterfaceOrientations: [.portrait, .landscapeLeft, .landscapeRight],
+            capabilities: [
+                .microphone(purposeString: "The mic can move the module's knobs by how loud it is and the note you sing."),
+                .bluetoothAlways(purposeString: "Bluetooth connects to the MIDI adapters on your Alchemy Labs."),
+                .motionSensors(purposeString: "Tilting and turning the phone can move the module's knobs, when you switch it on.")
+            ]
         )
     ],
     dependencies: [.package(path: "../AlchemyLink")],

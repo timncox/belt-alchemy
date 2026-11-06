@@ -1,4 +1,5 @@
-// The module's "screen": its six LED rings and button lights, drawn from
+// The module's screen. For Belt (and any firmware that answers STATE) the
+// app draws its own, in BeltScreen.swift. Otherwise: its six LED rings and button lights, drawn from
 // the frame the panel last showed (SCREEN, 0x71), so pages, catch pips and
 // the picker's progress look on the phone as they do on the module. Drag
 // up or down on a ring to turn that knob on the page picked above; tap a
@@ -12,6 +13,15 @@ struct ScreenTab: View {
     @State private var touched: Field?
 
     var body: some View {
+        if let st = store.state, let belt = st.belt {
+            BeltScreen(st: st, belt: belt)
+        } else {
+            ledScreen
+        }
+    }
+
+    /// For firmwares without STATE: the module's own LEDs, mirrored.
+    private var ledScreen: some View {
         NavigationStack {
             VStack(spacing: 12) {
                 PagePicker(onlyGrid: true)
@@ -36,7 +46,6 @@ struct ScreenTab: View {
             .padding()
             .navigationTitle(store.desc?.moduleName ?? "Alchemy Lab")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ModuleToolbar() }
         }
     }
 }

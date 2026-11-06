@@ -1,6 +1,8 @@
-// Everything the screens show, kept in step with the module: the LED
-// screen (polled ~15 times a second), the knob values (every 400 ms, like
-// the web Control page), presets, the card's files and firmware switching.
+// One module, kept in step: its own state for the app's screen (or the LED
+// screen, for firmwares without STATE), polled as often as its link allows,
+// the knob values (every 400 ms, like the web Control page), presets, the
+// card's files and firmware switching. The Rig holds one of these for each
+// module connected, over any link.
 // Edits are written to the running state as you turn, coalesced so a fast
 // drag never queues up a backlog.
 
@@ -15,13 +17,16 @@ struct FirmwareFile: Identifiable {
 }
 
 @MainActor
-final class ModuleStore: ObservableObject {
-    enum Link: Equatable { case none, usb(String), demo }
-    enum Phase: Equatable { case searching, connecting, ready, failed(String) }
+final class ModuleStore: ObservableObject, Identifiable {
+    enum Phase: Equatable { case connecting, ready, failed(String) }
 
-    @Published private(set) var link: Link = .none
-    @Published private(set) var phase: Phase = .searching
-    @Published private(set) var ports: [MIDIPort] = []
+    /// Which module this is: its unit number once INFO has answered (the
+    /// same over USB, a hub or Bluetooth), the MIDI device until then.
+    nonisolated let id: String
+    let device: MIDIDevice?
+    let kind: LinkKind
+    @Published private(set) var phase: Phase = .connecting
+    @Published private(set) var unit: UInt32 = 0
 
     @Published private(set) var hello: Hello?
     @Published private(set) var desc: Descriptor?
@@ -31,17 +36,30 @@ final class ModuleStore: ObservableObject {
     @Published var pageIndex = 0
     @Published private(set) var slots: [SlotInfo] = []
 
+    /// The module's own state (Belt: the sung note, harmonies, buttons),
+    /// for firmwares that answer STATE; the app draws its screen from it.
+    @Published private(set) var state: ModuleState?
+    /// The sung pitch for the last ~5 s (MIDI notes, nil for silence),
+    /// oldest first, at the module's 60 frames a second.
+    @Published private(set) var trace: [Double?] = []
+    static let traceLength = 300
+    private var traceLast: UInt16?
+
     @Published private(set) var fs: FsInfo?
     @Published private(set) var fsAvailable = false
     @Published private(set) var cwd = "/"
     @Published private(set) var entries: [FsEntry] = []
     @Published private(set) var transfer: (name: String, progress: Double, rate: Double)?
+    /// A transfer that will be slow on this link, waiting for an OK.
+    @Published var slowTransfer: (urls: [URL], folder: String?, seconds: Int, firmware: Bool)?
 
     @Published private(set) var firmwares: [FirmwareFile] = []
     @Published private(set) var fw: FwStatus?
     @Published var notice: String?
 
-    private var midi: MIDILink?
+    /// Called once when the module stops answering or is unplugged.
+    var onLost: ((ModuleStore) -> Void)?
+
     private var client: HostLinkClient?
     private var live: [UInt8] = []
     private var dirty: [String: Double] = [:]
@@ -54,70 +72,28 @@ final class ModuleStore: ObservableObject {
     var page: ControlPage? { pages.indices.contains(pageIndex) ? pages[pageIndex] : nil }
     /// Knob pages laid out like the panel; the LED screen edits these.
     var gridPages: [ControlPage] { pages.filter { $0.grid && !$0.isSettings } }
+    var isDemo: Bool { kind == .demo }
+    /// Every knob, for the pad and the other controls to pick from.
+    var allFields: [Field] { gridPages.flatMap { $0.fields } }
 
-    init() {
-        do {
-            let m = try MIDILink()
-            m.onSetupChanged = { [weak self] in Task { @MainActor in self?.setupChanged() } }
-            midi = m
-        } catch {
-            phase = .failed(String(describing: error))
-        }
-        rescan()
+    init(device: MIDIDevice?, kind: LinkKind, transport: ByteTransport) {
+        self.device = device
+        self.kind = kind
+        self.id = device.map { "midi:\($0.id)" } ?? "demo:\(UUID().uuidString)"
+        start(HostLinkClient(transport: transport))
     }
 
-    // MARK: connecting
-
-    func rescan() {
-        guard let m = midi else { return }
-        ports = m.ports()
-        if case .usb = link { return }
-        if link == .demo { return }
-        if let p = m.likelyModule() { connect(p) } else { phase = .searching }
-    }
-
-    private func setupChanged() {
-        guard let m = midi else { return }
-        ports = m.ports()
-        if case .usb = link, !m.stillPresent {
-            drop(reason: nil)          // unplugged, or rebooting into new firmware
-        }
-        if link == .none, let p = m.likelyModule() { connect(p) }
-    }
-
-    func connect(_ port: MIDIPort) {
-        guard let m = midi else { return }
-        stop()
-        phase = .connecting
-        guard m.connect(port) else { phase = .failed("Couldn't open \(port.name)."); return }
-        link = .usb(port.name)
-        start(HostLinkClient(transport: m))
-    }
-
-    func startDemo() {
-        stop()
-        midi?.disconnect()
-        link = .demo
-        phase = .connecting
-        start(HostLinkClient(transport: FakeModule(viaSysEx: true)))
-    }
-
-    func disconnect() { drop(reason: nil) }
-
-    private func drop(reason: String?) {
-        stop()
-        midi?.disconnect()
-        link = .none
-        hello = nil; desc = nil; phone = nil; values = [:]; screen = []; slots = []
-        fs = nil; fsAvailable = false; entries = []; firmwares = []
-        phase = reason.map { .failed($0) } ?? .searching
-        if reason == nil, let p = midi?.likelyModule() { connect(p) }
-    }
-
-    private func stop() {
+    func stop() {
         pollTask?.cancel(); pollTask = nil
         fwTask?.cancel(); fwTask = nil
         client = nil
+    }
+
+    private func lost(_ why: String) {
+        guard client != nil else { return }
+        stop()
+        phase = .failed(why)
+        onLost?(self)
     }
 
     private func start(_ c: HostLinkClient) {
@@ -125,18 +101,26 @@ final class ModuleStore: ObservableObject {
         pollTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let h = try await c.sayHello()
+                // A Bluetooth adapter may be idle for a moment after pairing:
+                // a couple of tries before giving up on it.
+                var h: Hello?
+                for attempt in 0..<3 where h == nil {
+                    do { h = try await c.sayHello() }
+                    catch { if attempt == 2 { throw error }; try? await Task.sleep(nanoseconds: 300_000_000) }
+                }
                 let d = try await c.descriptor()
                 let p = try await c.phoneInfo()
                 let bytes = try await c.getLive()
                 self.hello = h; self.desc = d; self.phone = p
+                self.unit = p?.unit ?? 0
                 self.live = bytes; self.values = d.decode(bytes)
                 self.pageIndex = 0
                 self.phase = .ready
                 self.fsAvailable = d.hasStorage
                 await self.refreshSlots()
             } catch {
-                self.phase = .failed("The module didn't answer. Is its USB port setting on Phone? (\(error))")
+                self.phase = .failed("No answer. Is the module's USB port setting on Phone? (\(error))")
+                self.onLost?(self)
                 return
             }
             await self.pollLoop(c)
@@ -146,23 +130,52 @@ final class ModuleStore: ObservableObject {
     private func pollLoop(_ c: HostLinkClient) async {
         var tick = 0
         var misses = 0
+        let period = kind.statePeriod
+        // Knob values are read back about every 400 ms, like the web page.
+        let liveEvery = max(1, Int((0.4 / period).rounded()))
         while !Task.isCancelled {
             do {
-                if phone?.hasScreen == true && !transferring {
-                    screen = try await c.screen().rgb
+                if !transferring {
+                    if phone?.hasState == true {
+                        let st = try await c.state(since: traceLast)
+                        absorb(st)
+                    } else if phone?.hasScreen == true {
+                        screen = try await c.screen().rgb
+                    }
                 }
-                if tick % 6 == 0 && dirty.isEmpty && !flushing && !transferring {
+                if tick % liveEvery == 0 && dirty.isEmpty && !flushing && !transferring {
                     let b = try await c.getLive()
                     if dirty.isEmpty && !flushing, let d = desc { live = b; values = d.decode(b) }
                 }
                 misses = 0
             } catch {
                 misses += 1
-                if misses >= 5 { drop(reason: "Lost the module.") ; return }
+                if misses >= 5 { lost("Lost the module."); return }
             }
             tick += 1
-            try? await Task.sleep(nanoseconds: transferring ? 400_000_000 : 66_000_000)
+            try? await Task.sleep(nanoseconds: UInt64((transferring ? 0.4 : period) * 1e9))
         }
+    }
+
+    private func absorb(_ st: ModuleState) {
+        state = st
+        guard let b = st.belt else { return }
+        // A gap (a stall, or a link that fell behind) is drawn as silence.
+        if let last = traceLast {
+            let gap = Int(b.traceLast &- last) - b.trace.count
+            if gap > 0 { trace += Array(repeating: nil, count: min(gap, Self.traceLength)) }
+        }
+        trace += b.trace
+        if trace.count > Self.traceLength { trace.removeFirst(trace.count - Self.traceLength) }
+        traceLast = b.traceLast
+    }
+
+    /// The field Belt's panel last saw a hand on, and how long ago.
+    var touchedField: Field? {
+        guard let st = state, let pg = st.touchPage, let pot = st.touchPot,
+              let age = st.touchAge, age < 1.5 else { return nil }
+        let grid = gridPages
+        return grid.indices.contains(pg) ? grid[pg].at(pot: pot) : nil
     }
 
     // MARK: knobs
@@ -182,14 +195,33 @@ final class ModuleStore: ObservableObject {
         flushing = true
         Task {
             while !dirty.isEmpty {
+                let t0 = Date()
                 let changes = dirty
                 dirty = [:]
                 let bytes = d.encode(live, changes: changes)
                 do { try await c.setLive(bytes); live = bytes }
                 catch { notice = "That change didn't reach the module (\(error))." }
+                // At most one write per control period on this link; what
+                // moves meanwhile is merged into the next one.
+                let wait = kind.controlPeriod - Date().timeIntervalSince(t0)
+                if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1e9)) }
             }
             flushing = false
         }
+    }
+
+    /// A knob moved by the pad, tilt or the mic: no quantizing of
+    /// continuous knobs, so a sweep stays smooth.
+    func set(fieldId: String, _ v: Double) {
+        guard let f = desc?.field(fieldId), !f.severs, !f.isEnum else {
+            if let f = desc?.field(fieldId), f.isEnum, !f.severs { set(f, v * Double(max(1, f.zones - 1))) }
+            return
+        }
+        let q = f.steps > 0 ? f.quantize(v) : min(1, max(0, v))
+        guard values[f.id] != q else { return }
+        values[f.id] = q
+        dirty[f.id] = q
+        flush()
     }
 
     /// A pot on the LED screen: the field at that position on the knob page
@@ -278,8 +310,19 @@ final class ModuleStore: ObservableObject {
     }
 
     /// Files picked in the Files app, sent to the folder being shown.
-    func upload(_ urls: [URL], into folder: String? = nil, then: (() async -> Void)? = nil) {
+    func upload(_ urls: [URL], into folder: String? = nil, confirmed: Bool = false, then: (() async -> Void)? = nil) {
         guard let c = client else { return }
+        if !confirmed {
+            let total = urls.reduce(0) { sum, url in
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                return sum + ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            }
+            if total > kind.bigFile {
+                slowTransfer = (urls, folder, Int(Double(total) / kind.bytesPerSecond), folder == "/alchemy")
+                return
+            }
+        }
         let dir = folder ?? cwd
         Task {
             transferring = true
@@ -317,8 +360,8 @@ final class ModuleStore: ObservableObject {
         }
     }
 
-    func uploadFirmware(_ urls: [URL]) {
-        upload(urls.filter { $0.pathExtension.lowercased() == "bin" }, into: "/alchemy") { [weak self] in
+    func uploadFirmware(_ urls: [URL], confirmed: Bool = false) {
+        upload(urls.filter { $0.pathExtension.lowercased() == "bin" }, into: "/alchemy", confirmed: confirmed) { [weak self] in
             await MainActor.run { self?.refreshFirmwares() }
         }
     }

@@ -53,7 +53,6 @@ struct SamplesTab: View {
             .navigationTitle("Samples")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ModuleToolbar()
                 ToolbarItemGroup(placement: .bottomBar) {
                     Button { newFolder = true } label: { Label("New folder", systemImage: "folder.badge.plus") }
                     Spacer()

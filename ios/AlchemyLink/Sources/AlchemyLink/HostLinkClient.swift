@@ -307,6 +307,10 @@ extension HostLinkClient {
 
 public struct PhoneInfo {
     public var version: UInt8, hasScreen: Bool, hasFirmware: Bool, hasPress: Bool, ledCount: Int, layout: String
+    /// The module answers STATE (0x76): the phone draws its own screen.
+    public var hasState: Bool = false
+    /// Tells two modules apart (a hash of the MCU's unique ID); 0 = unknown.
+    public var unit: UInt32 = 0
 }
 
 public struct ScreenFrame {
@@ -329,8 +333,11 @@ extension HostLinkClient {
         if st == .unsupported { return nil }
         var r = r0
         let v = try r.u8(), flags = try r.u8(), n = try r.u16(), layout = try r.str()
-        return PhoneInfo(version: v, hasScreen: flags & 1 != 0, hasFirmware: flags & 2 != 0,
-                         hasPress: flags & 4 != 0, ledCount: Int(n), layout: layout)
+        var info = PhoneInfo(version: v, hasScreen: flags & 1 != 0, hasFirmware: flags & 2 != 0,
+                             hasPress: flags & 4 != 0, ledCount: Int(n), layout: layout)
+        info.hasState = flags & 8 != 0
+        if r.remaining >= 4 { info.unit = try r.u32() }   // version 2 on
+        return info
     }
 
     public func screen() async throws -> ScreenFrame {
@@ -362,5 +369,13 @@ extension HostLinkClient {
 
     public func press(button: Int, _ g: PressGesture) async throws {
         try await request(.press, [UInt8(button), g.rawValue])
+    }
+
+    /// What the phone's own screen shows (0x76). `since` is the last trace
+    /// sample already held, so the module sends only newer ones.
+    public func state(since: UInt16?, timeout: Double = 1) async throws -> ModuleState {
+        let body = since.map { [UInt8($0 & 0xFF), UInt8($0 >> 8)] } ?? []
+        let r = try await request(.state, body, timeout: timeout, retries: 1).r
+        return try ModuleState(reading: r)
     }
 }

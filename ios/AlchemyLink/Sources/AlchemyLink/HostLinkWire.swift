@@ -13,7 +13,7 @@ public enum Cmd: UInt8 {
     case fsInfo = 0x50, fsList = 0x51, fsStat = 0x52, fsOpenRead = 0x53, fsRead = 0x54, fsClose = 0x55
     case fsOpenWrite = 0x56, fsWrite = 0x57, fsCommit = 0x58, fsDelete = 0x59, fsMkdir = 0x5A, fsRename = 0x5B
     // The phone block (firmware/phone_ext.h).
-    case phoneInfo = 0x70, screen = 0x71, fwList = 0x72, fwFlash = 0x73, fwStatus = 0x74, press = 0x75
+    case phoneInfo = 0x70, screen = 0x71, fwList = 0x72, fwFlash = 0x73, fwStatus = 0x74, press = 0x75, state = 0x76
 }
 
 public enum Status: UInt8, CustomStringConvertible {

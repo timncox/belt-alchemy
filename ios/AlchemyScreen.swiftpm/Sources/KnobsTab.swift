@@ -28,7 +28,6 @@ struct KnobsTab: View {
             }
             .navigationTitle(store.page?.name ?? "Knobs")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ModuleToolbar() }
         }
     }
 

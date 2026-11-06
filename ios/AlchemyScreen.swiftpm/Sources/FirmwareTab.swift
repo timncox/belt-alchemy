@@ -44,7 +44,6 @@ struct FirmwareTab: View {
             .navigationTitle("Firmware")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ModuleToolbar()
                 ToolbarItem(placement: .bottomBar) {
                     Button { importing = true } label: { Label("Add a .bin", systemImage: "plus") }
                         .disabled(busy || store.transfer != nil)

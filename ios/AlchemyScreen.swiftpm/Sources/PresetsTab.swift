@@ -45,7 +45,6 @@ struct PresetsTab: View {
             .refreshable { await store.refreshSlots() }
             .navigationTitle("Presets")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ModuleToolbar() }
             .confirmationDialog("Replace preset \((confirmSave ?? 0) + 1)?",
                                 isPresented: Binding(get: { confirmSave != nil }, set: { if !$0 { confirmSave = nil } }),
                                 titleVisibility: .visible) {

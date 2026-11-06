@@ -1,10 +1,12 @@
-// A pretend Alchemy Lab in the app, so the iPhone app runs in the Simulator
-// and the tests run on a Mac with no module plugged in. It answers the
-// same commands Belt answers in Phone mode, from memory: two knob pages and
-// a settings page, 16 preset slots, an SD card with a few files, the LED
-// screen drawn from the knob values, and a firmware switch that only
-// pretends to flash. With `viaSysEx`, every byte goes through the SysEx
-// pipe both ways, exactly as it does over the USB cable.
+// A pretend Alchemy Lab running Belt, so the iPhone app runs in the
+// Simulator and the tests run on a Mac with no module plugged in. It answers
+// the same commands Belt answers in Phone mode, from memory: Belt's Play and
+// Setup pages and a settings page, 16 preset slots, an SD card with a few
+// files, the LED screen drawn from the knob values, STATE with a pretend
+// singer (a phrase that wanders around the key, with vibrato and breaths),
+// the HARD and HARMONIES buttons, and a firmware switch that only pretends
+// to flash. With `viaSysEx`, every byte goes through the SysEx pipe both
+// ways, exactly as it does over the USB cable.
 
 import Foundation
 
@@ -27,14 +29,32 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
     public private(set) var presses: [(Int, UInt8)] = []
     let descJSON: [UInt8]
     let schemaHash: UInt32 = 0xB31_7A1C
+    public let unit: UInt32
+    let name: String
+    let born = Date()
+    let seed: Double
+    private var hardLatch = false, muteLatch = false, hardDown = false, muteDown = false
+    private var touch: (page: Int, pot: Int, at: Date)?
+    /// Pretend audio load and levels, for the screen's meters.
+    public var pretendCpu = 0.42
 
-    public init(viaSysEx: Bool = true) {
+    public init(viaSysEx: Bool = true, unit: UInt32 = 0xBE17_0001, name: String = "Belt (demo)") {
         self.viaSysEx = viaSysEx
-        let perfNames = ["Tension", "Mass", "Damping", "Bright", "Drive", "Mix",
-                         "Rate", "Depth", "Spread", "Tone", "Space", "Level"]
+        self.unit = unit
+        self.name = name
+        self.seed = Double(unit % 997) / 997
+        let pct: [String: Any] = ["kind": "linear", "lo": 0, "hi": 100, "unit": "%"]
+        func sel(_ labels: [String]) -> [String: Any] { ["kind": "enum", "labels": labels] }
+        let perf: [(String, [String: Any])] = [
+            ("Key", sel(BeltTheory.keys)), ("Scale", sel(BeltTheory.scales)), ("Retune", pct),
+            ("Amount", pct), ("Harmony", pct), ("Formant", ["kind": "linear", "lo": -100, "hi": 100]),
+            ("Voice 1", sel(BeltTheory.intervals)), ("Voice 2", sel(BeltTheory.intervals)),
+            ("Voice 3", sel(BeltTheory.intervals)), ("Voice 4", sel(BeltTheory.intervals)),
+            ("Doubler", pct), ("Spread", pct),
+        ]
+        let perfNames = perf.map { $0.0 }
         var fields: [[String: Any]] = []
-        for (i, n) in perfNames.enumerated() {
-            let disp: [String: Any] = i == 5 || i == 11 ? ["kind": "percent", "scale": 100] : ["kind": "norm"]
+        for (i, (n, disp)) in perf.enumerated() {
             let f: [String: Any] = ["id": "p\(i / 6).\(i % 6)", "name": n, "off": i * 4, "type": "f32",
                                     "page": i / 6, "pot": i % 6, "def": 0.5, "disp": disp]
             fields.append(f)
@@ -43,29 +63,32 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
         let settings: [[String: Any]] = [
             ["id": "s0.0", "name": "Brightness", "off": 0, "type": "f32", "page": 0, "pot": 0,
              "disp": ["kind": "brightness", "lo": 0.1, "hi": 1.0] as [String: Any]],
-            ["id": "s0.1", "name": "Scale", "off": 4, "type": "enum", "zones": 3, "page": 0, "pot": 1,
-             "disp": ["kind": "enum", "labels": ["Major", "Minor", "Free"]] as [String: Any]],
+            ["id": "s0.1", "name": "Tracking", "off": 4, "type": "enum", "zones": 3, "page": 0, "pot": 1,
+             "disp": ["kind": "enum", "labels": ["Fast", "Normal", "Smooth"]] as [String: Any]],
             ["id": "usb", "name": "USB port", "off": 5, "type": "enum", "zones": 4, "page": 0, "pot": 5,
              "disp": ["kind": "enum", "labels": ["Mac", "Launchpad", "Audio", "Phone"]] as [String: Any]],
         ]
         let size = settingsOff + 6
-        let module: [String: Any] = ["id": "belt_alchemy", "name": "Belt (demo)", "fw": "demo",
+        let module: [String: Any] = ["id": "belt_alchemy", "name": name, "fw": "demo",
                                      "git": "0000000", "sdk": "demo", "board": "v2"]
-        let perf: [String: Any] = ["id": "perf", "kind": "pager", "hash": 1, "size": settingsOff, "off": 0,
-                                   "pages": 2, "pots": 6, "pageNames": ["Play", "Space"],
-                                   "pageColors": ["#ffb454", "#67e8f9"], "fields": fields]
+        let perfC: [String: Any] = ["id": "perf", "kind": "pager", "hash": 1, "size": settingsOff, "off": 0,
+                                   "pages": 2, "pots": 6, "pageNames": ["Play", "Setup"],
+                                   "pageColors": ["#ff9020", "#c060ff"], "fields": fields]
         let gestures: [[String: Any]] = [["page": 0, "pot": 3, "name": "Preset Slot"],
                                          ["page": 0, "pot": 4, "name": "Save / Load"]]
         let setup: [String: Any] = ["id": "settings", "kind": "settings", "hash": 2, "size": 6, "off": settingsOff,
-                                    "pages": 1, "pageNames": ["Setup"], "fields": settings, "gestures": gestures]
+                                    "pages": 1, "pageNames": ["Settings"], "fields": settings, "gestures": gestures]
         let storage: [String: Any] = ["sd": true, "fsv": 1]
         let root: [String: Any] = [
             "dv": 1, "module": module, "schemaHash": 0xB31_7A1C, "size": size,
-            "storage": storage, "phone": ["v": 1], "components": [perf, setup],
+            "storage": storage, "phone": ["v": 2], "components": [perfC, setup],
         ]
         descJSON = Array((try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data())
         var l = [UInt8](repeating: 0, count: size)
-        for i in 0..<perfNames.count { Self.putF32(&l, i * 4, 0.25 + 0.05 * Float(i)) }
+        // Key A, Major, quick retune; voices +3rd and +5th; a little doubler.
+        let start: [Float] = [9.5 / 12, 1.5 / 9, 0.2, 0.8, 0.6, 0.5,
+                              7.5 / 12, 9.5 / 12, 0.5 / 12, 0.5 / 12, 0.15, 0.7]
+        for i in 0..<perfNames.count { Self.putF32(&l, i * 4, start[i]) }
         Self.putF32(&l, settingsOff, 0.8)
         l[settingsOff + 5] = 3
         live = l
@@ -127,7 +150,7 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                 ok(f, Writer().u8(1).u8(2).u8(16).u8(0).raw([UInt8](repeating: 0, count: 12))
                     .u32(schemaHash).u32(4096).u32(UInt32(descJSON.count)).u32(CRC32.of(descJSON))
                     .u16(512).u16(UInt16(live.count))
-                    .str("belt_alchemy").str("Belt (demo)").str("demo").str("0000000").str("demo"))
+                    .str("belt_alchemy").str(name).str("demo").str("0000000").str("demo"))
             case .descriptor:
                 let off = Int(try r.u32()), n = min(Int(try r.u16()), max(0, descJSON.count - off))
                 ok(f, Writer().u32(UInt32(off)).u16(UInt16(n)).raw(n > 0 ? Array(descJSON[off..<(off + n)]) : []))
@@ -154,7 +177,8 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                 let crc = try r.u32()
                 guard let b = blob, b.data.count == b.len else { return fail(f, .badState) }
                 guard CRC32.of(b.data) == crc else { return fail(f, .badCrc) }
-                if b.target == liveTarget { live = b.data } else { slots[Int(b.target)] = b.data }
+                if b.target == liveTarget { noteTouch(old: live, new: b.data); live = b.data }
+                else { slots[Int(b.target)] = b.data }
                 blob = nil; ok(f)
             case .saveToSlot: slots[Int(try r.u8())] = live; ok(f)
             case .loadFromSlot:
@@ -196,7 +220,11 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                 guard let d = files[a] else { return fail(f, .noFile) }
                 guard files[b] == nil else { return fail(f, .exists) }
                 files[a] = nil; files[b] = d; ok(f)
-            case .phoneInfo: ok(f, Writer().u8(1).u8(7).u16(UInt16(PanelLayout.leds.count)).str("alchemy-lab-v2"))
+            case .phoneInfo:
+                ok(f, Writer().u8(2).u8(15).u16(UInt16(PanelLayout.leds.count)).str("alchemy-lab-v2").u32(unit))
+            case .state:
+                let since: UInt16? = r.remaining >= 2 ? try r.u16() : nil
+                ok(f, stateReply(since: since))
             case .screen:
                 frame &+= 1
                 ok(f, Writer().u32(frame).u16(UInt16(PanelLayout.leds.count)).raw(screenFrame()))
@@ -215,10 +243,94 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                 ok(f, Writer().u8(fwState.rawValue).u8(UInt8(fwProgress * 255)).str(""))
             case .press:
                 let b = try r.u8(), g = try r.u8()
-                presses.append((Int(b), g)); ok(f)
+                guard b <= 1, g <= 2 else { return fail(f, .badArgs) }
+                presses.append((Int(b), g))
+                switch (b, g) {
+                case (0, 0): hardLatch.toggle()
+                case (1, 0): muteLatch.toggle()
+                case (0, _): hardDown = g == 1
+                default: muteDown = g == 1
+                }
+                ok(f)
             default: fail(f, .unsupported)
             }
         } catch { fail(f, .badArgs) }
+    }
+
+    // MARK: the pretend singer (STATE)
+
+    private func norm(_ i: Int) -> Double { Double(Self.f32(live, i * 4)) }
+    private func zone(_ i: Int, _ n: Int) -> Int { max(0, min(n - 1, Int(norm(i) * Double(n)))) }
+
+    var key: Int { zone(0, 12) }
+    var scale: Int { zone(1, 9) }
+
+    /// A phrase in the key: scale degrees, two beats each, with breaths,
+    /// sung a little flat or sharp, with vibrato. Deterministic in the frame.
+    func sung(atFrame n: Int) -> Double? {
+        let t = Double(n) / 60 + seed * 7
+        let beat = Int(t / 0.45)
+        if beat % 9 == 8 { return nil }                       // a breath
+        let phrase = [0, 2, 4, 5, 4, 2, 1, 0, 4, 7, 5, 4, 2, 0, -1, 0]
+        let deg = BeltTheory.degrees(scale == 0 ? 1 : scale)
+        let step = phrase[(beat / 2) % phrase.count]
+        let o = Int((Double(step) / Double(deg.count)).rounded(.down))
+        let j = ((step % deg.count) + deg.count) % deg.count
+        let note = Double(57 + key % 12 + 12 * o + deg[j])
+        let scoop = max(0, 0.6 - (t.truncatingRemainder(dividingBy: 0.9)) * 4) * -0.5
+        let wander = 0.22 * sin(t * 0.7 + seed * 5)
+        let vibrato = 0.18 * sin(t * 2 * .pi * 5.5) * min(1, t.truncatingRemainder(dividingBy: 0.9) * 2)
+        return note + scoop + wander + vibrato
+    }
+
+    private func frameNow() -> Int { Int(Date().timeIntervalSince(born) * 60) }
+
+    private func stateReply(since: UInt16?) -> Writer {
+        let n = frameNow()
+        var w = Writer().u16(UInt16(truncatingIfNeeded: n)).u8(0).u8(0)
+        if let t = touch {
+            let age = min(65_534, Int(Date().timeIntervalSince(t.at) * 1000))
+            w = w.u8(UInt8(t.page)).u8(UInt8(t.pot)).u16(UInt16(age))
+        } else {
+            w = w.u8(0xFF).u8(0xFF).u16(0xFFFF)
+        }
+        let s = sung(atFrame: n)
+        let inDb = s == nil ? -54.0 : -14 + 4 * sin(Double(n) / 23)
+        let lvl = { (db: Double) in UInt8(max(0, min(255, ((db + 60) * 255 / 60).rounded()))) }
+        w = w.u8(UInt8(max(0, min(255, pretendCpu * 255)))).u8(lvl(inDb)).u8(lvl(inDb + 2))
+        // Belt's tail
+        w = w.u8(UInt8(ascii: "B")).u8(1).u8(UInt8(key)).u8(UInt8(scale))
+        for v in 6..<10 { w = w.u8(UInt8(zone(v, 12))) }
+        let hard = hardLatch != hardDown, muted = muteLatch != muteDown
+        let flags = (s != nil ? 1 : 0) | (hard ? 2 : 0) | (muted ? 4 : 0) | (hardLatch ? 8 : 0) | (muteLatch ? 16 : 0)
+        w = w.u8(UInt8(flags))
+        let cents = { (x: Double?) -> Int16 in x.map { Int16(($0 * 100).rounded()) } ?? BeltState.unvoiced }
+        let target = s.map { (x: Double) -> Double in
+            var best = x.rounded(), d = 99.0
+            for c in Int(x) - 6...Int(x) + 6 where BeltTheory.inScale(c, key: key, scale: scale)
+                && Swift.abs(Double(c) - x) < d { d = Swift.abs(Double(c) - x); best = Double(c) }
+            return best
+        }
+        w = w.u16(UInt16(bitPattern: cents(s)))
+        w = w.u16(UInt16(bitPattern: Int16(((s ?? 0) - (target ?? 0)) * 100)))
+        let last = n - 1
+        var count = since.map { Int(UInt16(truncatingIfNeeded: last) &- $0) } ?? 32
+        count = max(0, min(32, count, last + 1))
+        w = w.u16(UInt16(truncatingIfNeeded: last)).u8(UInt8(count))
+        for k in (last - count + 1)..<(last + 1) {
+            w = w.u16(UInt16(bitPattern: cents(sung(atFrame: k))))
+        }
+        return w
+    }
+
+    /// The firmware notices a pot moved by hand; here, a knob moved from the
+    /// phone counts the same way, so the demo's pop-up has something to show.
+    private func noteTouch(old: [UInt8], new: [UInt8]) {
+        for i in 0..<12 where i * 4 + 4 <= old.count && i * 4 + 4 <= new.count {
+            if Swift.abs(Self.f32(old, i * 4) - Self.f32(new, i * 4)) > 0.004 {
+                touch = (i / 6, i % 6, Date())
+            }
+        }
     }
 
     private func chunk(_ f: Frame, _ r: inout Reader, prefix: UInt8?, _ src: [UInt8]) throws {

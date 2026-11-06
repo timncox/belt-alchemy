@@ -3,102 +3,277 @@ import AlchemyLink
 
 @main
 struct AlchemyScreenApp: App {
-    @StateObject private var store = ModuleStore()
+    @StateObject private var rig = Rig()
+    @StateObject private var inputs = Inputs()
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(store)
+                .environmentObject(rig)
+                .environmentObject(inputs)
+                .onAppear { inputs.rig = rig }
                 .preferredColorScheme(.dark)
                 .tint(.orange)
         }
     }
 }
 
+/// The modules, the pad, and how they're connected. On an iPad (or a big
+/// iPhone sideways) two modules sit side by side, one per half; on an
+/// iPhone the bar at the top switches between them.
 struct RootView: View {
-    @EnvironmentObject var store: ModuleStore
+    @EnvironmentObject var rig: Rig
 
     var body: some View {
         Group {
-            if store.phase == .ready {
-                TabView {
-                    ScreenTab().tabItem { Label("Screen", systemImage: "circle.grid.2x2") }
-                    KnobsTab().tabItem { Label("Knobs", systemImage: "dial.medium") }
-                    PresetsTab().tabItem { Label("Presets", systemImage: "square.grid.4x3.fill") }
-                    if store.fsAvailable {
-                        SamplesTab().tabItem { Label("Samples", systemImage: "waveform") }
-                    }
-                    if store.phone?.hasFirmware == true {
-                        FirmwareTab().tabItem { Label("Firmware", systemImage: "cpu") }
-                    }
-                }
-            } else {
+            if rig.modules.isEmpty {
                 ConnectView()
+            } else {
+                TabView {
+                    ModulesView().tabItem { Label("Modules", systemImage: "rectangle.split.2x1") }
+                    PadView().tabItem { Label("Pad", systemImage: "hand.point.up.left") }
+                    ControlsView().tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
+                    NavigationStack { ConnectView(embedded: true) }
+                        .tabItem { Label("Connect", systemImage: "cable.connector") }
+                }
             }
         }
-        .alert("Alchemy Lab", isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })) {
+        .alert("Alchemy Screen", isPresented: Binding(get: { rig.notice != nil }, set: { if !$0 { rig.notice = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(store.notice ?? "")
+            Text(rig.notice ?? "")
         }
     }
 }
 
-struct ConnectView: View {
-    @EnvironmentObject var store: ModuleStore
+struct ModulesView: View {
+    @EnvironmentObject var rig: Rig
+    @Environment(\.horizontalSizeClass) private var hsc
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    switch store.phase {
-                    case .searching:
-                        Label("Plug the Alchemy Lab into this iPhone's USB-C port.", systemImage: "cable.connector")
-                        Text("On the module, set **USB port** to **Phone** on the Firmware settings page and power it up again. Hold B1 while powering up to get Mac mode back for the web programmer.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    case .connecting:
-                        HStack { ProgressView(); Text("Talking to the module…") }
-                    case .failed(let why):
-                        Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                    case .ready:
-                        EmptyView()
+        if hsc == .regular && rig.modules.count >= 2 {
+            HStack(spacing: 0) {
+                ModuleColumn(module: rig.modules[0])
+                Divider()
+                ModuleColumn(module: rig.modules[1])
+            }
+        } else if let m = rig.selected {
+            ModuleColumn(module: m).id(m.id)
+        }
+    }
+}
+
+/// Everything for one module: its screen, knobs, presets, files and
+/// firmware. Each half of the iPad has its own.
+struct ModuleColumn: View {
+    @ObservedObject var module: ModuleStore
+    @EnvironmentObject var rig: Rig
+    @State private var section = Section.screen
+
+    enum Section: String, CaseIterable, Identifiable {
+        case screen, knobs, presets, samples, firmware
+        var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .screen: return "waveform.path.ecg"
+            case .knobs: return "dial.medium"
+            case .presets: return "square.grid.4x3.fill"
+            case .samples: return "folder"
+            case .firmware: return "cpu"
+            }
+        }
+        var title: String { rawValue.capitalized }
+    }
+
+    private var sections: [Section] {
+        Section.allCases.filter {
+            switch $0 {
+            case .samples: return module.fsAvailable
+            case .firmware: return module.phone?.hasFirmware == true
+            default: return true
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ModuleBar(module: module)
+            switch module.phase {
+            case .connecting:
+                Spacer()
+                ProgressView("Talking to \(rig.name(module))…")
+                Spacer()
+            case .failed(let why):
+                Spacer()
+                Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).padding()
+                Spacer()
+            case .ready:
+                Picker("Section", selection: $section) {
+                    ForEach(sections) { s in Image(systemName: s.icon).accessibilityLabel(s.title).tag(s) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal).padding(.bottom, 6)
+                Group {
+                    switch section {
+                    case .screen: ScreenTab()
+                    case .knobs: KnobsTab()
+                    case .presets: PresetsTab()
+                    case .samples: SamplesTab()
+                    case .firmware: FirmwareTab()
                     }
                 }
-                if !store.ports.isEmpty {
-                    Section("MIDI devices") {
-                        ForEach(store.ports) { p in
-                            Button(p.name) { store.connect(p) }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .environmentObject(module)
+        .alert(rig.name(module), isPresented: Binding(get: { module.notice != nil }, set: { if !$0 { module.notice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(module.notice ?? "")
+        }
+        .confirmationDialog("This will be slow", isPresented: Binding(get: { module.slowTransfer != nil },
+                                                                      set: { if !$0 { module.slowTransfer = nil } })) {
+            if let t = module.slowTransfer {
+                Button("Send it anyway (about \(max(1, t.seconds / 60)) min)") {
+                    module.slowTransfer = nil
+                    if t.firmware { module.uploadFirmware(t.urls, confirmed: true) }
+                    else { module.upload(t.urls, into: t.folder, confirmed: true) }
+                }
+            }
+            Button("Cancel", role: .cancel) { module.slowTransfer = nil }
+        } message: {
+            Text("Over \(module.kind.label) this takes about \(max(1, (module.slowTransfer?.seconds ?? 0) / 60)) minutes. A USB-C cable is much faster.")
+        }
+    }
+}
+
+/// The module's name, how it's connected, and (on an iPhone with two
+/// modules) the switch to the other one.
+struct ModuleBar: View {
+    @ObservedObject var module: ModuleStore
+    @EnvironmentObject var rig: Rig
+    @Environment(\.horizontalSizeClass) private var hsc
+    @State private var renaming = false
+    @State private var newName = ""
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if hsc != .regular && rig.modules.count > 1 {
+                Picker("Module", selection: Binding(get: { rig.selected?.id ?? "" }, set: { rig.selectedID = $0 })) {
+                    ForEach(rig.modules) { m in Text(rig.name(m)).tag(m.id) }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 260)
+            } else {
+                Text(rig.name(module)).font(.headline)
+            }
+            Spacer()
+            LinkBadge(kind: module.kind)
+            Menu {
+                if let h = module.hello { Text("\(h.moduleName) \(h.fw)") }
+                Button("Rename…") { newName = rig.name(module); renaming = true }
+                Button("Disconnect", role: .destructive) { rig.disconnect(module) }
+            } label: {
+                Image(systemName: "ellipsis.circle").imageScale(.large)
+            }
+        }
+        .padding(.horizontal).padding(.vertical, 8)
+        .alert("Name this module", isPresented: $renaming) {
+            TextField("Name", text: $newName)
+            Button("Save") { rig.rename(module, to: newName) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The name stays with this module on any cable or adapter.")
+        }
+    }
+}
+
+struct LinkBadge: View {
+    var kind: LinkKind
+    var body: some View {
+        Label(kind.label, systemImage: icon)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .foregroundStyle(kind == .bluetooth ? Color.cyan : Color.secondary)
+    }
+    private var icon: String {
+        switch kind {
+        case .usb: return "cable.connector"
+        case .bluetooth: return "dot.radiowaves.left.and.right"
+        case .network: return "wifi"
+        case .demo: return "theatermasks"
+        }
+    }
+}
+
+/// Plugging in, pairing Bluetooth adapters, and the demo.
+struct ConnectView: View {
+    @EnvironmentObject var rig: Rig
+    var embedded = false
+    @State private var pairing = false
+
+    var body: some View {
+        let list = List {
+            if !embedded {
+                Section {
+                    Label("Plug an Alchemy Lab into this device's USB-C port, or two through a USB-C hub.", systemImage: "cable.connector")
+                    Text("On each module, set **USB port** to **Phone** on the Firmware settings page and power it up again. Hold B1 while powering up to get Mac mode back for the web programmer.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if !rig.modules.isEmpty {
+                Section("Connected") {
+                    ForEach(rig.modules) { m in
+                        HStack {
+                            Text(rig.name(m))
+                            Spacer()
+                            LinkBadge(kind: m.kind)
                         }
                     }
                 }
+            }
+            let others = rig.devices.filter { !rig.isConnected($0) }
+            if !others.isEmpty {
                 Section {
-                    Button("Look again") { store.rescan() }
-                    Button("Try the demo module") { store.startDemo() }
+                    ForEach(others) { d in
+                        Button {
+                            rig.connect(d)
+                        } label: {
+                            HStack {
+                                Text(d.name)
+                                Spacer()
+                                LinkBadge(kind: d.kind)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Other MIDI devices")
                 } footer: {
-                    Text("The demo is a pretend module inside the app, for trying the screens without hardware.")
+                    Text("A Bluetooth adapter shows its own name. Tap it to try it as a module; once it answers, it connects by itself next time.")
                 }
             }
-            .navigationTitle("Alchemy Screen")
-        }
-    }
-}
-
-/// The module's name and a way out, on every tab.
-struct ModuleToolbar: ToolbarContent {
-    @EnvironmentObject var store: ModuleStore
-
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Menu {
-                if let h = store.hello {
-                    Text("\(h.moduleName) \(h.fw)")
+            Section {
+                Button { pairing = true } label: { Label("Pair a Bluetooth MIDI adapter", systemImage: "dot.radiowaves.left.and.right") }
+            } footer: {
+                Text("A USB-host Bluetooth adapter (such as a CME WIDI Uhost) on each module's USB-C. Fine for the screen, knobs and presets; files and firmware are much quicker over a cable.")
+            }
+            Section {
+                Button("Look again") { rig.rescan() }
+                if rig.isDemo {
+                    Button("Stop the demo", role: .destructive) { rig.stopDemo() }
+                } else {
+                    Button("Try one demo module") { rig.startDemo(count: 1) }
+                    Button("Try two demo modules") { rig.startDemo(count: 2) }
                 }
-                if case .demo = store.link { Text("Demo module") }
-                Button("Disconnect", role: .destructive) { store.disconnect() }
-            } label: {
-                Image(systemName: store.link == .demo ? "theatermasks" : "cable.connector")
+            } footer: {
+                Text("The demo is pretend modules inside the app, for trying the screens without hardware.")
             }
         }
+        .navigationTitle(embedded ? "Connect" : "Alchemy Screen")
+        .sheet(isPresented: $pairing) { BluetoothPairing().ignoresSafeArea() }
+
+        if embedded { list } else { NavigationStack { list } }
     }
 }
 
