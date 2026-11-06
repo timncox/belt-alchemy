@@ -9,7 +9,10 @@
  * (keys:: below) and four hub slots. Copy these six together:
  * launchpad.{h,cpp}, usbh_hub_midi.{h,c}, usb_midi_keys.{h,c} (new; add
  * usb_midi_keys.c to the Makefile's C_SOURCES). A firmware that does not
- * call keys:: just drops what a keyboard plays.
+ * call keys:: just drops what a keyboard plays. belt-alchemy
+ * claude/iphone-screen splits it: launchpad.cpp is the USB host backend,
+ * launchpad_core.cpp and launchpad_detail.h the hardware-free rest and the
+ * phone's remote backend (ctrl::, keyboard included); copy those too.
  *
  * The Lab's front port has no VBUS (Hermetic: "identical to ... the Daisy
  * itself, minus VBUS"), so the Launchpad needs 5 V injected -- by a PASSIVE
@@ -200,6 +203,10 @@ uint32_t ReportCount();  /* reports received, for a readout */
  * whose FIRST interface is Audio class with the MIDIStreaming interface
  * among the first two (/lpdiag.txt says "plain MIDI host can serve it");
  * anything else needs the hub.
+ *
+ * In Phone and Phone+Audio modes (ctrl:: below) the keyboard is the phone's
+ * instead: notes and sustain it forwards with CTRL (types 6 and 7) arrive
+ * here the same way, held notes tracked and let go just the same.
  */
 namespace keys
 {
@@ -216,9 +223,9 @@ uint32_t DropCount();           /* messages lost to a full queue */
  * The remote backend (HostLink 0x77 CTRL, CONTROLLERS.md). In Phone and
  * Phone+Audio modes the Lab is a USB device, so the iPad or iPhone hosts the
  * controllers on its hub and forwards their events. With the remote backend
- * enabled, lp::, xl:: and pad:: answer from what the phone sends instead of
- * the USB host: Connected() follows the present bits, events land in the
- * same queues and tables, and the LED setters fill the same framebuffers,
+ * enabled, lp::, xl::, pad:: and keys:: answer from what the phone sends
+ * instead of the USB host: Connected() follows the present bits, events land
+ * in the same queues and tables, and the LED setters fill the same framebuffers,
  * which CTRL's reply returns for the phone to show. lp::Poll() (the USB
  * host) is never called then.
  *
@@ -230,13 +237,15 @@ namespace ctrl
 constexpr uint8_t  kLaunchpad = 1u << 0; /* present bits */
 constexpr uint8_t  kControlXl = 1u << 1;
 constexpr uint8_t  kGamepad   = 1u << 2;
-constexpr uint8_t  kAll       = kLaunchpad | kControlXl | kGamepad;
+constexpr uint8_t  kKeyboard  = 1u << 3; /* notes and sustain (keys::) */
+constexpr uint8_t  kAll       = kLaunchpad | kControlXl | kGamepad | kKeyboard;
 constexpr uint32_t kTimeoutMs = 1000u;   /* no request this long: all unplugged */
 constexpr int      kLpLeds    = 81;
 constexpr int      kXlLeds    = 40;
 
 /* Event types (4 bytes each: type, a, b, c). */
-enum : uint8_t { kEvPad = 1, kEvKnob = 2, kEvFader = 3, kEvButton = 4, kEvGamepad = 5 };
+enum : uint8_t { kEvPad = 1, kEvKnob = 2, kEvFader = 3, kEvButton = 4, kEvGamepad = 5,
+                 kEvNote = 6, kEvSustain = 7 };
 
 /* Use the remote backend instead of the USB host (once, at boot). Turning
  * it off unplugs every remote controller. */
@@ -245,7 +254,8 @@ bool Enabled();
 
 /* One CTRL request: the present bits, then n events of 4 bytes. A
  * controller whose bit goes clear is unplugged at once: its held pads and
- * buttons are released (as events) and the gamepad mask clears. Events for
+ * buttons are released (as events), the gamepad mask clears, and the
+ * keyboard's held notes and sustain pedal are let go (keys::). Events for
  * a controller that is not present, and malformed or unknown events, are
  * skipped. Returns how many events were applied. Ignored while disabled. */
 int Apply(uint8_t present, const uint8_t* events, uint8_t n, uint32_t now_ms);

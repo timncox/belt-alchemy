@@ -21,6 +21,8 @@
  *   Settings page 2 = CHORD: MIDI NOTES, LEAD (0 = chord only), HOLD
  *          (Freeze / Lock), J8 (Formant CV / Hold gate), VEL SENS;
  *   Launchpad top 3 = KEY / PLAY (PLAY pads are held notes: Hide and Seek)
+ *   A USB-MIDI keyboard (Launchpad mode) or the phone's (Phone modes, CTRL
+ *          types 6/7) plays held notes and the sustain pedal like PLAY pads
  */
 #include <math.h>
 #include <stdio.h>
@@ -329,7 +331,8 @@ static hostlink::MidiUsbHostTransport      front_midi;
 static phone::LedMirror<kLedTotal>         led_mirror;
 static phone::PhoneExtension               phone_ext;
 /* Phone modes: controllers on the phone's hub, forwarded with CTRL
- * (CONTROLLERS.md), drive Belt as in Launchpad mode. */
+ * (CONTROLLERS.md), drive Belt as in Launchpad mode -- a keyboard's notes
+ * and sustain pedal included. */
 static phone::CtrlLink                     ctrl_link;
 /* The panel USB-C: the DFM's external pins on V2, the Seed's port on V1
  * (the same choice Host::Start makes for its default serial link). */
@@ -772,8 +775,10 @@ static void pad_poll(void)
                || g_pfx.echo_fb_gain > 0.0f;
 }
 
-/* A USB-MIDI keyboard (launchpad.h keys::): its notes and sustain pedal go to
- * the engine like the PLAY pads -- note-ons only while Settings is closed,
+/* A USB-MIDI keyboard (launchpad.h keys::) in Launchpad mode, or in the
+ * Phone modes the keyboard the phone forwards with CTRL (present bit 3,
+ * types 6 and 7; CONTROLLERS.md): its notes and sustain pedal go to the
+ * engine like the PLAY pads -- note-ons only while Settings is closed,
  * releases and the pedal always. Notes 0-2 are belt_on_midi's reserved
  * control notes (HARD / DOUBLE / MUTE momentaries), never a key's pitch.
  * A fast arpeggio waits in keys:: (128) while the 32-entry note queue is

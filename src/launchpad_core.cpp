@@ -205,7 +205,7 @@ uint32_t ReportCount() { return lpd::pad_reports; }
 namespace keys
 {
 
-/* Connected() and Held() are at the end, after the remote backend. */
+/* Connected() and Held() are at the end: they ask the remote backend too. */
 
 bool PopMsg(uint8_t msg[3])
 {
@@ -236,6 +236,17 @@ constexpr uint32_t kPadMask = 0x3FFFFu; /* wButtons, LT, RT */
 bool     g_lp_held[lpd::kLpCells]; /* what the phone said is down */
 uint16_t g_xl_held = 0;            /* bit row * 8 + col */
 uint32_t g_last_ms = 0;            /* the last request */
+umk_keys_t g_keys;                 /* the phone's keyboard: notes held, pedal */
+
+/* The phone's keyboard, as one USB-MIDI event packet (cable 0) through the
+ * same filter a USB keyboard's packets take: repeated note-ons and stray
+ * note-offs dropped, the pedal on its edges. */
+void keys_packet(uint8_t cin, uint8_t status, uint8_t d1, uint8_t d2)
+{
+    const uint8_t p[4] = {cin, status, d1, d2};
+    umk_msg_t     m[1];
+    lpd::KeysPush(m, umk_keys_rx(&g_keys, p, sizeof p, m, 1));
+}
 
 void lp_cell(int i, lp::Kind* k, uint8_t* x, uint8_t* y)
 {
@@ -264,6 +275,12 @@ void unplug(uint8_t bits)
         g_xl_held = 0;
     }
     if (bits & kGamepad) lpd::pad_buttons = 0;
+    if (bits & kKeyboard)
+    {
+        umk_msg_t m[16];
+        int       n;
+        while ((n = umk_keys_release_all(&g_keys, m, 16)) > 0) lpd::KeysPush(m, n);
+    }
     g_present = (uint8_t)(g_present & ~bits);
 }
 
@@ -310,6 +327,15 @@ bool apply_event(const uint8_t* e)
             lpd::pad_buttons = ((uint32_t)a | ((uint32_t)b << 8) | ((uint32_t)c << 16)) & kPadMask;
             lpd::pad_reports++;
             return true;
+        case kEvNote:   /* a = note, b = velocity (0 = off) */
+            if (!(g_present & kKeyboard) || a > 127 || b > 127) return false;
+            if (b) keys_packet(0x09, 0x90, a, b);
+            else   keys_packet(0x08, 0x80, a, 0);
+            return true;
+        case kEvSustain: /* a = 1 down, 0 up */
+            if (!(g_present & kKeyboard) || a > 1) return false;
+            keys_packet(0x0B, 0xB0, 64, a ? 127 : 0);
+            return true;
         default:
             return false; /* a type this firmware does not know */
     }
@@ -353,8 +379,12 @@ const uint8_t* XlLeds() { return lpd::xl_want; }
 namespace keys
 {
 
-/* No keyboard comes over CTRL yet: with the remote backend on, none. */
-bool Connected() { return !g_remote && lpd::UsbKeysConnected(); }
-bool Held() { return !g_remote && lpd::UsbKeysHeld(); }
+bool Connected() { return g_remote ? (g_present & ctrl::kKeyboard) != 0 : lpd::UsbKeysConnected(); }
+
+bool Held()
+{
+    if (!g_remote) return lpd::UsbKeysHeld();
+    return (g_present & ctrl::kKeyboard) && umk_keys_held_count(&ctrl::g_keys) > 0;
+}
 
 } // namespace keys

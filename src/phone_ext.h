@@ -45,8 +45,9 @@
  *                       Launch Control XL, an XInput gamepad) driving the
  *                       module as in Launchpad USB mode; the reply is the
  *                       full LED frame for the phone to show on them.
- *                       present: bit0 Launchpad, bit1 XL, bit2 gamepad;
- *                       n = 0 polls.  See CONTROLLERS.md.
+ *                       present: bit0 Launchpad, bit1 XL, bit2 gamepad,
+ *                       bit3 keyboard (notes, sustain); n = 0 polls.
+ *                       See CONTROLLERS.md.
  *
  * Unknown or unwired commands answer UNSUPPORTED, so the app shows only
  * what this firmware can do.  Hardware-free: the firmware passes in its LED
