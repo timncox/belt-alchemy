@@ -5,13 +5,24 @@ import AlchemyLink
 struct AlchemyScreenApp: App {
     @StateObject private var rig = Rig()
     @StateObject private var inputs = Inputs()
+    @StateObject private var controllers = ControllerHub()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(rig)
                 .environmentObject(inputs)
-                .onAppear { inputs.rig = rig }
+                .environmentObject(controllers)
+                .onAppear {
+                    inputs.rig = rig
+                    controllers.attach(rig: rig, inputs: inputs)
+                }
+                .onChange(of: scenePhase) { phase in
+                    // The Launchpad goes back to Live mode while the app is away.
+                    if phase == .background { controllers.setActive(false) }
+                    if phase == .active { controllers.setActive(true) }
+                }
                 .preferredColorScheme(.dark)
                 .tint(.orange)
         }
@@ -255,7 +266,11 @@ struct ConnectView: View {
                     }
                 }
             }
-            let others = rig.devices.filter { !rig.isConnected($0) }
+            // Launchpads and Launch Control XLs are controllers (Controls tab), not modules.
+            let others = rig.devices.filter { d in
+                let kind = ControllerKind.classify(midiName: d.name + " " + d.deviceName)
+                return !rig.isConnected(d) && kind != .launchpad && kind != .launchControlXL
+            }
             if !others.isEmpty {
                 Section {
                     ForEach(others) { d in

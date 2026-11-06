@@ -1,6 +1,6 @@
 /**
  * @file phone_ext.h
- * @brief HostLink "phone block" (commands 0x70–0x75): what the iPhone app
+ * @brief HostLink "phone block" (commands 0x70–0x77): what the iPhone app
  *        needs beyond knobs, presets and files.
  *
  * Knobs, settings and presets already travel as HostLink live state and
@@ -10,7 +10,7 @@
  *   0x70 PHONE_INFO   → u8 status, u8 version (2), u8 flags, u16 led_count,
  *                       str layout ("alchemy-lab-v2"), u32 unit
  *                       flags: bit0 SCREEN, bit1 firmware switching, bit2 PRESS,
- *                       bit3 STATE.  unit tells two modules apart (a hash of
+ *                       bit3 STATE, bit4 CTRL.  unit tells two modules apart (a hash of
  *                       the MCU's unique ID; 0 = unknown); version 1 ends
  *                       after the layout
  *   0x71 SCREEN       → u8 status, u32 frame, u16 n, u8 rgb[3n]
@@ -38,6 +38,15 @@
  *                       or below, 255 = 0 dBFS.  touch_* are 0xFF for none.
  *                       since is the last trace sample the phone already
  *                       has, for a tail that streams one (Belt's pitch).
+ *   0x77 CTRL         ← u8 present, u8 n, { u8 type, u8 a, u8 b, u8 c } × n
+ *                     → u8 status, u8 version (1), u8 present_seen,
+ *                       u8 lp_leds[81], u8 xl_leds[40]
+ *                       controllers on the phone's hub (Launchpad Mini MK3,
+ *                       Launch Control XL, an XInput gamepad) driving the
+ *                       module as in Launchpad USB mode; the reply is the
+ *                       full LED frame for the phone to show on them.
+ *                       present: bit0 Launchpad, bit1 XL, bit2 gamepad;
+ *                       n = 0 polls.  See CONTROLLERS.md.
  *
  * Unknown or unwired commands answer UNSUPPORTED, so the app shows only
  * what this firmware can do.  Hardware-free: the firmware passes in its LED
@@ -63,6 +72,7 @@ enum Cmd : uint8_t
     kFwStatus = 0x74,
     kPress    = 0x75,
     kState    = 0x76,
+    kCtrl     = 0x77,
     kLast     = 0x7F,   /* block reserved through here */
 };
 
@@ -89,6 +99,24 @@ class IFirmwareSwitcher
 };
 
 using PressFn = bool (*)(uint8_t button, uint8_t gesture, void* ctx);
+
+/** Controllers forwarded by the phone (CTRL), implemented by launchpad.h's
+ *  remote backend (ctrl_link.h).  Called from the HostLink service. */
+class IControllers
+{
+  public:
+    static constexpr uint8_t kVersion = 1u;
+    static constexpr int     kLpLeds  = 81;
+    static constexpr int     kXlLeds  = 40;
+
+    virtual ~IControllers() = default;
+    /** One request, already length-checked: @p events holds 4 × @p n bytes. */
+    virtual void           Apply(uint8_t present, const uint8_t* events, uint8_t n,
+                                 uint32_t now_ms)  = 0;
+    virtual uint8_t        Present() const = 0;   /* present_seen */
+    virtual const uint8_t* LpLeds() const  = 0;   /* kLpLeds */
+    virtual const uint8_t* XlLeds() const  = 0;   /* kXlLeds */
+};
 
 /** The generic part of a STATE reply; see the table above. */
 struct StateHeader
@@ -130,6 +158,7 @@ class PhoneExtension : public alchemy::hostlink::IHostlinkExtension
     PhoneExtension& Layout(const char* name) { layout_ = name; return *this; }
     PhoneExtension& State(IStateSource& s) { state_ = &s; return *this; }
     PhoneExtension& Unit(uint32_t id) { unit_ = id; return *this; }
+    PhoneExtension& Controllers(IControllers& c) { ctrl_ = &c; return *this; }
 
     uint8_t FirstCmd() const override { return kInfo; }
     uint8_t LastCmd() const override { return kLast; }
@@ -145,6 +174,7 @@ class PhoneExtension : public alchemy::hostlink::IHostlinkExtension
     const char*        layout_    = "alchemy-lab-v2";
     IStateSource*      state_     = nullptr;
     uint32_t           unit_      = 0;
+    IControllers*      ctrl_      = nullptr;
 };
 
 } // namespace phone

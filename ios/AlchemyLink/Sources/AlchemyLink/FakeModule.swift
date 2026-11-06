@@ -37,6 +37,15 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
     private var touch: (page: Int, pot: Int, at: Date)?
     /// Pretend audio load and levels, for the screen's meters.
     public var pretendCpu = 0.42
+    /// Answers 0x77 CTRL (PHONE_INFO flags bit 4); false acts as an older firmware.
+    public var supportsCtrl = true
+    /// The controllers the phone forwards (CTRL), as the module holds them.
+    public private(set) var ctrlPresent: CtrlPresent = []
+    public private(set) var ctrlEvents: [CtrlEvent] = []
+    public private(set) var gamepadMask: UInt32 = 0
+    private var ctrlAt = Date.distantPast
+    private var lpLeds = [UInt8](repeating: 0, count: CtrlReply.lpCount)
+    private var xlLeds = [UInt8](repeating: 0, count: CtrlReply.xlCount)
 
     public init(viaSysEx: Bool = true, unit: UInt32 = 0xBE17_0001, name: String = "Belt (demo)") {
         self.viaSysEx = viaSysEx
@@ -221,7 +230,7 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                 guard files[b] == nil else { return fail(f, .exists) }
                 files[a] = nil; files[b] = d; ok(f)
             case .phoneInfo:
-                ok(f, Writer().u8(2).u8(15).u16(UInt16(PanelLayout.leds.count)).str("alchemy-lab-v2").u32(unit))
+                ok(f, Writer().u8(2).u8(supportsCtrl ? 31 : 15).u16(UInt16(PanelLayout.leds.count)).str("alchemy-lab-v2").u32(unit))
             case .state:
                 let since: UInt16? = r.remaining >= 2 ? try r.u16() : nil
                 ok(f, stateReply(since: since))
@@ -252,9 +261,64 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                 default: muteDown = g == 1
                 }
                 ok(f)
+            case .ctrl:
+                guard supportsCtrl else { return fail(f, .unsupported) }
+                let present = CtrlPresent(rawValue: try r.u8()), n = Int(try r.u8())
+                var events: [CtrlEvent] = []
+                for _ in 0..<n {
+                    guard let e = CtrlEvent(bytes: try r.bytes(4)) else { return fail(f, .badArgs) }
+                    events.append(e)
+                }
+                ok(f, ctrl(present: present, events: events))
             default: fail(f, .unsupported)
             }
         } catch { fail(f, .badArgs) }
+    }
+
+    // MARK: controllers (CTRL)
+
+    /// A pressed grid pad lights green while held, a side button white; top
+    /// buttons 1 and 2 latch HARD and mute, and the top row shows both (red
+    /// and amber, dim when off); an XL knob's LED shows its value, an XL
+    /// button flips red. A controller whose bit clears, or a phone that
+    /// stops asking for a second, lets go of everything held.
+    private func ctrl(present: CtrlPresent, events: [CtrlEvent]) -> Writer {
+        if Date().timeIntervalSince(ctrlAt) > 1 { release(ctrlPresent) }
+        ctrlAt = Date()
+        release(ctrlPresent.subtracting(present))
+        ctrlPresent = present
+        for e in events where present.contains(e.source) {
+            ctrlEvents.append(e)
+            switch e {
+            case let .launchpad(k, x, y, down):
+                let i = LaunchpadMK3.index(k, x: Int(x), y: Int(y))
+                switch k {
+                case .grid: lpLeds[i] = down ? 21 : 0
+                case .side: lpLeds[i] = down ? 3 : 0
+                case .top:
+                    if down && x == 0 { hardLatch.toggle() }
+                    if down && x == 1 { muteLatch.toggle() }
+                }
+            case let .xlKnob(row, col, v):
+                xlLeds[Int(row) * 8 + Int(col)] = v == 0 ? LaunchControlXL.colour(red: 0, green: 0)
+                    : LaunchControlXL.colour(red: 0, green: min(3, v / 32 + 1))
+            case let .xlButton(row, col, down):
+                let i = 24 + Int(row) * 8 + Int(col)
+                if down { xlLeds[i] = xlLeds[i] == LaunchControlXL.colour(red: 3, green: 0)
+                    ? LaunchControlXL.colour(red: 0, green: 0) : LaunchControlXL.colour(red: 3, green: 0) }
+            case .xlFader: break
+            case let .gamepad(m): gamepadMask = m
+            }
+        }
+        let hard = hardLatch != hardDown, muted = muteLatch != muteDown
+        lpLeds[LaunchpadMK3.index(.top, x: 0, y: 0)] = hard ? 5 : 7
+        lpLeds[LaunchpadMK3.index(.top, x: 1, y: 0)] = muted ? 13 : 15
+        return Writer().u8(1).u8(present.rawValue).raw(lpLeds).raw(xlLeds)
+    }
+
+    private func release(_ gone: CtrlPresent) {
+        if gone.contains(.launchpad) { for i in 0..<72 { lpLeds[i] = 0 } }
+        if gone.contains(.gamepad) { gamepadMask = 0 }
     }
 
     // MARK: the pretend singer (STATE)

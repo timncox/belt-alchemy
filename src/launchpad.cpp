@@ -1,4 +1,5 @@
-/* launchpad -- see launchpad.h. */
+/* launchpad -- see launchpad.h. The USB host backend; the queues, tables,
+ * framebuffers and the remote backend are launchpad_core.cpp. */
 #include "launchpad.h"
 
 #include <stdio.h>
@@ -8,6 +9,7 @@
 #include "hid/usb_host.h"
 #include "usbh_midi.h"
 #include "usbh_hub_midi.h"
+#include "launchpad_detail.h"
 
 extern "C" USBH_HandleTypeDef hUsbHostHS; /* libDaisy's host handle */
 
@@ -36,8 +38,6 @@ bool                 g_direct_ready = false; /* MIDI class active, pipes open */
 bool                 g_failed       = false; /* abort, unsupported or error seen */
 int                  g_mini_link    = kNone;
 int                  g_xl_link      = kNone;
-volatile uint32_t    g_pad_buttons  = 0;
-uint32_t             g_pad_reports  = 0;
 uint8_t              g_pad_last[6];         /* the last report's head, any type */
 
 uint32_t g_rx_count = 0, g_tx_count = 0;
@@ -99,8 +99,8 @@ void pad_rx(const uint8_t* buf, size_t len)
     uint32_t b = (uint32_t)buf[2] | ((uint32_t)buf[3] << 8);
     if (buf[4] > 64) b |= 1u << 16;
     if (buf[5] > 64) b |= 1u << 17;
-    g_pad_buttons = b;
-    g_pad_reports++;
+    lpd::pad_buttons = b;
+    lpd::pad_reports++;
 }
 
 bool is_pad(int link)
@@ -136,7 +136,7 @@ void on_disconnect(void*)
     g_direct_ready = false;
     g_mini_link    = kNone;
     g_xl_link      = kNone;
-    g_pad_buttons  = 0;
+    lpd::pad_buttons = 0;
 }
 
 /* Bind ready links to roles by id; drop roles whose link went away. */
@@ -192,22 +192,18 @@ namespace
 {
 
 constexpr int kGrid  = 64;
-constexpr int kSide0 = 64;
-constexpr int kTop0  = 72;
-constexpr int kLogo  = 80;
-constexpr int kCells = 81;
+constexpr int kSide0 = lpd::kLpSide0;
+constexpr int kTop0  = lpd::kLpTop0;
+constexpr int kLogo  = lpd::kLpLogo;
+constexpr int kCells = lpd::kLpCells;
 constexpr uint8_t kUnknown = 0xFF; /* not yet sent since connect */
 
 bool g_need_init = false; /* send Programmer mode next */
 int  g_rx_cable  = -1;    /* cable events are taken from */
 
-uint8_t g_want[kCells];
+uint8_t (&g_want)[kCells] = lpd::lp_want; /* launchpad_core.cpp */
 uint8_t g_sent[kCells];
 int     g_scan = 0; /* where the next diff scan starts, for fairness */
-
-constexpr int kQueue = 64;
-Event         g_q[kQueue];
-volatile int  g_qhead = 0, g_qtail = 0;
 
 Diag    g_diag    = {0, 0, false, 0};
 uint8_t g_last_gs = 0;
@@ -219,13 +215,7 @@ constexpr int kTrace = 64;
 Tr      g_tr[kTrace];
 int     g_tr_n = 0;
 
-void push(Kind k, uint8_t x, uint8_t y, bool down)
-{
-    int next = (g_qhead + 1) % kQueue;
-    if (next == g_qtail) return; /* full: drop, never block */
-    g_q[g_qhead] = Event{k, x, y, down};
-    g_qhead      = next;
-}
+void push(Kind k, uint8_t x, uint8_t y, bool down) { lpd::LpPush(k, x, y, down); }
 
 /* One LED as a USB-MIDI packet on the given cable. */
 void cell_packet(int i, uint8_t col, uint8_t cable, uint8_t* p)
@@ -331,8 +321,6 @@ void Poll(uint32_t now)
     xl::Flush_();
 }
 
-bool Connected() { return g_mini_link != kNone; }
-
 uint8_t Stage()
 {
     if (g_mini_link != kNone || g_xl_link != kNone) return 3;
@@ -343,33 +331,6 @@ uint8_t Stage()
         return HUBMIDI_GetInfo().fail_state && !HUBMIDI_Ready(&hUsbHostHS) ? 2 : 1;
     if (g_failed) return 2;
     return hUsbHostHS.device.is_connected ? 1 : 0;
-}
-
-bool PopEvent(Event* e)
-{
-    if (g_qtail == g_qhead) return false;
-    *e      = g_q[g_qtail];
-    g_qtail = (g_qtail + 1) % kQueue;
-    return true;
-}
-
-void SetGrid(uint8_t x, uint8_t y, uint8_t col)
-{
-    if (x < 8 && y < 8) g_want[y * 8 + x] = col;
-}
-void SetSide(uint8_t y, uint8_t col)
-{
-    if (y < 8) g_want[kSide0 + y] = col;
-}
-void SetTop(uint8_t x, uint8_t col)
-{
-    if (x < 8) g_want[kTop0 + x] = col;
-}
-void SetLogo(uint8_t col) { g_want[kLogo] = col; }
-
-void ClearAll()
-{
-    for (int i = 0; i < kCells; i++) g_want[i] = kOff;
 }
 
 Diag Diagnostics() { return g_diag; }
@@ -398,7 +359,7 @@ int Report(char* b, int cap)
                 (unsigned long)h.rx_stale[d]);
     }
     OUT("pad: reports %lu, held %05lx, last %02x %02x %02x %02x %02x %02x\n",
-        (unsigned long)g_pad_reports, (unsigned long)g_pad_buttons, g_pad_last[0], g_pad_last[1],
+        (unsigned long)lpd::pad_reports, (unsigned long)lpd::pad_buttons, g_pad_last[0], g_pad_last[1],
         g_pad_last[2], g_pad_last[3], g_pad_last[4], g_pad_last[5]);
     OUT("direct device %04x:%04x\n", hUsbHostHS.device.DevDesc.idVendor,
         hUsbHostHS.device.DevDesc.idProduct);
@@ -461,34 +422,19 @@ namespace
 {
 
 constexpr uint8_t kTemplate = 0x08; /* factory template 1 */
-constexpr int     kKnobs    = 24;
-constexpr int     kFaders   = 8;
-constexpr int     kLeds     = 40;   /* 24 knobs, then 2 rows of 8 buttons */
+constexpr int     kLeds     = lpd::kXlLeds;   /* 24 knobs, then 2 rows of 8 buttons */
 constexpr uint8_t kUnknown  = 0xFF;
 
 bool     g_need_template = false;
-uint8_t  g_knob[kKnobs], g_fader[kFaders];
-uint32_t g_knob_changed = 0;
-uint8_t  g_fader_changed = 0;
-
-uint8_t g_want[kLeds], g_sent[kLeds];
+uint8_t (&g_want)[kLeds] = lpd::xl_want; /* launchpad_core.cpp */
+uint8_t g_sent[kLeds];
 int     g_scan = 0;
-
-constexpr int kQueue = 32;
-Button        g_q[kQueue];
-int           g_qhead = 0, g_qtail = 0;
 
 /* A little SysEx reassembly: just enough to see "template changed". */
 uint8_t g_sx[16];
 int     g_sx_n = 0;
 
-void push(uint8_t row, uint8_t col, bool down)
-{
-    int next = (g_qhead + 1) % kQueue;
-    if (next == g_qtail) return;
-    g_q[g_qhead] = Button{row, col, down};
-    g_qhead      = next;
-}
+void push(uint8_t row, uint8_t col, bool down) { lpd::XlPush(row, col, down); }
 
 void sx_byte(uint8_t b)
 {
@@ -504,48 +450,6 @@ void sx_byte(uint8_t b)
 }
 
 } // namespace
-
-bool Connected() { return g_xl_link != kNone; }
-
-bool Knob(uint8_t row, uint8_t col, uint8_t* v)
-{
-    const int i = row * 8 + col;
-    if (row > 2 || col > 7) return false;
-    *v = g_knob[i];
-    if (!(g_knob_changed & (1u << i))) return false;
-    g_knob_changed &= ~(1u << i);
-    return true;
-}
-
-bool Fader(uint8_t col, uint8_t* v)
-{
-    if (col > 7) return false;
-    *v = g_fader[col];
-    if (!(g_fader_changed & (1u << col))) return false;
-    g_fader_changed = (uint8_t)(g_fader_changed & ~(1u << col));
-    return true;
-}
-
-uint8_t KnobValue(uint8_t row, uint8_t col) { return (row < 3 && col < 8) ? g_knob[row * 8 + col] : 0; }
-uint8_t FaderValue(uint8_t col) { return col < 8 ? g_fader[col] : 0; }
-
-bool PopButton(Button* b)
-{
-    if (g_qtail == g_qhead) return false;
-    *b      = g_q[g_qtail];
-    g_qtail = (g_qtail + 1) % kQueue;
-    return true;
-}
-
-void SetKnobLed(uint8_t row, uint8_t col, uint8_t colour)
-{
-    if (row < 3 && col < 8) g_want[row * 8 + col] = colour;
-}
-
-void SetButtonLed(uint8_t row, uint8_t col, uint8_t colour)
-{
-    if (row < 2 && col < 8) g_want[24 + row * 8 + col] = colour;
-}
 
 /* Called from lp::Poll: template select first, then changed LEDs, one
  * 64-byte transfer at most, never waiting. */
@@ -620,15 +524,9 @@ void xl_rx(uint8_t* buf, size_t len)
             else if (d1 >= 29 && d1 <= 36) k = 8 + d1 - 29;
             else if (d1 >= 49 && d1 <= 56) k = 16 + d1 - 49;
             if (k >= 0)
-            {
-                g_knob[k] = d2;
-                g_knob_changed |= 1u << k;
-            }
+                lpd::XlKnob(k, d2);
             else if (d1 >= 77 && d1 <= 84)
-            {
-                g_fader[d1 - 77] = d2;
-                g_fader_changed  = (uint8_t)(g_fader_changed | (1u << (d1 - 77)));
-            }
+                lpd::XlFader(d1 - 77, d2);
         }
         else if (cin == 0x8 || cin == 0x9)
         {
@@ -643,20 +541,21 @@ void xl_rx(uint8_t* buf, size_t len)
 
 } // namespace
 
-/* ================================================================== gamepad */
+/* ============================================================== connections */
 
-namespace pad
+/* What launchpad_core's lp/xl/pad::Connected() answer with the remote
+ * backend off. */
+namespace lpd
 {
 
-bool Connected()
+bool UsbLpConnected() { return g_mini_link != kNone; }
+bool UsbXlConnected() { return g_xl_link != kNone; }
+
+bool UsbPadConnected()
 {
     for (int l = kHub0; l < kLinks; l++)
         if (link_ready(l) && is_pad(l)) return true;
     return false;
 }
 
-uint32_t Buttons() { return Connected() ? g_pad_buttons : 0u; }
-
-uint32_t ReportCount() { return g_pad_reports; }
-
-} // namespace pad
+} // namespace lpd

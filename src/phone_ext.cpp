@@ -34,7 +34,7 @@ void PhoneExtension::Handle(const ParsedFrame& f, FrameWriter& w, uint32_t now_m
         case kInfo:
         {
             const uint8_t flags = uint8_t((leds_ ? 1u : 0u) | (fw_ ? 2u : 0u) | (press_ ? 4u : 0u)
-                                          | (state_ ? 8u : 0u));
+                                          | (state_ ? 8u : 0u) | (ctrl_ ? 16u : 0u));
             w.U8(uint8_t(Status::Ok));
             w.U8(kVersion);
             w.U8(flags);
@@ -125,6 +125,18 @@ void PhoneExtension::Handle(const ParsedFrame& f, FrameWriter& w, uint32_t now_m
                 w.Begin(uint8_t(f.type | 0x80u), f.seq);
                 return Fail(w, Status::TooLarge);
             }
+            return;
+        }
+        case kCtrl:
+        {
+            if (!ctrl_) return Fail(w, Status::Unsupported);
+            if (f.len < 2u || f.len != 2u + 4u * f.body[1]) return Fail(w, Status::BadArgs);
+            ctrl_->Apply(f.body[0], f.body + 2, f.body[1], now_ms);
+            w.U8(uint8_t(Status::Ok));
+            w.U8(IControllers::kVersion);
+            w.U8(ctrl_->Present());
+            w.Bytes(ctrl_->LpLeds(), IControllers::kLpLeds);
+            w.Bytes(ctrl_->XlLeds(), IControllers::kXlLeds);
             return;
         }
         default:

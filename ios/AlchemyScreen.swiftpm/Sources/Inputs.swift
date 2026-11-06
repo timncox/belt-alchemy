@@ -90,6 +90,16 @@ final class Inputs: ObservableObject {
 
     func clearLoop() { stopLoop(); motion = PadMotion() }
 
+    /// The pad's X or Y set from a controller (0...1); the other axis stays.
+    func controllerPad(x: Double?, y: Double?) {
+        if looping { stopLoop() }
+        pad = CGPoint(x: x ?? Double(pad.x), y: y ?? Double(pad.y))
+        var out: [ControlSource: Double] = [:]
+        if let x { out[.padX] = x }
+        if let y { out[.padY] = y }
+        rig?.drive(out)
+    }
+
     // MARK: tilt, roll and turn
 
     @Published var motionOn = false { didSet { motionOn ? startMotion() : stopMotion() } }

@@ -311,6 +311,8 @@ public struct PhoneInfo {
     public var hasState: Bool = false
     /// Tells two modules apart (a hash of the MCU's unique ID); 0 = unknown.
     public var unit: UInt32 = 0
+    /// The module takes the phone's controllers (0x77 CTRL, flags bit 4).
+    public var hasCtrl: Bool = false
 }
 
 public struct ScreenFrame {
@@ -336,6 +338,7 @@ extension HostLinkClient {
         var info = PhoneInfo(version: v, hasScreen: flags & 1 != 0, hasFirmware: flags & 2 != 0,
                              hasPress: flags & 4 != 0, ledCount: Int(n), layout: layout)
         info.hasState = flags & 8 != 0
+        info.hasCtrl = flags & 16 != 0
         if r.remaining >= 4 { info.unit = try r.u32() }   // version 2 on
         return info
     }

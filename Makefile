@@ -38,6 +38,7 @@ CPP_SOURCES = \
     src/belt_alchemy.cpp \
     src/picker.cpp \
     src/launchpad.cpp \
+    src/launchpad_core.cpp \
     src/usb_shared.cpp \
     src/midi_usb_transport.cpp \
     src/phone_ext.cpp

@@ -182,3 +182,50 @@ uint32_t Buttons();      /* held now */
 uint32_t ReportCount();  /* reports received, for a readout */
 
 } // namespace pad
+
+/* ---------------------------------------------------------------------------
+ * The remote backend (HostLink 0x77 CTRL, CONTROLLERS.md). In Phone and
+ * Phone+Audio modes the Lab is a USB device, so the iPad or iPhone hosts the
+ * controllers on its hub and forwards their events. With the remote backend
+ * enabled, lp::, xl:: and pad:: answer from what the phone sends instead of
+ * the USB host: Connected() follows the present bits, events land in the
+ * same queues and tables, and the LED setters fill the same framebuffers,
+ * which CTRL's reply returns for the phone to show. lp::Poll() (the USB
+ * host) is never called then.
+ *
+ * Hardware-free (launchpad_core.cpp). Call everything from the control loop.
+ */
+namespace ctrl
+{
+
+constexpr uint8_t  kLaunchpad = 1u << 0; /* present bits */
+constexpr uint8_t  kControlXl = 1u << 1;
+constexpr uint8_t  kGamepad   = 1u << 2;
+constexpr uint8_t  kAll       = kLaunchpad | kControlXl | kGamepad;
+constexpr uint32_t kTimeoutMs = 1000u;   /* no request this long: all unplugged */
+constexpr int      kLpLeds    = 81;
+constexpr int      kXlLeds    = 40;
+
+/* Event types (4 bytes each: type, a, b, c). */
+enum : uint8_t { kEvPad = 1, kEvKnob = 2, kEvFader = 3, kEvButton = 4, kEvGamepad = 5 };
+
+/* Use the remote backend instead of the USB host (once, at boot). Turning
+ * it off unplugs every remote controller. */
+void Enable(bool on);
+bool Enabled();
+
+/* One CTRL request: the present bits, then n events of 4 bytes. A
+ * controller whose bit goes clear is unplugged at once: its held pads and
+ * buttons are released (as events) and the gamepad mask clears. Events for
+ * a controller that is not present, and malformed or unknown events, are
+ * skipped. Returns how many events were applied. Ignored while disabled. */
+int Apply(uint8_t present, const uint8_t* events, uint8_t n, uint32_t now_ms);
+
+/* The timeout: with no request for kTimeoutMs, every controller unplugs. */
+void Tick(uint32_t now_ms);
+
+uint8_t        Present();
+const uint8_t* LpLeds();   /* kLpLeds, CTRL's layout */
+const uint8_t* XlLeds();   /* kXlLeds, CTRL's layout */
+
+} // namespace ctrl

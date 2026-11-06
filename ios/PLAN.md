@@ -20,6 +20,41 @@ hub and charges the phone.
 
 One module also works on a plain USB-C cable with no hub.
 
+## Controllers on the hub (built, untested on hardware)
+
+A Launchpad Mini MK3, a Launch Control XL, a Haute42 and other MIDI gear
+(a Daisy Patch, keyboards) go on the same hub as the modules.
+
+- **Like Launchpad mode:** route the Launchpad, the XL or the gamepad to
+  Left, Right or both, and the module does what it does in its own
+  Launchpad USB mode (grid, XL knobs and faders, punch effects), with its
+  LEDs shown on the controller. Needs the module's Phone firmware with
+  controller support (HostLink 0x77 CTRL, firmware/CONTROLLERS.md).
+- **Mapped in the app:** Learn any knob, fader, pad or button and send it to
+  any knob on either module, the XY pad, linking, HARD/mute, presets, or a
+  MIDI CC or note on another device such as the Daisy Patch. One control
+  can drive several targets, each with its own range. A control mapped in
+  the app is not forwarded to the module.
+- **MIDI out:** the pad, pressure, tilt, roll, turn and mic can also send
+  CCs to any MIDI device, only on change, at most 60 a second.
+- **Haute42 on iPad:** set it to PS4 mode (Switch mode also works but may
+  swap A and B). iPadOS doesn't recognise its XInput mode, which is the
+  mode the module wants when it hosts the Haute42 itself.
+- **Daisy Patch:** shows as a MIDI device when its firmware turns USB MIDI
+  on. It gets no Alchemy screen (that needs Alchemy firmware).
+
+## Hub power
+
+The modules draw nothing from the hub (their USB-C has no VBUS). Each
+bus-powered controller may draw up to 500 mA (USB 2.0's limit; their real
+draw is lower, and I found no published figures), so the Launchpad, the
+XL and the Haute42 together stay under 1.5 A at 5 V. Pick a hub with a
+USB-C power-in (PD) port, and feed it from a USB-C PD battery or a charger;
+with 30 W or more it also charges the iPad. The case's USB port can run
+the controllers if it gives 1.5 A or more; whether yours does is
+unchecked, and it won't charge the iPad. Whether the Daisy Patch takes
+power from the hub's USB while it also runs from the case is unchecked.
+
 ## Other ways to connect (not the default)
 
 **Two modules, each on its own Bluetooth MIDI adapter.** A USB-host
@@ -161,6 +196,6 @@ Known limits:
    Belt's screen; split screen on iPad; the XY pad with pressure and loops;
    tilt, turn and mic as controls; knobs, presets, files, firmware.
 2. **Built, same build:** linking (shared key, follows, split harmonies,
-   one screen) and mic clips to the card.
+   one screen), mic clips to the card, and controllers on the hub.
 3. **Built, test separately:** the AUv3 (try it in AUM first) and the
    Phone+Audio firmware mode (try it on one module before relying on it).

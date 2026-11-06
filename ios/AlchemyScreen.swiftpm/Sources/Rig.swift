@@ -32,6 +32,8 @@ final class Rig: ObservableObject {
     private var declined: Set<MIDIUniqueID> = []
 
     var selected: ModuleStore? { modules.first { $0.id == selectedID } ?? modules.first }
+    /// CoreMIDI, for the controllers on the hub (ControllerHub).
+    var midi: MIDIHub? { hub }
     var ready: [ModuleStore] { modules.filter { $0.phase == .ready } }
     var isDemo: Bool { modules.contains { $0.isDemo } }
 
@@ -187,7 +189,11 @@ final class Rig: ObservableObject {
         for (t, v) in controls.apply(inputs) {
             module(unit: t.unit)?.set(fieldId: t.field, v)
         }
+        onDrive?(inputs)
     }
+
+    /// The same values for MIDI out to other devices (ControllerHub).
+    var onDrive: (([ControlSource: Double]) -> Void)?
 
     func route(_ s: ControlSource, to t: ControlTarget?) {
         var c = controls

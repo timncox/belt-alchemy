@@ -35,6 +35,8 @@ final class ModuleStore: ObservableObject, Identifiable {
     @Published private(set) var screen: [UInt8] = []
     @Published var pageIndex = 0
     @Published private(set) var slots: [SlotInfo] = []
+    /// The preset last loaded from the app, for next and previous.
+    @Published private(set) var lastSlot: Int?
 
     /// The module's own state (Belt: the sung note, harmonies, buttons),
     /// for firmwares that answer STATE; the app draws its screen from it.
@@ -249,6 +251,24 @@ final class ModuleStore: ObservableObject, Identifiable {
         Task { try? await c.press(button: button, g) }
     }
 
+    // MARK: controllers on the hub (0x77 CTRL)
+
+    /// The firmware takes the phone's controllers.
+    var hasCtrl: Bool { phone?.hasCtrl == true }
+    var maxBody: Int { client?.maxBody ?? 512 }
+
+    /// Controller events to the module, its LEDs back; nil if UNSUPPORTED.
+    func ctrl(present: CtrlPresent, events: [CtrlEvent]) async throws -> CtrlReply? {
+        guard let c = client else { throw HostLinkError.notConnected }
+        return try await c.ctrl(present: present, events: events)
+    }
+
+    /// The next (or previous) saved preset of this firmware, wrapping round.
+    func stepPreset(_ step: Int) {
+        let valid = slots.filter { $0.valid && $0.ours }.map(\.slot)
+        if let s = PresetStepper.step(from: lastSlot, valid: valid, by: step) { load(s) }
+    }
+
     // MARK: presets
 
     func refreshSlots() async {
@@ -259,7 +279,10 @@ final class ModuleStore: ObservableObject, Identifiable {
     func load(_ slot: Int) {
         guard let c = client else { return }
         Task {
-            do { try await c.loadFromSlot(slot); live = try await c.getLive(); values = desc?.decode(live) ?? [:] }
+            do {
+                try await c.loadFromSlot(slot); lastSlot = slot
+                live = try await c.getLive(); values = desc?.decode(live) ?? [:]
+            }
             catch { notice = "Couldn't load preset \(slot + 1): \(error)" }
         }
     }

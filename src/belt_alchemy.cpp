@@ -36,6 +36,7 @@
 #include "midi_usb_transport.h"
 #include "led_mirror.h"
 #include "phone_ext.h"
+#include "ctrl_link.h"
 #include "phone_state.h"
 #include "switch_transport.h"
 #include "alchemy/storage/sd_card.h"
@@ -312,6 +313,9 @@ static hostlink::CdcUsbTransport           front_cdc;
 static hostlink::MidiUsbHostTransport      front_midi;
 static phone::LedMirror<kLedTotal>         led_mirror;
 static phone::PhoneExtension               phone_ext;
+/* Phone modes: controllers on the phone's hub, forwarded with CTRL
+ * (CONTROLLERS.md), drive Belt as in Launchpad mode. */
+static phone::CtrlLink                     ctrl_link;
 /* The panel USB-C: the DFM's external pins on V2, the Seed's port on V1
  * (the same choice Host::Start makes for its default serial link). */
 #if defined(ALCHEMY_BOARD_V2)
@@ -570,8 +574,10 @@ static void lp_set_play(uint8_t pot, int zone, int zones)
 
 /* ---- Gamepad punch effects (Haute42 in XInput mode, through the hub) --------
  *
- * The output runs through punch_fx.h in Launchpad mode; every gamepad button
- * holds an effect (the last pressed wins, release goes back to dry):
+ * The output runs through punch_fx.h in Launchpad mode, and in the Phone
+ * modes while the phone forwards a gamepad (and until the effect has faded
+ * and the echo rung out after it goes); every gamepad button holds an
+ * effect (the last pressed wins, release goes back to dry):
  *
  *   top row     X Stutter 1/4   Y Stutter 1/8   RB Stutter 1/16   LB Buzz
  *   bottom row  A Reverse       B Tape Stop     RT Half Speed     LT Echo
@@ -595,6 +601,9 @@ static const int8_t kPadPfx[18] = {
 };
 static uint32_t g_pad_prev = 0;
 static int      g_pad_fx   = -1;
+/* Phone modes: pfx_process runs in the audio callback only while this is
+ * set (Phone+Audio already runs near the CPU limit). */
+static volatile bool g_pfx_on = false;
 
 static void pad_poll(void)
 {
@@ -611,11 +620,13 @@ static void pad_poll(void)
             if ((b >> j & 1u) && kPadPfx[j] >= 0) g_pad_fx = kPadPfx[j];
     }
     pfx_hold(&g_pfx, settings.IsActive() ? -1 : g_pad_fx);
+    g_pfx_on = pad::Connected() || g_pfx.want >= 0 || pfx_active(&g_pfx) >= 0
+               || g_pfx.echo_fb_gain > 0.0f;
 }
 
-static void lp_poll(uint32_t now)
+/* The grid and the gamepad, from either backend (launchpad.h). */
+static void ctl_poll(void)
 {
-    lp::Poll(now);
     pad_poll();
     lp::Event e;
     const bool live = !settings.IsActive();
@@ -638,6 +649,12 @@ static void lp_poll(uint32_t now)
     }
 }
 
+static void lp_poll(uint32_t now)
+{
+    lp::Poll(now);
+    ctl_poll();
+}
+
 /* ---- Launch Control XL -----------------------------------------------------
  *
  *   faders 1-4    RETUNE, AMOUNT, HARMONY, FORMANT (the PLAY knobs)
@@ -652,6 +669,16 @@ static bool g_xl_hard_down = false, g_xl_mute_down = false;
 
 static void xl_frame(uint32_t now)
 {
+    /* Buttons first, connected or not: an unplug queues the releases. */
+    xl::Button b;
+    const bool live = !settings.IsActive();
+    while (xl::PopButton(&b))
+    {
+        if (b.row != 0) continue;
+        if (b.col == 0) g_xl_hard_down = b.down && live;
+        if (b.col == 1) g_xl_mute_down = b.down && live;
+    }
+
     if (!xl::Connected()) return;
     float phys[kNumPots];
     for (uint8_t p = 0; p < kNumPots; p++) phys[p] = hw.pots[p].Value();
@@ -674,15 +701,6 @@ static void xl_frame(uint32_t now)
         }
     if (xl::Knob(1, 0, &v)) { pager.SetStored(kPagePlay, kPotTopLeft, (float)v / 127.0f, phys);  mark_dirty(now); }
     if (xl::Knob(1, 1, &v)) { pager.SetStored(kPagePlay, kPotTopRight, (float)v / 127.0f, phys); mark_dirty(now); }
-
-    xl::Button b;
-    const bool live = !settings.IsActive();
-    while (xl::PopButton(&b))
-    {
-        if (b.row != 0) continue;
-        if (b.col == 0) g_xl_hard_down = b.down && live;
-        if (b.col == 1) g_xl_mute_down = b.down && live;
-    }
 
     for (uint8_t c = 0; c < 8; c++)
     {
@@ -782,6 +800,12 @@ static void OnPoll(uint32_t now)
             lp_poll(now);
             g_lp_stage = (uint8_t)(2 + lp::Stage());
         }
+    }
+    else if (ctrl::Enabled())
+    {
+        /* Phone modes: the controllers come over CTRL, no USB host. */
+        ctrl::Tick(now);
+        ctl_poll();
     }
 
     if (settings.IsActive())
@@ -931,6 +955,7 @@ static void OnFrame(void)
      * limiter; this is a ceiling on write frequency, not a write rate.
      */
     if (g_lp_mode) { lp_paint(); xl_frame(now); lp_write_report(now); }
+    else if (ctrl::Enabled()) { lp_paint(); xl_frame(now); }   /* each paints only when present */
 
     /* The USB port only takes effect at power-up, so a change is saved as
      * soon as Settings closes -- nobody should have to wait before cycling. */
@@ -1062,7 +1087,7 @@ static void OnRender(uint32_t t_ms)
             {0xFF, 0xC0, 0x00}, {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}};
         if (g_lp_stage < 5) b2 = kStage[g_lp_stage];   /* running: B2 is B2 again */
     }
-    if (g_lp_mode && pad::Buttons()) b2 = {0xFF, 0xFF, 0xFF}; /* a gamepad button held */
+    if ((g_lp_mode || ctrl::Enabled()) && pad::Buttons()) b2 = {0xFF, 0xFF, 0xFF}; /* a gamepad button held */
     if (g_usb_audio)
     {
         static const LedPanel::Rgb kUac[4] = {
@@ -1161,7 +1186,7 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
     }
 
     /* The gamepad's punch effects, last on the output. */
-    if (g_lp_mode) pfx_process(&g_pfx, out[0], out[1], (uint32_t)size);
+    if (g_lp_mode || g_pfx_on) pfx_process(&g_pfx, out[0], out[1], (uint32_t)size);
 
     /* Phone+Audio: Belt back to the phone, as it leaves J9/J10. */
     if (g_phone_audio) UAC_WriteHost(out, size);
@@ -1315,7 +1340,9 @@ int main(void)
               "powered dongle). **Audio**: the Lab is a USB audio interface, "
               "2 in (J1/J2) and 2 out (J9/J10) at 48 kHz, and the engine is "
               "bypassed. **Phone**: the front USB-C is USB MIDI, for the "
-              "iPhone app (screen, knobs, samples, firmware). **Phone+Audio**: "
+              "iPhone app (screen, knobs, samples, firmware; a Launchpad, "
+              "Launch Control XL or gamepad on the phone's hub works as in "
+              "Launchpad mode). **Phone+Audio**: "
               "Phone and a 2-in/2-out audio interface on one cable: the "
               "phone's audio joins J1/J2 at Belt's input and hears Belt's "
               "output (untested on hardware). From the next "
@@ -1455,6 +1482,12 @@ int main(void)
     /* (A bench build still brings the composite device up, with HostLink
      * on the bench port and the MIDI interface unattended.) */
     if (g_phone_audio) UAC_StartWithMidi("Alchemy Lab");
+    /* Phone modes: the phone's hub has the controllers (CTRL). */
+    if (g_phone || g_phone_audio)
+    {
+        ctrl::Enable(true);
+        phone_ext.Controllers(ctrl_link);
+    }
 #ifndef BELT_BENCH_USB
     /* The front port's HostLink, now that its mode is known. Launchpad and
      * Audio modes start their own USB stacks above and never poll the host;

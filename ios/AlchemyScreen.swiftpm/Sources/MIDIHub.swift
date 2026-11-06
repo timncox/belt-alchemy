@@ -22,6 +22,10 @@ struct MIDIDevice: Identifiable, Hashable {
     var id: MIDIUniqueID
     var name: String
     var kind: LinkKind
+    /// The CoreMIDI device the port belongs to (0 if none) and its name: a
+    /// Launchpad Mini MK3 is one device with two ports (DAW and MIDI).
+    var deviceID: MIDIUniqueID = 0
+    var deviceName: String = ""
     var looksLikeModule: Bool { name.localizedCaseInsensitiveContains("alchemy") }
 }
 
@@ -31,6 +35,8 @@ final class MIDIHub: @unchecked Sendable {
     private var outPort = MIDIPortRef()
     private let lock = NSLock()
     private var open: [MIDIUniqueID: MIDIConnection] = [:]
+    /// Plain MIDI ports (controllers on the hub), by source unique ID.
+    private var raw: [MIDIUniqueID: RawMIDIPort] = [:]
 
     /// Any MIDI setup change: a module plugged in, unplugged, rebooting into
     /// another firmware, or a Bluetooth adapter coming or going.
@@ -115,7 +121,14 @@ final class MIDIHub: @unchecked Sendable {
             guard Self.destination(for: s) != nil else { continue }
             let name = Self.string(s, kMIDIPropertyDisplayName)
             guard !name.isEmpty else { continue }
-            out.append(MIDIDevice(id: Self.uniqueID(s), name: name, kind: Self.kind(s)))
+            var d = MIDIDevice(id: Self.uniqueID(s), name: name, kind: Self.kind(s))
+            let ent = Self.entity(s)
+            var dev = MIDIDeviceRef()
+            if ent != 0, MIDIEntityGetDevice(ent, &dev) == noErr, dev != 0 {
+                d.deviceID = Self.uniqueID(dev)
+                d.deviceName = Self.string(dev, kMIDIPropertyName)
+            }
+            out.append(d)
         }
         return out.sorted { ($0.looksLikeModule ? 0 : 1, $0.name) < ($1.looksLikeModule ? 0 : 1, $1.name) }
     }
@@ -145,8 +158,36 @@ final class MIDIHub: @unchecked Sendable {
     func disconnect(_ id: MIDIUniqueID) {
         lock.lock()
         let c = open.removeValue(forKey: id)
+        let stillRaw = raw[id] != nil
         lock.unlock()
-        if c != nil, let s = Self.source(id) { MIDIPortDisconnectSource(inPort, s) }
+        if c != nil, !stillRaw, let s = Self.source(id) { MIDIPortDisconnectSource(inPort, s) }
+    }
+
+    /// A plain MIDI port to a device (a controller): its messages as they
+    /// come, and plain MIDI out. `receive` is called on CoreMIDI's thread.
+    func connectRaw(_ d: MIDIDevice, receive: @escaping ([UInt8]) -> Void) -> RawMIDIPort? {
+        guard let s = Self.source(d.id), let dst = Self.destination(for: s) else { return nil }
+        lock.lock()
+        if let old = raw[d.id] { lock.unlock(); return old }
+        let p = RawMIDIPort(device: d, dest: dst, outPort: outPort, receive: receive)
+        raw[d.id] = p
+        let alsoHostLink = open[d.id] != nil
+        lock.unlock()
+        if alsoHostLink { return p }   // the source is already connected; replies go to both
+        let ref = UnsafeMutableRawPointer(bitPattern: Int(UInt32(bitPattern: d.id)) | 0x1_0000_0000)
+        guard MIDIPortConnectSource(inPort, s, ref) == noErr else {
+            lock.lock(); raw[d.id] = nil; lock.unlock()
+            return nil
+        }
+        return p
+    }
+
+    func disconnectRaw(_ id: MIDIUniqueID) {
+        lock.lock()
+        let p = raw.removeValue(forKey: id)
+        let stillOpen = open[id] != nil
+        lock.unlock()
+        if p != nil, !stillOpen, let s = Self.source(id) { MIDIPortDisconnectSource(inPort, s) }
     }
 
     private func receive(_ list: UnsafePointer<MIDIPacketList>, from refCon: UnsafeMutableRawPointer?) {
@@ -154,8 +195,10 @@ final class MIDIHub: @unchecked Sendable {
         let id = MIDIUniqueID(bitPattern: UInt32(truncatingIfNeeded: Int(bitPattern: r)))
         lock.lock()
         let c = open[id]
+        let p = raw[id]
         lock.unlock()
         c?.receive(list)
+        p?.receive(list)
     }
 }
 
@@ -202,6 +245,54 @@ final class MIDIConnection: ByteTransport, @unchecked Sendable {
         let h = handler
         lock.unlock()
         if !raw.isEmpty { h?(raw) }
+    }
+}
+
+/// One controller port: plain MIDI both ways (no HostLink).
+final class RawMIDIPort: @unchecked Sendable {
+    let device: MIDIDevice
+    private let dest: MIDIEndpointRef
+    private let outPort: MIDIPortRef
+    private let handler: ([UInt8]) -> Void
+
+    init(device: MIDIDevice, dest: MIDIEndpointRef, outPort: MIDIPortRef, receive: @escaping ([UInt8]) -> Void) {
+        self.device = device; self.dest = dest; self.outPort = outPort; self.handler = receive
+    }
+
+    /// Whole messages (channel messages or complete SysEx), as few packet
+    /// lists as fit.
+    func send(_ messages: [[UInt8]]) {
+        guard !messages.isEmpty else { return }
+        let size = 4096
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 8)
+        defer { buf.deallocate() }
+        let list = buf.bindMemory(to: MIDIPacketList.self, capacity: 1)
+        var packet = MIDIPacketListInit(list)
+        var pending = 0
+        for msg in messages where !msg.isEmpty && msg.count < 1024 {
+            var next: UnsafeMutablePointer<MIDIPacket>? = MIDIPacketListAdd(list, size, packet, 0, msg.count, msg)
+            if next == nil {
+                // Full: send what's there and start a new list.
+                MIDISend(outPort, dest, list)
+                packet = MIDIPacketListInit(list)
+                pending = 0
+                next = MIDIPacketListAdd(list, size, packet, 0, msg.count, msg)
+            }
+            guard let n = next else { continue }
+            packet = n
+            pending += 1
+        }
+        if pending > 0 { MIDISend(outPort, dest, list) }
+    }
+
+    fileprivate func receive(_ list: UnsafePointer<MIDIPacketList>) {
+        var bytes: [UInt8] = []
+        for packet in list.unsafeSequence() {
+            let len = Int(packet.pointee.length)
+            let data = UnsafeRawPointer(packet) + MemoryLayout<MIDIPacket>.offset(of: \MIDIPacket.data)!
+            bytes += UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: len)
+        }
+        if !bytes.isEmpty { handler(bytes) }
     }
 }
 

@@ -29,6 +29,9 @@ What the app does now:
 - Tilt, roll and turn, and the mic's level and pitch, as controls.
 - Every control can go to any knob on either module, over any part of its range.
 - Knobs, presets, files and firmware switching, per module.
+- Controllers on the hub (Launchpad Mini MK3, Launch Control XL, Haute42,
+  any MIDI device): sent to a module like its Launchpad mode, or learned and
+  mapped in the app, including MIDI out to a Daisy Patch.
 - Linking two modules: shared key, one knob driving another, harmonies split
   across both, and one combined screen.
 - Record a mic clip and put it on the module's card.

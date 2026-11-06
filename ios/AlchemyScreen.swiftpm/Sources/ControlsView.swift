@@ -13,6 +13,7 @@ struct ControlsView: View {
     var body: some View {
         NavigationStack {
             List {
+                ControllersSection()
                 Section("Pad") {
                     ForEach([ControlSource.padX, .padY, .pressure]) { RouteRow(source: $0) }
                 }
@@ -49,6 +50,7 @@ struct ControlsView: View {
                 }
             }
             .navigationTitle("Controls")
+            .controllerLearnSheet()
             .alert("Mic", isPresented: Binding(get: { inputs.micProblem != nil }, set: { if !$0 { inputs.micProblem = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(inputs.micProblem ?? "") }
@@ -130,6 +132,7 @@ private struct RouteEditor: View {
                     Text("The part of the knob's travel this sweeps. From higher than To turns it round.")
                 }
             }
+            SourceMIDIOutSection(source: source)
         }
         .navigationTitle(source.name)
         .onAppear {
