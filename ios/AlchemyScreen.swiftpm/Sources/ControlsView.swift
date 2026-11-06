@@ -9,11 +9,27 @@ import AlchemyLink
 struct ControlsView: View {
     @EnvironmentObject var rig: Rig
     @EnvironmentObject var inputs: Inputs
+    @EnvironmentObject var hub: ControllerHub
+    @Environment(\.horizontalSizeClass) private var hsc
 
     var body: some View {
         NavigationStack {
             List {
                 ControllersSection()
+                if hsc != .regular {
+                    // On iPad, Routing is its own tab.
+                    Section {
+                        NavigationLink { RoutingScreen() } label: {
+                            HStack {
+                                Label("MIDI routing", systemImage: "arrow.triangle.branch")
+                                Spacer()
+                                Text("\(hub.midiRoutes.count)").foregroundStyle(.secondary).monospacedDigit()
+                            }
+                        }
+                    } footer: {
+                        Text("Any device on the hub to any other over USB: a keyboard or the Launchpad to the Daisy Patch, a module's sung note out, notes into a module.")
+                    }
+                }
                 Section("Pad") {
                     ForEach([ControlSource.padX, .padY, .pressure]) { RouteRow(source: $0) }
                 }

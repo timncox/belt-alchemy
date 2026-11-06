@@ -43,6 +43,14 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
     public private(set) var ctrlPresent: CtrlPresent = []
     public private(set) var ctrlEvents: [CtrlEvent] = []
     public private(set) var gamepadMask: UInt32 = 0
+    /// Plays routed notes (CTRL present bit 3, events 6 and 7); false acts as
+    /// a firmware that can't, which leaves bit 3 out of present_seen.
+    public var playsNotes = true
+    /// Keys held by routed notes, and the notes sounding (held, or let go
+    /// while the sustain pedal is down).
+    public private(set) var keysDown: Set<UInt8> = []
+    public private(set) var sounding: Set<UInt8> = []
+    public private(set) var sustainDown = false
     private var ctrlAt = Date.distantPast
     private var lpLeds = [UInt8](repeating: 0, count: CtrlReply.lpCount)
     private var xlLeds = [UInt8](repeating: 0, count: CtrlReply.xlCount)
@@ -282,7 +290,8 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
     /// and amber, dim when off); an XL knob's LED shows its value, an XL
     /// button flips red. A controller whose bit clears, or a phone that
     /// stops asking for a second, lets go of everything held.
-    private func ctrl(present: CtrlPresent, events: [CtrlEvent]) -> Writer {
+    private func ctrl(present asked: CtrlPresent, events: [CtrlEvent]) -> Writer {
+        let present = playsNotes ? asked : asked.subtracting(.keyboard)
         if Date().timeIntervalSince(ctrlAt) > 1 { release(ctrlPresent) }
         ctrlAt = Date()
         release(ctrlPresent.subtracting(present))
@@ -308,6 +317,12 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
                     ? LaunchControlXL.colour(red: 0, green: 0) : LaunchControlXL.colour(red: 3, green: 0) }
             case .xlFader: break
             case let .gamepad(m): gamepadMask = m
+            case let .keyNote(n, v):
+                if v > 0 { keysDown.insert(n); sounding.insert(n) }
+                else { keysDown.remove(n); if !sustainDown { sounding.remove(n) } }
+            case let .keySustain(down):
+                sustainDown = down
+                if !down { sounding = keysDown }
             }
         }
         let hard = hardLatch != hardDown, muted = muteLatch != muteDown
@@ -319,6 +334,7 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
     private func release(_ gone: CtrlPresent) {
         if gone.contains(.launchpad) { for i in 0..<72 { lpLeds[i] = 0 } }
         if gone.contains(.gamepad) { gamepadMask = 0 }
+        if gone.contains(.keyboard) { keysDown = []; sounding = []; sustainDown = false }
     }
 
     // MARK: the pretend singer (STATE)

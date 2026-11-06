@@ -87,6 +87,7 @@ final class Rig: ObservableObject {
         let m = ModuleStore(device: d, kind: d.kind, transport: link)
         m.onLost = { [weak self] m in self?.lost(m) }
         m.onChange = { [weak self] m, c in self?.moduleChanged(m, c) }
+        m.onState = { [weak self] m, st in self?.onModuleState?(m.unit, st) }
         modules.append(m)
         trying.insert(d.id)
         if selectedID == nil { selectedID = m.id }
@@ -144,6 +145,7 @@ final class Rig: ObservableObject {
             let m = ModuleStore(device: nil, kind: .demo, transport: fake)
             m.onLost = { [weak self] m in self?.remove(m) }
             m.onChange = { [weak self] m, c in self?.moduleChanged(m, c) }
+            m.onState = { [weak self] m, st in self?.onModuleState?(m.unit, st) }
             modules.append(m)
         }
         selectedID = modules.first?.id
@@ -232,7 +234,12 @@ final class Rig: ObservableObject {
     /// hand still on the pot).
     private var applyingLinks = false
 
+    /// Knob moves and STATE reads, for the module's MIDI out (ControllerHub's routing).
+    var onModuleKnobs: ((UInt32, [String: Double]) -> Void)?
+    var onModuleState: ((UInt32, ModuleState) -> Void)?
+
     private func moduleChanged(_ m: ModuleStore, _ changes: [String: Double]) {
+        if m.phase == .ready { onModuleKnobs?(m.unit, changes) }
         guard canLink, !applyingLinks else { return }
         let units = linkUnits
         for (field, v) in changes {

@@ -41,7 +41,50 @@ A Launchpad Mini MK3, a Launch Control XL, a Haute42 and other MIDI gear
   swap A and B). iPadOS doesn't recognise its XInput mode, which is the
   mode the module wants when it hosts the Haute42 itself.
 - **Daisy Patch:** shows as a MIDI device when its firmware turns USB MIDI
-  on. It gets no Alchemy screen (that needs Alchemy firmware).
+  on. It gets no Alchemy screen (that needs Alchemy firmware). See
+  "The Daisy Patch's firmware" below.
+
+## Everything talks over USB: routing (built, untested on hardware)
+
+The iPad or iPhone is the hub's only host, so every message between devices
+goes through the app. No TRS MIDI cables are needed.
+
+- **Routes:** any MIDI source (Launchpad, Launch Control XL, Haute42,
+  keyboard, Daisy Patch) to any destination (another MIDI device, Left,
+  Right or both modules). Each route can filter by channel and message
+  type, remap the channel and transpose notes. Loops are refused.
+- **Modules as sources:** Belt's sung note and its harmonies can go out as
+  MIDI notes to another device, such as the Daisy Patch.
+- **Modules as destinations:** notes go to a module through CTRL (types 6
+  and 7). Belt on this branch can't play notes yet, so the route says
+  "This module's firmware doesn't play notes yet" and sends nothing. CCs to
+  a module act only through mappings you Learn; CC 64 is its sustain pedal.
+- **Where:** on iPad, the Routing tab (List or Matrix). On iPhone, Controls
+  > MIDI routing. Routes are saved by device name.
+- **Background:** routing pauses while the app is in the background.
+- **SysEx** is never routed, so HostLink stays private to each module.
+
+## The Daisy Patch's firmware
+
+For the Daisy Patch to send and receive MIDI over its USB port, its
+firmware has to open USB MIDI itself. The DaisyPatch class's own `midi`
+is the TRS jack only. With libDaisy:
+
+    MidiUsbHandler usb_midi;
+    MidiUsbHandler::Config cfg;
+    cfg.transport_config.periph = MidiUsbTransport::Config::INTERNAL;
+    usb_midi.Init(cfg);
+
+    // in the main loop:
+    usb_midi.Listen();
+    while(usb_midi.HasEvents()) {
+        auto msg = usb_midi.PopEvent();
+        // handle NoteOn, ControlChange, ...
+    }
+
+This is the pattern in DaisyExamples' seed/USB_MIDI example. Send with
+`usb_midi.SendMessage(bytes, len)`. Whether the Daisy Patch is powered from
+the hub over its USB port is unchecked.
 
 ## Hub power
 

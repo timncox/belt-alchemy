@@ -34,6 +34,7 @@ struct AlchemyScreenApp: App {
 /// iPhone the bar at the top switches between them.
 struct RootView: View {
     @EnvironmentObject var rig: Rig
+    @Environment(\.horizontalSizeClass) private var hsc
 
     var body: some View {
         Group {
@@ -44,6 +45,11 @@ struct RootView: View {
                     ModulesView().tabItem { Label("Modules", systemImage: "rectangle.split.2x1") }
                     PadView().tabItem { Label("Pad", systemImage: "hand.point.up.left") }
                     ControlsView().tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
+                    // On iPhone (and a narrow iPad window) Routing is a page under Controls.
+                    if hsc == .regular {
+                        NavigationStack { RoutingScreen() }
+                            .tabItem { Label("Routing", systemImage: "arrow.triangle.branch") }
+                    }
                     if rig.modules.count >= 2 {
                         LinkView().tabItem { Label("Link", systemImage: "link") }
                     }

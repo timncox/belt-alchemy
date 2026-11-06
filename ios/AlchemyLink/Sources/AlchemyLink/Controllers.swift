@@ -19,6 +19,10 @@ public struct CtrlPresent: OptionSet, Hashable, Sendable {
     public static let launchpad = CtrlPresent(rawValue: 1 << 0)
     public static let launchControlXL = CtrlPresent(rawValue: 1 << 1)
     public static let gamepad = CtrlPresent(rawValue: 1 << 2)
+    /// Notes and sustain the app routes to the module (MIDI routing), played
+    /// as a USB-MIDI keyboard is in Launchpad mode. A firmware that can't play
+    /// notes leaves this bit out of present_seen.
+    public static let keyboard = CtrlPresent(rawValue: 1 << 3)
 }
 
 /// A Launchpad pad's group, as the firmware's lp::Kind.
@@ -37,6 +41,10 @@ public enum CtrlEvent: Hashable, Sendable {
     case xlButton(row: UInt8, col: UInt8, down: Bool)
     /// The whole held mask: bits 0-15 XInput wButtons, 16 LT, 17 RT.
     case gamepad(UInt32)
+    /// A routed note: velocity 1...127 on, 0 off (type 6).
+    case keyNote(note: UInt8, velocity: UInt8)
+    /// The routed sustain pedal (type 7).
+    case keySustain(down: Bool)
 
     /// The 4 bytes of the event in a CTRL request.
     public var bytes: [UInt8] {
@@ -46,6 +54,8 @@ public enum CtrlEvent: Hashable, Sendable {
         case let .xlFader(c, v): return [3, c, v, 0]
         case let .xlButton(r, c, down): return [4, r, c, down ? 1 : 0]
         case let .gamepad(m): return [5, UInt8(m & 0xFF), UInt8((m >> 8) & 0xFF), UInt8((m >> 16) & 0xFF)]
+        case let .keyNote(n, v): return [6, n & 0x7F, v & 0x7F, 0]
+        case let .keySustain(down): return [7, down ? 1 : 0, 0, 0]
         }
     }
 
@@ -60,6 +70,8 @@ public enum CtrlEvent: Hashable, Sendable {
         case 3: self = .xlFader(col: b[1], value: b[2])
         case 4: self = .xlButton(row: b[1], col: b[2], down: b[3] != 0)
         case 5: self = .gamepad(UInt32(b[1]) | UInt32(b[2]) << 8 | UInt32(b[3]) << 16)
+        case 6: self = .keyNote(note: b[1] & 0x7F, velocity: b[2] & 0x7F)
+        case 7: self = .keySustain(down: b[1] != 0)
         default: return nil
         }
     }
@@ -70,6 +82,17 @@ public enum CtrlEvent: Hashable, Sendable {
         case .launchpad: return .launchpad
         case .xlKnob, .xlFader, .xlButton: return .launchControlXL
         case .gamepad: return .gamepad
+        case .keyNote, .keySustain: return .keyboard
+        }
+    }
+
+    /// A note off or a sustain release: harmless if it arrives twice, so
+    /// it is sent again when a request fails.
+    public var isRelease: Bool {
+        switch self {
+        case let .keyNote(_, v): return v == 0
+        case let .keySustain(down): return !down
+        default: return false
         }
     }
 
@@ -81,7 +104,7 @@ public enum CtrlEvent: Hashable, Sendable {
         case let .xlKnob(r, c, _): return .xlKnob(row: r, col: c)
         case let .xlFader(c, _): return .xlFader(col: c)
         case let .xlButton(r, c, _): return .xlButton(row: r, col: c)
-        case .gamepad: return nil
+        case .gamepad, .keyNote, .keySustain: return nil
         }
     }
 
@@ -91,6 +114,8 @@ public enum CtrlEvent: Hashable, Sendable {
         case let .launchpad(_, _, _, down), let .xlButton(_, _, down): return down ? 1 : 0
         case let .xlKnob(_, _, v), let .xlFader(_, v): return Double(v) / 127
         case .gamepad: return 0
+        case let .keyNote(_, v): return Double(v) / 127
+        case let .keySustain(down): return down ? 1 : 0
         }
     }
 }
@@ -207,10 +232,14 @@ public final class CtrlSession: @unchecked Sendable {
 
     /// The request finished. If it failed, the module may have missed the
     /// gamepad's state, so the newest mask goes again first; presses are not
-    /// resent (one that did arrive would count twice).
+    /// resent (one that did arrive would count twice), but routed note offs
+    /// and sustain releases are (twice is harmless; missed, a note hangs).
     public func end(failed batch: [CtrlEvent]? = nil) {
         inFlight = false
-        guard let batch, batch.contains(where: { $0.source == .gamepad }), let m = lastMask else { return }
+        guard let batch else { return }
+        let releases = batch.filter(\.isRelease)
+        if !releases.isEmpty { queue.insert(contentsOf: releases, at: 0) }
+        guard batch.contains(where: { $0.source == .gamepad }), let m = lastMask else { return }
         queue.removeAll { if case .gamepad = $0 { return true }; return false }
         queue.insert(.gamepad(m), at: 0)
     }

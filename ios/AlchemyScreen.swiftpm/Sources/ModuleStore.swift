@@ -64,6 +64,8 @@ final class ModuleStore: ObservableObject, Identifiable {
     /// Knobs that moved, by hand on the module or from the app: the Rig
     /// copies them to the other module where they're linked.
     var onChange: ((ModuleStore, [String: Double]) -> Void)?
+    /// Each STATE read (for the module's MIDI out: Belt's sung note).
+    var onState: ((ModuleStore, ModuleState) -> Void)?
 
     private var client: HostLinkClient?
     private var live: [UInt8] = []
@@ -171,6 +173,7 @@ final class ModuleStore: ObservableObject, Identifiable {
 
     private func absorb(_ st: ModuleState) {
         state = st
+        onState?(self, st)
         guard let b = st.belt else { return }
         // A gap (a stall, or a link that fell behind) is drawn as silence.
         if let last = traceLast {
