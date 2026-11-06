@@ -7,12 +7,13 @@
 import Foundation
 
 public enum LinkKind: String, Codable, Sendable {
-    case usb, bluetooth, network, demo
+    /// `emulator`: the Mac's module emulator over TCP (MIDIStreamLink), at USB's pace.
+    case usb, bluetooth, network, demo, emulator
 
     /// Seconds between STATE requests.
     public var statePeriod: Double {
         switch self {
-        case .usb, .demo: return 1.0 / 15
+        case .usb, .demo, .emulator: return 1.0 / 15
         case .network: return 1.0 / 10
         case .bluetooth: return 1.0 / 6
         }
@@ -22,7 +23,7 @@ public enum LinkKind: String, Codable, Sendable {
     /// carries the whole running state (about 60 bytes, about 90 as SysEx).
     public var controlPeriod: Double {
         switch self {
-        case .usb, .demo: return 1.0 / 60
+        case .usb, .demo, .emulator: return 1.0 / 60
         case .network: return 1.0 / 40
         case .bluetooth: return 1.0 / 20
         }
@@ -31,7 +32,7 @@ public enum LinkKind: String, Codable, Sendable {
     /// Rough bytes per second for files, for the time a transfer will take.
     public var bytesPerSecond: Double {
         switch self {
-        case .usb, .demo: return 60_000
+        case .usb, .demo, .emulator: return 60_000
         case .network: return 20_000
         case .bluetooth: return 4_000
         }
@@ -46,6 +47,7 @@ public enum LinkKind: String, Codable, Sendable {
         case .bluetooth: return "Bluetooth"
         case .network: return "Network"
         case .demo: return "Demo"
+        case .emulator: return "Emulator"
         }
     }
 

@@ -23,7 +23,8 @@ let package = Package(
             capabilities: [
                 .microphone(purposeString: "The mic can move the module's knobs by how loud it is and the note you sing."),
                 .bluetoothAlways(purposeString: "Bluetooth connects to the MIDI adapters on your Alchemy Labs."),
-                .motionSensors(purposeString: "Tilting and turning the phone can move the module's knobs, when you switch it on.")
+                .motionSensors(purposeString: "Tilting and turning the phone can move the module's knobs, when you switch it on."),
+                .localNetwork(purposeString: "To reach the Alchemy Lab module emulator on your Mac, for testing without a module.")
             ]
         )
     ],

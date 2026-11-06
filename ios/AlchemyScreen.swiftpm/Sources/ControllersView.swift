@@ -200,7 +200,7 @@ private struct LearnSheetModifier: ViewModifier {
     @EnvironmentObject var rig: Rig
 
     func body(content: Content) -> some View {
-        content.sheet(isPresented: Binding(get: { hub.learning || hub.learned != nil },
+        content.sheet(isPresented: Binding(get: { (hub.learning && !hub.learnInPlace) || hub.learned != nil },
                                            set: { if !$0 { hub.cancelLearn() } })) {
             NavigationStack { LearnSheet() }
                 .environmentObject(hub)

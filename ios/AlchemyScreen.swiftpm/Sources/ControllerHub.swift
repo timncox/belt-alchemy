@@ -23,6 +23,11 @@
 // from STATE, its knobs as CCs) to any MIDI device, or to a module played
 // as a keyboard (CTRL events 6 and 7, present bit 3). Controls already
 // forwarded or mapped are routed raw only where a route asks for them.
+//
+// The on-screen devices (VirtualDevices, for the Simulator and the demo)
+// come in through the same doors: their MIDI ports are in the Rig's device
+// list and open through Rig.connectRaw like CoreMIDI's, and the on-screen
+// gamepad's buttons arrive as a gamepad's do. Same names, same code.
 
 import Combine
 import CoreMIDI
@@ -69,6 +74,9 @@ final class ControllerHub: ObservableObject {
     @Published private(set) var mappings: [ControllerMapping] = []
     @Published private(set) var learning = false
     @Published private(set) var learned: ControllerControl?
+    /// Learn was started from the on-screen devices: the Learn sheet waits
+    /// for a control to move, so it doesn't cover the devices meanwhile.
+    @Published private(set) var learnInPlace = false
     /// Modules (by unit) whose firmware answered UNSUPPORTED or lacks the CTRL flag.
     @Published private(set) var unsupported: Set<UInt32> = []
     /// The control last moved on each controller, for the list.
@@ -97,11 +105,13 @@ final class ControllerHub: ObservableObject {
         let name: String
         let kind: ControllerKind
         let ports: [MIDIDevice]
-        var open: [MIDIUniqueID: RawMIDIPort] = [:]
+        var open: [MIDIUniqueID: MIDIPortOut] = [:]
         var parsers: [MIDIUniqueID: MIDIRouteParser] = [:]
         var latch = PortLatch()
         var leds: LEDDiffer
         var gamepad: GCController?
+        /// The on-screen gamepad (VirtualDevices), which has no GCController.
+        var virtualPad = false
         var held: Set<XInputButton> = []
         var extras: Set<String> = []
 
@@ -110,7 +120,11 @@ final class ControllerHub: ObservableObject {
             leds = LEDDiffer(count: kind == .launchControlXL ? LaunchControlXL.leds : LaunchpadMK3.cells)
         }
         var isOpen: Bool { !open.isEmpty }
+        /// A gamepad (real or on-screen) rather than MIDI ports.
+        var isPad: Bool { gamepad != nil || virtualPad }
     }
+
+    private static let virtualPadID = "virtual:gamepad"
 
     private var plugged: [String: Plugged] = [:]
     private var sessions: [UInt32: CtrlSession] = [:]
@@ -144,6 +158,18 @@ final class ControllerHub: ObservableObject {
         rig.onDrive = { [weak self] values in self?.appSources(values) }
         rig.onModuleState = { [weak self] unit, st in self?.moduleState(unit, st) }
         rig.onModuleKnobs = { [weak self] unit, changes in self?.moduleKnobs(unit, changes) }
+        // The on-screen gamepad: there while it's switched on, its buttons
+        // queued as a real gamepad's are.
+        let inbox = inbox, padID = Self.virtualPadID
+        rig.virtual.onPad = { [weak self] held in
+            if inbox.push(.pad(controller: padID, held: held, extras: [])) {
+                Task { @MainActor in self?.drain() }
+            }
+        }
+        rig.virtual.$gamepadName
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] n in Task { @MainActor in self?.reconcileVirtualPad(n) } }
+            .store(in: &subs)
         reconcile(rig.devices)
         reconcilePads()
     }
@@ -191,7 +217,7 @@ final class ControllerHub: ObservableObject {
             g.ports.append(d)
             groups[key] = g
         }
-        for (id, p) in plugged where p.gamepad == nil {
+        for (id, p) in plugged where !p.isPad {
             if let g = groups[id], Set(g.ports.map(\.id)) == Set(p.ports.map(\.id)) { continue }
             unplug(id)
         }
@@ -220,6 +246,18 @@ final class ControllerHub: ObservableObject {
                     Task { @MainActor in self?.drain() }
                 }
             }
+        }
+        publish()
+        ensureLoop()
+    }
+
+    /// The on-screen gamepad came, went or was renamed (nil: switched off).
+    private func reconcileVirtualPad(_ name: String?) {
+        if let p = plugged[Self.virtualPadID], p.name != name { unplug(p.id) }
+        if let name, plugged[Self.virtualPadID] == nil {
+            let p = Plugged(id: Self.virtualPadID, name: name, kind: .gamepad, ports: [])
+            p.virtualPad = true
+            plugged[p.id] = p
         }
         publish()
         ensureLoop()
@@ -263,12 +301,12 @@ final class ControllerHub: ObservableObject {
     // MARK: opening and letting go
 
     private func open(_ p: Plugged) {
-        guard p.gamepad == nil, !p.isOpen, let midi = rig?.midi else { return }
+        guard !p.isPad, !p.isOpen, let rig else { return }
         let inbox = inbox, id = p.id
         for port in p.ports {
             let pid = port.id
             // On CoreMIDI's thread: queued in order, taken on the main actor.
-            let raw = midi.connectRaw(port) { @Sendable [weak self] bytes in
+            let raw = rig.connectRaw(port) { @Sendable [weak self] bytes in
                 if inbox.push(.midi(controller: id, port: pid, bytes: bytes)) {
                     Task { @MainActor in self?.drain() }
                 }
@@ -284,7 +322,7 @@ final class ControllerHub: ObservableObject {
     private func close(_ p: Plugged) {
         guard p.isOpen else { return }
         release(p)
-        for id in p.open.keys { rig?.midi?.disconnectRaw(id) }
+        for id in p.open.keys { rig?.disconnectRaw(id) }
         p.open = [:]
         p.parsers = [:]
     }
@@ -318,14 +356,14 @@ final class ControllerHub: ObservableObject {
 
     private func unplug(_ id: String) {
         guard let p = plugged.removeValue(forKey: id) else { return }
-        for port in p.open.keys { rig?.midi?.disconnectRaw(port) }
+        for port in p.open.keys { rig?.disconnectRaw(port) }
         p.gamepad?.extendedGamepad?.valueChangedHandler = nil
         lastMoved[id] = nil
         updateMasks()
         deliver(router.gone(endpoint(p)))
     }
 
-    private func endpoint(_ p: Plugged) -> RouteEndpoint { p.gamepad != nil ? .gamepad(p.name) : .device(p.name) }
+    private func endpoint(_ p: Plugged) -> RouteEndpoint { p.isPad ? .gamepad(p.name) : .device(p.name) }
 
     /// Open while it's routed in Controls, or used by a MIDI route (a
     /// controller set to Off can still be routed raw, or be a destination).
@@ -566,8 +604,8 @@ final class ControllerHub: ObservableObject {
         return rig.ready
     }
 
-    func beginLearn() { map.beginLearn(); syncMap(save: false) }
-    func cancelLearn() { map.cancelLearn(); syncMap(save: false) }
+    func beginLearn(inPlace: Bool = false) { learnInPlace = inPlace; map.beginLearn(); syncMap(save: false) }
+    func cancelLearn() { learnInPlace = false; map.cancelLearn(); syncMap(save: false) }
 
     /// The app's own sources moved (from Rig.drive): their MIDI out.
     private func appSources(_ values: [ControlSource: Double]) {
@@ -676,7 +714,7 @@ final class ControllerHub: ObservableObject {
         if midiRoutes != router.routes { midiRoutes = router.routes }
         if let d = try? JSONEncoder().encode(router.routes), let s = String(data: d, encoding: .utf8) { midiRoutesRaw = s }
         // A device set to Off in Controls opens for a route, and closes when none needs it.
-        for p in plugged.values where p.gamepad == nil {
+        for p in plugged.values where !p.isPad {
             if wantsOpen(p) && !p.isOpen { open(p) } else if !wantsOpen(p) && p.isOpen { close(p) }
         }
         ensureLoop()
@@ -751,8 +789,8 @@ final class ControllerHub: ObservableObject {
 
     func isHere(_ e: RouteEndpoint) -> Bool {
         switch e {
-        case let .device(n): return plugged.values.contains { $0.name == n && $0.gamepad == nil }
-        case let .gamepad(n): return plugged.values.contains { $0.name == n && $0.gamepad != nil }
+        case let .device(n): return plugged.values.contains { $0.name == n && !$0.isPad }
+        case let .gamepad(n): return plugged.values.contains { $0.name == n && $0.isPad }
         case let .module(u): return rig?.module(unit: u) != nil
         }
     }
@@ -804,7 +842,7 @@ final class ControllerHub: ObservableObject {
     }
 
     private var forwarding: [(kind: ControllerKind, route: ControllerRoute)] {
-        plugged.values.filter { $0.kind.forwards && ($0.isOpen || $0.gamepad != nil) }.map { ($0.kind, route($0)) }
+        plugged.values.filter { $0.kind.forwards && ($0.isOpen || $0.isPad) }.map { ($0.kind, route($0)) }
     }
 
     private func ensureLoop() {

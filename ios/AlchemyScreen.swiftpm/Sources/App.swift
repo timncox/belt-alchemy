@@ -14,6 +14,7 @@ struct AlchemyScreenApp: App {
                 .environmentObject(rig)
                 .environmentObject(inputs)
                 .environmentObject(controllers)
+                .environmentObject(rig.virtual)
                 .onAppear {
                     inputs.rig = rig
                     controllers.attach(rig: rig, inputs: inputs)
@@ -44,6 +45,11 @@ struct RootView: View {
                 TabView {
                     ModulesView().tabItem { Label("Modules", systemImage: "rectangle.split.2x1") }
                     PadView().tabItem { Label("Pad", systemImage: "hand.point.up.left") }
+                    // On iPhone the on-screen devices are a page under Controls.
+                    if hsc == .regular && rig.virtualOn {
+                        NavigationStack { DevicesScreen() }
+                            .tabItem { Label("Devices", systemImage: "square.grid.3x3.fill") }
+                    }
                     ControlsView().tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
                     // On iPhone (and a narrow iPad window) Routing is a page under Controls.
                     if hsc == .regular {
@@ -242,6 +248,7 @@ struct LinkBadge: View {
         case .bluetooth: return "dot.radiowaves.left.and.right"
         case .network: return "wifi"
         case .demo: return "theatermasks"
+        case .emulator: return "desktopcomputer"
         }
     }
 }
@@ -275,7 +282,7 @@ struct ConnectView: View {
             // Launchpads and Launch Control XLs are controllers (Controls tab), not modules.
             let others = rig.devices.filter { d in
                 let kind = ControllerKind.classify(midiName: d.name + " " + d.deviceName)
-                return !rig.isConnected(d) && kind != .launchpad && kind != .launchControlXL
+                return !d.isVirtual && !rig.isConnected(d) && kind != .launchpad && kind != .launchControlXL
             }
             if !others.isEmpty {
                 Section {
@@ -301,6 +308,7 @@ struct ConnectView: View {
             } footer: {
                 Text("A USB-host Bluetooth adapter (such as a CME WIDI Uhost) on each module's USB-C. Fine for the screen, knobs and presets; files and firmware are much quicker over a cable.")
             }
+            EmulatorSection()
             Section {
                 Button("Look again") { rig.rescan() }
                 if rig.isDemo {
@@ -317,6 +325,79 @@ struct ConnectView: View {
         .sheet(isPresented: $pairing) { BluetoothPairing().ignoresSafeArea() }
 
         if embedded { list } else { NavigationStack { list } }
+    }
+}
+
+/// Connect > Emulator: the Alchemy Lab module emulator on a Mac, over TCP,
+/// Left and Right on their own ports.
+struct EmulatorSection: View {
+    @EnvironmentObject var rig: Rig
+    @State private var host = ""
+    @State private var left = ""
+    @State private var right = ""
+
+    var body: some View {
+        Section {
+            if rig.isEmulator {
+                ForEach(Array(rig.emulator.ports.enumerated()), id: \.element) { i, port in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(i == 0 ? "Left" : "Right") · \(rig.emulator.host):\(String(port))")
+                        Text(rig.emulatorStatus[port] ?? "Connecting…")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Button("Stop using the emulator", role: .destructive) { rig.stopEmulator() }
+            } else {
+                Button { save(); rig.startEmulator() } label: {
+                    Label("Connect to the module emulator", systemImage: "desktopcomputer")
+                }
+            }
+            LabeledContent("Host") {
+                TextField("127.0.0.1", text: $host)
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .onSubmit(save)
+            }
+            LabeledContent("Left port") {
+                TextField("5071", text: $left).multilineTextAlignment(.trailing).keyboardType(.numberPad).onSubmit(save)
+            }
+            LabeledContent("Right port") {
+                TextField("5072", text: $right).multilineTextAlignment(.trailing).keyboardType(.numberPad).onSubmit(save)
+            }
+            if changed {
+                Button("Save") { save() }
+            }
+        } header: {
+            Text("Emulator")
+        } footer: {
+            Text("The Alchemy Lab module emulator on a Mac, started with --hostlink and a port for each module. In the Simulator 127.0.0.1 is the Mac; on an iPhone or iPad, type the Mac's address. While it isn't there, the app tries again every 2 seconds.")
+        }
+        .onAppear(perform: load)
+        .onChange(of: rig.emulator) { _ in load() }
+    }
+
+    private func load() {
+        host = rig.emulator.host
+        left = String(rig.emulator.leftPort)
+        right = String(rig.emulator.rightPort)
+    }
+
+    private var edited: EmulatorSettings {
+        var e = rig.emulator
+        let h = host.trimmingCharacters(in: .whitespaces)
+        if !h.isEmpty { e.host = h }
+        if let p = EmulatorSettings.port(left) { e.leftPort = p }
+        if let p = EmulatorSettings.port(right) { e.rightPort = p }
+        return e
+    }
+
+    private var changed: Bool { edited != rig.emulator }
+
+    private func save() {
+        rig.setEmulator(edited)
+        load()
     }
 }
 

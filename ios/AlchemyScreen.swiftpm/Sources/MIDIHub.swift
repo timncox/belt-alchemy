@@ -26,7 +26,16 @@ struct MIDIDevice: Identifiable, Hashable {
     /// Launchpad Mini MK3 is one device with two ports (DAW and MIDI).
     var deviceID: MIDIUniqueID = 0
     var deviceName: String = ""
-    var looksLikeModule: Bool { name.localizedCaseInsensitiveContains("alchemy") }
+    /// One of the on-screen devices (VirtualDevices), not CoreMIDI.
+    var isVirtual = false
+    var looksLikeModule: Bool { !isVirtual && name.localizedCaseInsensitiveContains("alchemy") }
+}
+
+/// A plain MIDI port the app sends whole messages to: a controller on the
+/// hub (RawMIDIPort) or an on-screen device (VirtualPort). ControllerHub
+/// talks to both the same way.
+protocol MIDIPortOut: AnyObject {
+    func send(_ messages: [[UInt8]])
 }
 
 final class MIDIHub: @unchecked Sendable {
@@ -249,7 +258,7 @@ final class MIDIConnection: ByteTransport, @unchecked Sendable {
 }
 
 /// One controller port: plain MIDI both ways (no HostLink).
-final class RawMIDIPort: @unchecked Sendable {
+final class RawMIDIPort: MIDIPortOut, @unchecked Sendable {
     let device: MIDIDevice
     private let dest: MIDIEndpointRef
     private let outPort: MIDIPortRef

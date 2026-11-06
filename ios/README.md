@@ -41,5 +41,41 @@ What the app does now:
   CC 20-33 and 52-65 in, MIDI passed through.
 - A demo with one or two pretend modules, so all of it runs in the Simulator.
 
+## Testing without hardware
+
+Nothing below has been compiled in Xcode yet (AlchemyLink's tests run on
+Linux; the app's files are only syntax-checked).
+
+**Demo in the Simulator.** Run the app in an iPhone or iPad simulator,
+then Connect > Try two demo modules: two pretend modules (Left and Right,
+distinct unit numbers) inside the app, so linking and two-module routes work.
+
+**On-screen devices.** In the demo and with the emulator, Controls >
+On-screen devices (on by default) adds a Launchpad Mini MK3 (lit with the
+module's CTRL colours), a Launch Control XL, a gamepad and a Daisy Patch
+(four knobs as CC 21-24, a gate as note C4, and a monitor of the last 50
+MIDI messages it gets). They reach the app the way the real ones do, under
+the real ones' names, so routes, Learn and mappings made with them carry
+over. On iPad they're the Devices tab; on iPhone, Controls > On-screen
+devices > Play them. Give the gamepad and the Daisy Patch the names the
+real ones show in Controls.
+
+**The module emulator.** The Alchemy Lab emulator runs the Phone firmware
+on the Mac and serves its USB MIDI stream (plain SysEx bytes) on a TCP
+port. See the alchemy-lab repo's `emu/README.md`, "Phone mode and the iOS
+app". In zsh:
+
+    git -C ~/tim-os/belt-alchemy worktree add .claude/worktrees/iphone-screen claude/iphone-screen
+    git -C ~/tim-os/belt-alchemy/.claude/worktrees/iphone-screen submodule update --init --recursive
+    cd <alchemy-lab checkout, branch claude/emu-hostlink>/emu && make FW=belt-phone
+    build/belt-phone/emu --usb phone --hostlink 5071 --flash ~/.alchemy-emu/left.bin
+    build/belt-phone/emu --usb phone --hostlink 5072 --flash ~/.alchemy-emu/right.bin --nomic
+
+Then in the app, Connect > Emulator > Connect to the module emulator. Left
+is 127.0.0.1:5071 and Right 127.0.0.1:5072 (editable; on a real iPhone or
+iPad, type the Mac's address). The app retries every 2 s until they answer,
+and reconnects next launch. The emulator carries no audio in Phone+Audio
+mode, and firmware switching lists nothing.
+
 Not yet built in Xcode or run on a module. The firmware's Phone+Audio USB
 mode (audio and the app over one cable) is built but untested on hardware.

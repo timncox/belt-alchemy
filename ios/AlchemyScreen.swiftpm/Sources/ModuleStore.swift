@@ -86,7 +86,7 @@ final class ModuleStore: ObservableObject, Identifiable {
     init(device: MIDIDevice?, kind: LinkKind, transport: ByteTransport) {
         self.device = device
         self.kind = kind
-        self.id = device.map { "midi:\($0.id)" } ?? "demo:\(UUID().uuidString)"
+        self.id = device.map { "midi:\($0.id)" } ?? "\(kind.rawValue):\(UUID().uuidString)"
         start(HostLinkClient(transport: transport))
     }
 

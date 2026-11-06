@@ -16,6 +16,7 @@ struct ControlsView: View {
         NavigationStack {
             List {
                 ControllersSection()
+                if rig.withoutHardware { OnScreenDevicesSection() }
                 if hsc != .regular {
                     // On iPad, Routing is its own tab.
                     Section {
@@ -71,6 +72,48 @@ struct ControlsView: View {
                 Button("OK", role: .cancel) {}
             } message: { Text(inputs.micProblem ?? "") }
         }
+    }
+}
+
+/// The on-screen Launchpad, XL, gamepad and Daisy Patch: on or off, the
+/// page to play them on iPhone (a tab on iPad), and the names they go by.
+private struct OnScreenDevicesSection: View {
+    @EnvironmentObject var rig: Rig
+    @Environment(\.horizontalSizeClass) private var hsc
+    @State private var gamepadName = ""
+    @State private var daisyName = ""
+
+    var body: some View {
+        Section {
+            Toggle("On-screen devices", isOn: $rig.onScreenDevices)
+            if rig.virtualOn {
+                if hsc != .regular {
+                    NavigationLink { DevicesScreen() } label: {
+                        Label("Play them", systemImage: "square.grid.3x3.fill")
+                    }
+                }
+                LabeledContent("Gamepad's name") {
+                    TextField("Gamepad", text: $gamepadName)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { rig.virtual.rename(gamepad: gamepadName); load() }
+                }
+                LabeledContent("Daisy Patch's name") {
+                    TextField("Daisy Patch", text: $daisyName)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { rig.virtual.rename(daisyPatch: daisyName); load() }
+                }
+            }
+        } header: {
+            Text("On-screen devices")
+        } footer: {
+            Text("A Launchpad Mini MK3, a Launch Control XL, a gamepad and a Daisy Patch on the screen, for the demo and the emulator. They're listed above as the real ones are, under the real ones' names, so routes and mappings you make with them carry over. Give the gamepad and the Daisy Patch the names the real ones show above.")
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        gamepadName = rig.virtual.names.gamepad
+        daisyName = rig.virtual.names.daisyPatch
     }
 }
 

@@ -6,6 +6,10 @@
 // A module is told apart by the unit number it reports (Phone INFO), which
 // stays the same when it moves from the hub to an adapter. Its name in the
 // app ("Left", "Right", or one Tim types) is kept against that number.
+//
+// Without hardware: the demo (pretend modules inside the app), or the
+// module emulator on a Mac over TCP (EmulatorLink), each with the
+// on-screen controllers (VirtualDevices) if they're switched on.
 
 import Foundation
 import SwiftUI
@@ -27,6 +31,20 @@ final class Rig: ObservableObject {
     /// How the two modules are linked (shared key, follows, split harmonies).
     @Published private(set) var linking = LinkSettings() { didSet { saveLinking() } }
 
+    /// The on-screen Launchpad, XL, gamepad and Daisy Patch.
+    let virtual: VirtualDevices
+    /// Show them in the demo and with the emulator (Controls > On-screen devices).
+    @Published var onScreenDevices = true {
+        didSet { UserDefaults.standard.set(onScreenDevices, forKey: "onScreenDevices"); updateVirtual() }
+    }
+    /// Connected to (or trying) the module emulators.
+    @Published private(set) var emulatorOn = false
+    @Published private(set) var emulator = EmulatorSettings()
+    /// Each emulator port's state, for the Connect screen.
+    @Published private(set) var emulatorStatus: [UInt16: String] = [:]
+    private var endpoints: [EmulatorEndpoint] = []
+    private var emulatorModules: [UInt16: ModuleStore] = [:]
+
     private var hub: MIDIHub?
     private var trying: Set<MIDIUniqueID> = []
     private var declined: Set<MIDIUniqueID> = []
@@ -36,14 +54,26 @@ final class Rig: ObservableObject {
     var midi: MIDIHub? { hub }
     var ready: [ModuleStore] { modules.filter { $0.phase == .ready } }
     var isDemo: Bool { modules.contains { $0.isDemo } }
+    var isEmulator: Bool { emulatorOn }
+    /// The demo or the emulator: where the on-screen devices can be on.
+    var withoutHardware: Bool { isDemo || emulatorOn }
+    /// The on-screen devices are showing.
+    var virtualOn: Bool { onScreenDevices && withoutHardware }
 
     init() {
+        virtual = VirtualDevices()
         if let d = controlsRaw.data(using: .utf8), let m = try? JSONDecoder().decode(ControlMatrix.self, from: d) {
             controls = m
         }
         if let d = linkingRaw.data(using: .utf8), let l = try? JSONDecoder().decode(LinkSettings.self, from: d) {
             linking = l
         }
+        let defaults = UserDefaults.standard
+        onScreenDevices = defaults.object(forKey: "onScreenDevices") as? Bool ?? true
+        if let d = defaults.data(forKey: "emulator"), let e = try? JSONDecoder().decode(EmulatorSettings.self, from: d) {
+            emulator = e
+        }
+        virtual.onDevicesChanged = { [weak self] in self?.listDevices() }
         do {
             let h = try MIDIHub()
             h.onSetupChanged = { [weak self] in Task { @MainActor in self?.rescan() } }
@@ -52,6 +82,8 @@ final class Rig: ObservableObject {
             notice = String(describing: error)
         }
         rescan()
+        // Back where it was: the emulator again if it was on when the app quit.
+        if defaults.bool(forKey: "emulatorMode") { startEmulator() }
     }
 
     // MARK: finding modules
@@ -64,15 +96,32 @@ final class Rig: ObservableObject {
     /// Look at what's plugged in or paired: connect anything that is (or
     /// was before) an Alchemy Lab, and drop modules that went away.
     func rescan() {
+        listDevices()
         guard let hub else { return }
-        devices = hub.devices()
         for m in modules where !m.isDemo {
             if let d = m.device, !hub.isPresent(d.id) { remove(m) }
         }
-        for d in devices where d.looksLikeModule || known.contains(d.id) {
+        for d in devices where !d.isVirtual && (d.looksLikeModule || known.contains(d.id)) {
             guard !declined.contains(d.id), !modules.contains(where: { $0.device?.id == d.id }) else { continue }
             connect(d)
         }
+    }
+
+    /// CoreMIDI's devices and the on-screen ones, as one list.
+    private func listDevices() {
+        let list = (hub?.devices() ?? []) + virtual.midiDevices
+        if list != devices { devices = list }
+    }
+
+    /// A plain MIDI port to a controller (ControllerHub): CoreMIDI's, or an
+    /// on-screen device's. `receive` may be called on any thread.
+    func connectRaw(_ d: MIDIDevice, receive: @escaping @Sendable ([UInt8]) -> Void) -> MIDIPortOut? {
+        if d.isVirtual { return virtual.connect(d, receive: receive) }
+        return hub?.connectRaw(d, receive: receive)
+    }
+
+    func disconnectRaw(_ id: MIDIUniqueID) {
+        if virtual.owns(id) { virtual.disconnect(id) } else { hub?.disconnectRaw(id) }
     }
 
     func isConnected(_ d: MIDIDevice) -> Bool { modules.contains { $0.device?.id == d.id } }
@@ -131,7 +180,9 @@ final class Rig: ObservableObject {
         m.stop()
         if let d = m.device { hub?.disconnect(d.id) }
         modules.removeAll { $0 === m }
+        for (p, e) in emulatorModules where e === m { emulatorModules[p] = nil }
         if selectedID == m.id { selectedID = modules.first?.id }
+        updateVirtual()
     }
 
     // MARK: the demo
@@ -140,6 +191,8 @@ final class Rig: ObservableObject {
     /// without hardware (and for the Simulator and App Review).
     func startDemo(count: Int) {
         stopDemo()
+        stopEmulator()
+        // Two have distinct unit numbers (BE170001, BE170002): Left and Right.
         for i in 0..<count {
             let fake = FakeModule(viaSysEx: true, unit: 0xBE17_0001 + UInt32(i), name: "Belt (demo)")
             let m = ModuleStore(device: nil, kind: .demo, transport: fake)
@@ -149,10 +202,81 @@ final class Rig: ObservableObject {
             modules.append(m)
         }
         selectedID = modules.first?.id
+        updateVirtual()
     }
 
     func stopDemo() {
         for m in modules where m.isDemo { remove(m) }
+    }
+
+    // MARK: the module emulator
+
+    /// Connect to the module emulators (Left and Right ports), and keep trying.
+    func startEmulator() {
+        stopDemo()
+        stopEndpoints()
+        emulatorOn = true
+        UserDefaults.standard.set(true, forKey: "emulatorMode")
+        for port in emulator.ports {
+            let ep = EmulatorEndpoint(host: emulator.host, port: port)
+            ep.onStatus = { [weak self] st in Task { @MainActor in self?.emulatorStatus[port] = st.label } }
+            ep.onConnected = { [weak self, weak ep] link in
+                Task { @MainActor in if let self, let ep { self.emulatorConnected(ep, link) } }
+            }
+            ep.onDisconnected = { [weak self] in Task { @MainActor in self?.emulatorDropped(port) } }
+            endpoints.append(ep)
+            ep.start()
+        }
+        updateVirtual()
+    }
+
+    func stopEmulator() {
+        guard emulatorOn || !endpoints.isEmpty else { return }
+        stopEndpoints()
+        emulatorOn = false
+        UserDefaults.standard.set(false, forKey: "emulatorMode")
+        emulatorStatus = [:]
+        updateVirtual()
+    }
+
+    private func stopEndpoints() {
+        for e in endpoints { e.stop() }
+        endpoints = []
+        for m in modules where m.kind == .emulator { remove(m) }
+        emulatorModules = [:]
+    }
+
+    /// New host or ports: saved, and the emulator reconnected if it's on.
+    func setEmulator(_ e: EmulatorSettings) {
+        guard e != emulator else { return }
+        emulator = e
+        if let d = try? JSONEncoder().encode(e) { UserDefaults.standard.set(d, forKey: "emulator") }
+        if emulatorOn { startEmulator() }
+    }
+
+    private func emulatorConnected(_ ep: EmulatorEndpoint, _ link: MIDIStreamLink) {
+        guard endpoints.contains(where: { $0 === ep }) else { return }
+        if let old = emulatorModules[ep.port] { remove(old) }
+        let m = ModuleStore(device: nil, kind: .emulator, transport: link)
+        // Stopped answering on an open socket: hang up and try again.
+        m.onLost = { [weak self, weak ep] m in self?.remove(m); ep?.restart() }
+        m.onChange = { [weak self] m, c in self?.moduleChanged(m, c) }
+        m.onState = { [weak self] m, st in self?.onModuleState?(m.unit, st) }
+        modules.append(m)
+        emulatorModules[ep.port] = m
+        if selectedID == nil { selectedID = m.id }
+        watchReady(m)
+        updateVirtual()
+    }
+
+    private func emulatorDropped(_ port: UInt16) {
+        if let m = emulatorModules[port] { remove(m) }
+    }
+
+    // MARK: on-screen devices
+
+    private func updateVirtual() {
+        virtual.setOn(virtualOn)
     }
 
     // MARK: names
