@@ -12,7 +12,7 @@ assumed**; nothing here has run on a module yet.
 | J1 | **Clock in** | Codec input, AC-coupled: rising edges only, read sample-accurately in the audio callback (1.0 V up / 0.5 V down). PPQN on the MASTER layer. |
 | J2 | **Reset** or **Start/Stop** | Same input type. A held run gate cannot be read (the coupling capacitor drains it in about a second), so "run" is an edge that toggles. |
 | J3–J6 | Outputs 1–4 | MCP4728 over I²C, 12-bit, ±5 V, written by the 1 kHz poll when the code changes. ⚠️ timing jitter up to ~1 ms. |
-| J7–J8 | Outputs 5–6 | STM32 DAC, 12-bit, ±5 V, written every 0.5 ms from the audio callback. |
+| J7–J8 | Outputs 5–6, **or CV inputs A and B** | STM32 DAC, 12-bit, ±5 V, written every 0.5 ms from the audio callback. Settings (page 1, top-right pot) switches both to calibrated ±5 V inputs, read every 1 ms; outputs 5–6 then go quiet. Default: outputs. |
 | J9–J10 | Outputs 7–8 | Codec, DC-coupled, ±5 V, every 0.5 ms (one 24-frame block). |
 
 Every output is 0–5 V at the default OFFSET of 0; OFFSET moves it anywhere
@@ -54,6 +54,15 @@ eight outputs, three layers and every firmware on the card.
 | P1 | **BPM** 10–300 (ignored while J1 is driving); the ring's last LED flashes on the beat |
 | P2 | **Clock PPQN** for J1: 1 · 2 · 4 · 8 · 12 · **24** · 48 |
 | P3 | **J2 mode**: Reset · Start/Stop |
+| P4 | **CV A** (J7) target: Off · Ratio · Wave · Width · Level · Offset · Phase · Steps · Fills · Rotate · Chance · Swing · Slew |
+| P5 | **CV B** (J8) target, same list |
+
+Turning P4 or P5 aims that input at the output selected at the time; the
+ring takes that output's colour (dim white when Off, dimmed while J7/J8 are
+outputs). The CV is added to the stored setting, never written into it:
++5 V is one full pot turn up, −5 V one full turn down, stepped settings
+move by zones (so −5 V on LEVEL silences it, +5 V on RATIO from x1 reaches
+x32). ✅ tested natively; ⚠️ the jack switching and reading are unheard.
 
 ### Buttons
 
@@ -62,7 +71,7 @@ eight outputs, three layers and every firmware on the card.
 | B1 | next output (1→8) | turn P1 to jump to any output (the ring shows all eight in their colours) |
 | B2 | tap tempo (2–4 taps averaged; ignored on external clock) | MASTER layer |
 | B3 | stop / start (start is from the top) | PATTERN layer |
-| B2+B3 | — | 2 s: SDK Settings (brightness, presets; page 2 = SD firmware picker) |
+| B2+B3 | — | 2 s: SDK Settings (brightness, presets, **J7/J8: Outputs · CV in**; page 2 = SD firmware picker) |
 
 LEDs: B1 = the selected output's colour, lit by its signal; B2 = the beat
 (amber internal, cyan locked to J1); B3 = green running, red stopped.
@@ -83,16 +92,20 @@ fraction is the waveform phase. So:
   phase-locked and a late clock holds rather than drifts ✅. Silence for
   3 periods (0.25–4 s) falls back to the internal BPM ✅.
 
-`make test` — 82 checks: ratio counts and grid alignment, duty, levels and
+`make test` — 100 checks: ratio counts and grid alignment, duty, levels and
 offsets, euclid spacing and rotation, swing timing, phase, chance (0, ~50 %,
 repeatability), tap tempo, external clock at 100 BPM / 24 PPQN with x4 and
 /4, a tempo change under x8, reset and start/stop on J2, random + slew,
-preset round-trip, gates low while stopped.
+preset round-trip, gates low while stopped, every CV target's scaling
+and clamping, CV ignored while J7/J8 are outputs, CV on one output
+leaving the others alone.
 
 ## 4. Persistence
 
-The whole state (master + 8 × 24 bytes) rides in the SDK preset blob as
-`PulseState` ('PLS' schema). Working state autosaves to **slot 11** five
+The whole state (12-byte master with the two CV routes + 8 × 24 bytes) rides in the SDK preset blob as
+`PulseState` ('PLS' schema, layout 2; a v0.1.0 state is refused and
+the defaults load). The J7/J8 choice is a Settings value and rides with
+the SDK's own settings. Working state autosaves to **slot 11** five
 seconds after the last change with hands off the buttons. The family's
 other firmwares use 12–15, so switching through the SD picker keeps each
 one's state.
@@ -103,7 +116,7 @@ eighth trigs · 8 random level each beat.
 
 ## 5. Not in v0.1
 
-Ratchets, quantizer, CV inputs and assignment, cross-output logic,
+Ratchets, quantizer, more than one target per CV input, cross-output logic,
 triggered (one-shot) mode, humanize / other micro-timing, beat-looped
 random, bank loads from the clock inputs, MIDI. The jack budget is the main
-constraint: all of J3–J10 are outputs, so CV in means giving some up.
+constraint: CV in costs outputs 5 and 6.

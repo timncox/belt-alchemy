@@ -22,6 +22,11 @@ const char* const kWaveLabels[kNumWaves] = {
     "Gate", "Trig", "Saw", "Ramp", "Tri", "Sine", "Env", "Random", "Smooth",
 };
 
+const char* const kModLabels[kNumModParams] = {
+    "Off", "Ratio", "Wave", "Width", "Level", "Offset", "Phase",
+    "Steps", "Fills", "Rotate", "Chance", "Swing", "Slew",
+};
+
 const uint16_t kPpqnValues[kNumPpqn] = {1, 2, 4, 8, 12, 24, 48};
 
 static constexpr float kTwoPi = 6.28318530718f;
@@ -42,6 +47,39 @@ bool EuclidHit(int i, int steps, int fills, int rotate)
     int j = (i + rotate) % steps;
     if (j < 0) j += steps;
     return (j * fills) % steps < fills;
+}
+
+static uint8_t mod_zone(uint8_t cur, int zones, float amount)
+{
+    if (zones <= 1) return cur;
+    const float n = ((float)cur + 0.5f) / (float)zones + amount;
+    int z = (int)floorf(n * (float)zones);
+    if (z < 0) z = 0;
+    if (z > zones - 1) z = zones - 1;
+    return (uint8_t)z;
+}
+
+void ApplyMod(OutParams& p, uint8_t param, float a)
+{
+    switch (param)
+    {
+        case kModRatio:  p.ratio  = mod_zone(p.ratio, kNumRatios, a); break;
+        case kModWave:   p.wave   = mod_zone(p.wave, kNumWaves, a); break;
+        case kModWidth:  p.width  = clampf(p.width + a, 0.0f, 1.0f); break;
+        case kModLevel:  p.level  = clampf(p.level + a, 0.0f, 1.0f); break;
+        case kModOffset: p.offset = clampf(p.offset + a * 10.0f, -5.0f, 5.0f); break;
+        case kModPhase:  p.phase  = p.phase + a - floorf(p.phase + a); break;
+        case kModSteps:
+            p.steps = mod_zone(p.steps, kMaxSteps + 1, a);
+            if (p.fills > p.steps) p.fills = p.steps;
+            break;
+        case kModFills:  p.fills  = mod_zone(p.fills > p.steps ? p.steps : p.fills, p.steps + 1, a); break;
+        case kModRotate: if (p.steps) p.rotate = mod_zone(p.rotate % p.steps, p.steps, a); break;
+        case kModChance: p.chance = clampf(p.chance + a, 0.0f, 1.0f); break;
+        case kModSwing:  p.swing  = clampf(p.swing + a * 0.25f, 0.5f, 0.75f); break;
+        case kModSlew:   p.slew   = clampf(p.slew + a, 0.0f, 1.0f); break;
+        default: break;
+    }
 }
 
 double SwingWarp(double c, float swing)
@@ -120,6 +158,9 @@ void Engine::Init(float sample_rate)
     ext_period_  = 0.0;
     n_taps_      = 0;
     reset_t_     = -1.0;
+    for (int c = 0; c < kNumOuts; c++) volts_[c] = act_[c] = 0.0f;
+    for (int i = 0; i < kNumCvIns; i++) cv_v_[i] = 0.0f;
+    cv_on_ = false;
     DoReset();
 }
 
@@ -296,8 +337,12 @@ void Engine::EvalOutputs(double dt_block)
     const double rate = RateBeatsPerSec();
     for (int c = 0; c < kNumOuts; c++)
     {
-        const OutParams& P = out[c];
-        ChanState&       S = ch_[c];
+        OutParams  P = out[c];
+        ChanState& S = ch_[c];
+        if (cv_on_)
+            for (int i = 0; i < kNumCvIns; i++)
+                if (master.cv[i].param != kModOff && master.cv[i].out == c)
+                    ApplyMod(P, master.cv[i].param, cv_v_[i] / 5.0f);
         const Ratio&     r = kRatios[P.ratio < kNumRatios ? P.ratio : kRatioUnity];
 
         const double cyc  = pos_ * (double)r.num / (double)r.den + (double)P.phase;
@@ -360,7 +405,7 @@ void Engine::EvalOutputs(double dt_block)
 
 /* ---- persistence ------------------------------------------------------------ */
 
-static constexpr uint8_t kLayoutVersion = 1;
+static constexpr uint8_t kLayoutVersion = 2;
 
 static inline void put16(uint8_t* b, float v01)
 {
@@ -383,9 +428,14 @@ void Pack(const MasterParams& m, const OutParams* o, uint8_t sel, uint8_t* buf)
     buf[5] = m.j2_mode;
     buf[6] = sel;
     buf[7] = kLayoutVersion;
+    for (int i = 0; i < kNumCvIns; i++)
+    {
+        buf[8 + 2 * i]     = m.cv[i].out;
+        buf[8 + 2 * i + 1] = m.cv[i].param;
+    }
     for (int c = 0; c < kNumOuts; c++)
     {
-        uint8_t*         b = buf + 8 + c * kOutBytes;
+        uint8_t*         b = buf + kMasterBytes + c * kOutBytes;
         const OutParams& P = o[c];
         b[0] = P.ratio;
         b[1] = P.wave;
@@ -412,9 +462,15 @@ bool Unpack(const uint8_t* buf, MasterParams& m, OutParams* o, uint8_t& sel)
     m.ppqn_idx = buf[4] < kNumPpqn ? buf[4] : 5;
     m.j2_mode  = buf[5] < kNumJ2Modes ? buf[5] : (uint8_t)kJ2Reset;
     sel        = buf[6] < kNumOuts ? buf[6] : 0;
+    for (int i = 0; i < kNumCvIns; i++)
+    {
+        const uint8_t o = buf[8 + 2 * i], q = buf[8 + 2 * i + 1];
+        m.cv[i].out   = o < kNumOuts ? o : 0;
+        m.cv[i].param = q < kNumModParams ? q : (uint8_t)kModOff;
+    }
     for (int c = 0; c < kNumOuts; c++)
     {
-        const uint8_t* b = buf + 8 + c * kOutBytes;
+        const uint8_t* b = buf + kMasterBytes + c * kOutBytes;
         OutParams&     P = o[c];
         P.ratio  = b[0] < kNumRatios ? b[0] : kRatioUnity;
         P.wave   = b[1] < kNumWaves ? b[1] : (uint8_t)kGate;

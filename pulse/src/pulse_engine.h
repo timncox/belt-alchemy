@@ -85,11 +85,29 @@ struct OutParams
     float   slew   = 0.0f;   /* 0..1, output glide                     */
 };
 
+/* What a CV input can move on its output. */
+enum ModParam : uint8_t
+{
+    kModOff = 0, kModRatio, kModWave, kModWidth, kModLevel, kModOffset,
+    kModPhase, kModSteps, kModFills, kModRotate, kModChance, kModSwing,
+    kModSlew, kNumModParams
+};
+extern const char* const kModLabels[kNumModParams];
+
+constexpr int kNumCvIns = 2;   /* J7, J8 when switched to inputs */
+
+struct CvRoute
+{
+    uint8_t out   = 0;         /* 0..7 */
+    uint8_t param = kModOff;
+};
+
 struct MasterParams
 {
     float   bpm      = 120.0f;
     uint8_t ppqn_idx = 5;          /* 24 PPQN */
     uint8_t j2_mode  = kJ2Reset;
+    CvRoute cv[kNumCvIns];
 };
 
 constexpr int kMaxSteps = 32;
@@ -102,6 +120,12 @@ bool EuclidHit(int i, int steps, int fills, int rotate);
  * length in seconds (TRIG's pulse is absolute time); r0/r1 are the held and
  * next random levels for the random shapes. */
 float Shape(uint8_t wave, float p, float width, float cycle_s, float r0, float r1);
+
+/* Add a CV to one parameter. `amount` is in parameter-travel units: +1 is
+ * the whole range of the pot (5 V at the jack), so 0-5 V sweeps a pot's
+ * full travel from where it is set and ±5 V reaches both ends from the
+ * middle. Stepped parameters move by zones, as the pot would. */
+void ApplyMod(OutParams& p, uint8_t param, float amount);
 
 /* Swing warp of a cycle count: in each pair of cycles the boundary between
  * the two moves from 1 to 2*swing. swing 0.5 is the identity. */
@@ -128,6 +152,12 @@ class Engine
      * Two taps set the tempo; up to four are averaged. Ignored while an
      * external clock is driving. */
     void Tap(double t_s);
+
+    /* CV inputs: volts at the jack (±5 V), and whether the jacks are inputs
+     * at all. Written from the control poll. */
+    void SetCv(int i, float volts) { cv_v_[i] = volts; }
+    void SetCvEnabled(bool on) { cv_on_ = on; }
+    bool CvEnabled() const { return cv_on_; }
 
     /* One audio block. clk / rst are J1 / J2 as the codec sees them
      * (±1.0 = ±5 V at the panel); either may be null. */
@@ -187,6 +217,9 @@ class Engine
     double taps_[4] = {0, 0, 0, 0};
     int    n_taps_  = 0;
 
+    float cv_v_[kNumCvIns] = {0.0f, 0.0f};
+    bool  cv_on_ = false;
+
     ChanState ch_[kNumOuts];
     float     volts_[kNumOuts] = {};
     float     act_[kNumOuts]   = {};
@@ -195,7 +228,8 @@ class Engine
 /* ---- persistence (byte layout shared with the firmware's Serializable) ---- */
 
 constexpr size_t kOutBytes   = 24;
-constexpr size_t kStateBytes = 8 + kNumOuts * kOutBytes;   /* 200 */
+constexpr size_t kMasterBytes = 12;
+constexpr size_t kStateBytes  = kMasterBytes + kNumOuts * kOutBytes;   /* 204 */
 
 void Pack(const MasterParams& m, const OutParams* o, uint8_t sel, uint8_t* buf);
 bool Unpack(const uint8_t* buf, MasterParams& m, OutParams* o, uint8_t& sel);

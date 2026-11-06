@@ -3,9 +3,10 @@
 A master clock and eight clocked CV outputs for the Hermetic Modular
 Alchemy Lab V2: per-output ratio (/64 to x32), nine waveforms, width, level,
 offset, phase, euclidean patterns, chance, swing and slew; tap tempo or an
-external clock on J1, reset or start/stop on J2.
+external clock on J1, reset or start/stop on J2; J7/J8 can be switched to
+two CV inputs that move any setting of any output.
 
-**Status: v0.1.0 builds and its engine passes 82 native tests. It has not
+**Status: v0.2.0 builds and its engine passes 100 native tests. It has not
 run on a module.** `DESIGN.md` has the panel map and what is verified.
 
 ## Build

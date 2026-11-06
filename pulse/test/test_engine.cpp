@@ -377,6 +377,8 @@ static void test_persistence()
     o[3].offset = -1.25f;
     o[3].swing  = 0.6f;
     o[3].steps  = 13; o[3].fills = 5; o[3].rotate = 4;
+    m.cv[0] = {2, kModRatio};
+    m.cv[1] = {7, kModSlew};
     uint8_t buf[kStateBytes];
     Pack(m, o, 6, buf);
     uint8_t sel = 0;
@@ -395,6 +397,8 @@ static void test_persistence()
             std::fabs(x.slew - y.slew) > 1e-4f) same = false;
     }
     CHECK(same, "outputs round-trip");
+    CHECK(m2.cv[0].out == 2 && m2.cv[0].param == kModRatio &&
+          m2.cv[1].out == 7 && m2.cv[1].param == kModSlew, "cv routes round-trip");
     buf[7] = 99;
     CHECK(!Unpack(buf, m2, o2, sel), "foreign layout refused");
 }
@@ -415,6 +419,74 @@ static void test_stop_holds_gates_low()
     CHECK(e.Volts(0) > 4.9f, "restarted");
 }
 
+static void test_apply_mod()
+{
+    OutParams p;
+    ApplyMod(p, kModLevel, -1.0f);
+    CHECK(p.level == 0.0f, "level -5 V silent %.2f", p.level);
+    p = OutParams{};
+    ApplyMod(p, kModWidth, 0.2f);
+    CHECK(std::fabs(p.width - 0.7f) < 1e-5f, "width +1 V %.2f", p.width);
+    p = OutParams{};
+    ApplyMod(p, kModOffset, -0.25f);
+    CHECK(std::fabs(p.offset + 2.5f) < 1e-5f, "offset -1.25 V moves 2.5 V %.2f", p.offset);
+    p = OutParams{};
+    ApplyMod(p, kModRatio, 1.0f);
+    CHECK(p.ratio == kNumRatios - 1, "ratio +5 V to top %d", p.ratio);
+    p = OutParams{};
+    ApplyMod(p, kModRatio, 0.0f);
+    CHECK(p.ratio == kRatioUnity, "ratio 0 V unchanged");
+    p = OutParams{};
+    ApplyMod(p, kModRatio, -1.0f);
+    CHECK(p.ratio == 0, "ratio -5 V to bottom");
+    p = OutParams{};
+    p.phase = 0.9f;
+    ApplyMod(p, kModPhase, 0.2f);
+    CHECK(std::fabs(p.phase - 0.1f) < 1e-4f, "phase wraps %.2f", p.phase);
+    p = OutParams{};
+    p.steps = 8; p.fills = 3;
+    ApplyMod(p, kModSteps, -1.0f);
+    CHECK(p.steps == 0 && p.fills == 0, "steps to off clamps fills");
+    p = OutParams{};
+    p.steps = 8; p.fills = 3;
+    ApplyMod(p, kModFills, 1.0f);
+    CHECK(p.fills == 8, "fills +5 V full %d", p.fills);
+    p = OutParams{};
+    ApplyMod(p, kModSwing, 1.0f);
+    CHECK(std::fabs(p.swing - 0.75f) < 1e-5f, "swing max");
+    p = OutParams{};
+    ApplyMod(p, kModOff, 1.0f);
+    CHECK(p.ratio == kRatioUnity && p.level == 1.0f && p.width == 0.5f, "off leaves it");
+}
+
+static void test_cv_routing()
+{
+    /* CV A on output 1's ratio: +5 V should push x1 to x32. */
+    Engine e;
+    fresh(e);
+    e.master.cv[0] = {0, kModRatio};
+    e.SetCv(0, 5.0f);
+    Run r = run(e, 0.99);
+    CHECK(r.rises[0].size() == 2, "routing ignored while jacks are outputs: %zu", r.rises[0].size());
+    fresh(e);
+    e.master.cv[0] = {0, kModRatio};
+    e.SetCvEnabled(true);
+    e.SetCv(0, 5.0f);
+    r = run(e, 0.99);
+    CHECK(r.rises[0].size() == 64, "x32 from CV: %zu", r.rises[0].size());
+    CHECK(r.rises[1].size() == 2, "other outputs untouched: %zu", r.rises[1].size());
+    /* CV B on output 2's level: -5 V silences it. */
+    fresh(e);
+    e.SetCvEnabled(true);
+    e.master.cv[1] = {1, kModLevel};
+    e.SetCv(1, -5.0f);
+    r = run(e, 0.99);
+    CHECK(r.vmax[1] < 0.01f, "level CV silences out 2: %.2f", r.vmax[1]);
+    CHECK(r.rises[0].size() == 2, "out 1 still runs: %zu", r.rises[0].size());
+    /* Stored params are never changed by CV. */
+    CHECK(e.out[1].level == 1.0f, "stored level untouched");
+}
+
 int main()
 {
     test_ratios_internal();
@@ -430,6 +502,8 @@ int main()
     test_random_and_slew();
     test_persistence();
     test_stop_holds_gates_low();
+    test_apply_mod();
+    test_cv_routing();
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

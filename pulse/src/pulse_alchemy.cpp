@@ -10,12 +10,14 @@
  *
  *   OUTPUT   RATIO · WAVE · WIDTH · LEVEL · OFFSET · PHASE     (selected output)
  *   PATTERN  STEPS · FILLS · ROTATE · CHANCE · SWING · SLEW    (hold B3)
- *   MASTER   BPM · CLOCK PPQN · J2 MODE                        (hold B2)
+ *   MASTER   BPM · CLOCK PPQN · J2 MODE · CV A · CV B          (hold B2)
  *   B1       tap: next output; hold + turn P1: pick any output
  *   B2       tap: tap tempo; hold: MASTER layer
  *   B3       tap: start / stop (start is from the top); hold: PATTERN layer
  *   J1       clock in    J2  reset (or start/stop)    J3-J10  outputs 1-8
- *   Settings (B2+B3 2 s): brightness, presets; page 1 = the SD firmware picker
+ *            (Settings can make J7/J8 CV inputs A and B; outputs 5-6 go quiet)
+ *   Settings (B2+B3 2 s): brightness, presets, J7/J8 jacks; page 1 = the SD
+ *            firmware picker
  */
 #include <math.h>
 #include <string.h>
@@ -69,6 +71,10 @@ static pulse::Engine engine;
 
 /* J3-J6 values from the audio callback, flushed over I2C by the poll. */
 static volatile float g_mcp_volts[4] = {0, 0, 0, 0};
+
+/* J7/J8 as CV inputs (a Settings choice). While set, the audio callback
+ * leaves those two DACs alone and the poll reads the jacks instead. */
+static volatile bool g_cv_in = false;
 
 /* ---- colours ------------------------------------------------------------ */
 
@@ -125,7 +131,7 @@ struct PulseState : public Serializable
     }
 
     /* 'PLS' + layout version. Bump with pulse_engine's kLayoutVersion. */
-    uint32_t SchemaHash() const override { return 0x504C5300u | 0x01u; }
+    uint32_t SchemaHash() const override { return 0x504C5300u | 0x02u; }
 };
 
 /* ---- surfaces ------------------------------------------------------------ */
@@ -136,8 +142,8 @@ static Jack jk_o1  ("J3",  "Out 1",       JackSig::CvBi);
 static Jack jk_o2  ("J4",  "Out 2",       JackSig::CvBi);
 static Jack jk_o3  ("J5",  "Out 3",       JackSig::CvBi);
 static Jack jk_o4  ("J6",  "Out 4",       JackSig::CvBi);
-static Jack jk_o5  ("J7",  "Out 5",       JackSig::CvBi);
-static Jack jk_o6  ("J8",  "Out 6",       JackSig::CvBi);
+static Jack jk_o5  ("J7",  "Out 5 / CV A", JackSig::CvBi);
+static Jack jk_o6  ("J8",  "Out 6 / CV B", JackSig::CvBi);
 static Jack jk_o7  ("J9",  "Out 7",       JackSig::CvBi);
 static Jack jk_o8  ("J10", "Out 8",       JackSig::CvBi);
 
@@ -150,8 +156,11 @@ static Manual manual = Manual()
         "envelope, stepped and smooth random), width, level, offset and "
         "phase; hold B3 for its euclidean pattern, chance, swing and slew. "
         "Tap B1 to step to the next output, or hold B1 and turn the top-left "
-        "pot to pick one. Hold B2 for the tempo, the clock input's PPQN and "
-        "what J2 does. Tap B3 to start and stop.");
+        "pot to pick one. Hold B2 for the tempo, the clock input's PPQN, "
+        "what J2 does and where the CV inputs go. Tap B3 to start and stop. "
+        "In Settings, J7 and J8 can become CV inputs A and B (outputs 5 and 6 "
+        "then go quiet); on the B2 layer, the middle-right and bottom-left "
+        "pots pick what each one moves on the output selected at the time.");
 
 static ControlLoop loop(hw);
 static Presets     presets(hw.seed.qspi);
@@ -161,6 +170,9 @@ static hostlink::FsExtension fs_ext(sd);
 static hostlink::Host host(presets, "pulse_alchemy", "Pulse",
                            PULSE_VERSION, PULSE_GIT_HASH);
 static PulseState  state;
+
+static const char* const kJackLabels[] = {"Outputs", "CV in"};
+static SelectorHandle g_jacks;
 
 /* ---- parameters behind the pots ----------------------------------------------- */
 
@@ -242,6 +254,20 @@ static PotView view(Layer layer, uint8_t pot)
                         v.norm = zone_norm(M.ppqn_idx, v.zones); break;
                 case 2: v.kind = Kind::Selector; v.zones = pulse::kNumJ2Modes;
                         v.norm = zone_norm(M.j2_mode, v.zones); break;
+                case 3:
+                case 4:
+                {
+                    /* CV A / CV B: what it moves, in the colour of the output
+                     * it moves; dim while J7/J8 are outputs. */
+                    const pulse::CvRoute& R = M.cv[pot - 3];
+                    v.kind  = Kind::Selector;
+                    v.zones = pulse::kNumModParams;
+                    v.norm  = zone_norm(R.param, v.zones);
+                    v.col   = R.param == pulse::kModOff ? kDimWhite : kOutCol[R.out % pulse::kNumOuts];
+                    if (!g_cv_in) v.col = scale(v.col, 0.3f);
+                    v.marker = 0;
+                    break;
+                }
                 default: break;
             }
             break;
@@ -290,6 +316,12 @@ static bool apply(Layer layer, uint8_t pot, float x)
                     engine.Reset();
                 }
                 if (pot == 2) M.j2_mode  = (uint8_t)z;
+                if (pot == 3 || pot == 4)
+                {
+                    /* Aims at the output selected now. */
+                    M.cv[pot - 3].param = (uint8_t)z;
+                    M.cv[pot - 3].out   = g_sel;
+                }
                 break;
         }
         return true;
@@ -388,6 +420,33 @@ static void OnPoll(uint32_t now)
             }
         }
         if (any) hw.FlushCvOutputs();
+    }
+
+    /* J7/J8: outputs or CV inputs, from Settings (also while it is open). */
+    {
+        const bool want = g_jacks.Value() == 1;
+        if (want != g_cv_in)
+        {
+            if (want)
+            {
+                g_cv_in = true;               /* audio stops writing first */
+                hw.cv_jacks[4].DisableCvOutput();
+                hw.cv_jacks[5].DisableCvOutput();
+            }
+            else
+            {
+                engine.SetCvEnabled(false);
+                hw.cv_jacks[4].EnableCvOutput();
+                hw.cv_jacks[5].EnableCvOutput();
+                g_cv_in = false;
+            }
+        }
+        if (g_cv_in)
+        {
+            engine.SetCv(0, hw.cv_jacks[4].Volts());
+            engine.SetCv(1, hw.cv_jacks[5].Volts());
+            engine.SetCvEnabled(true);
+        }
     }
 
     static bool was_settings = false;
@@ -659,8 +718,11 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
     for (size_t i = 0; i < n; i++) out[0][i] = out[1][i] = 0.0f;
 
     for (int c = 0; c < 4; c++) g_mcp_volts[c] = engine.Volts(c);   /* J3-J6 */
-    hw.cv_jacks[4].SetVolts(engine.Volts(4));                       /* J7  */
-    hw.cv_jacks[5].SetVolts(engine.Volts(5));                       /* J8  */
+    if (!g_cv_in)
+    {
+        hw.cv_jacks[4].SetVolts(engine.Volts(4));                   /* J7  */
+        hw.cv_jacks[5].SetVolts(engine.Volts(5));                   /* J8  */
+    }
     hw.cv_jacks[6].SetVolts(engine.Volts(6));                       /* J9  */
     hw.cv_jacks[7].SetVolts(engine.Volts(7));                       /* J10 */
 }
@@ -683,6 +745,14 @@ int main(void)
 
     sd.Init();
     picker::Install(settings, kSettingsFirmware, sd, hw);
+    g_jacks = settings.Page(kSettingsMain).Pot(1)
+        .Selector(kJackLabels).Default(0)
+        .Ident("jacks").Name("J7/J8")
+        .Help("**Outputs** (default): J7 and J8 are outputs 5 and 6. "
+              "**CV in**: J7 and J8 become CV inputs A and B (±5 V) and "
+              "outputs 5 and 6 go quiet. Hold B2: the middle-right pot picks "
+              "what CV A moves and the bottom-left pot what CV B moves, on "
+              "the output selected when you set it.");
     settings.UseBrightness();
     settings.UsePresets(presets);
 
