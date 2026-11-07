@@ -201,6 +201,7 @@ final class Rig: ObservableObject {
             m.onChange = { [weak self] m, c in self?.moduleChanged(m, c) }
             m.onState = { [weak self] m, st in self?.onModuleState?(m.unit, st) }
             modules.append(m)
+            watchReady(m)
         }
         selectedID = modules.first?.id
         updateVirtual()
