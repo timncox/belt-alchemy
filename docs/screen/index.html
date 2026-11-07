@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alchemy Screen Manual</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Operation manual for Alchemy Screen, the iPhone and iPad screen and controller for the Hermetic Modular Alchemy Lab running Belt.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Belt's manual: the same plate-dark ground, KEY-ring orange and slab masthead.
+   One long reference page, read top to bottom once and then jumped around. */
+:root{
+  color-scheme:dark;
+  --bg:#100d0b; --panel:#1a1512; --panel2:#221b16; --panel3:#2b221b;
+  --ink:#f3ead8; --dim:#a39887; --soft:#d8ccb8;
+  --line:rgba(243,234,216,.12); --line2:rgba(243,234,216,.06);
+  --acc:#ff9020; --acc-soft:rgba(255,144,32,.14); --warn:#ffb020; --warn-soft:rgba(255,176,32,.10);
+  --cyan:#5fd0ff;
+  --disp:"Alfa Slab One","Rockwell Extra Bold","Roboto Slab",Georgia,serif;
+  --body:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.6;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+a{color:var(--acc);text-decoration:none;border-bottom:1px solid rgba(255,144,32,.35)}
+a:hover{border-bottom-color:var(--acc)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+code,kbd{font-family:var(--mono);font-size:.82em;background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:.05em .35em;overflow-wrap:anywhere}
+.ui{font-weight:600;color:var(--soft)}
+
+nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:rgba(16,13,11,.94);border-bottom:1px solid var(--line);display:flex;gap:18px;align-items:center;overflow-x:auto;scrollbar-width:none;padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+nav::-webkit-scrollbar{display:none}
+nav .logo{font-family:var(--disp);font-size:17px;color:var(--ink);border:none;flex:none}
+nav a.s{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border:none;flex:none}
+nav a.s:hover{color:var(--acc)}
+
+.wrap{max-width:860px;margin:0 auto;padding-block:0 72px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.mast{padding-block:52px 28px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:0 0 12px}
+h1{font-family:var(--disp);font-weight:400;font-size:clamp(40px,10vw,76px);line-height:1;margin:0 0 18px;color:var(--acc);text-wrap:balance}
+.lede{font-size:19px;line-height:1.5;color:var(--soft);margin:0;max-width:62ch}
+.status{display:flex;gap:12px;align-items:flex-start;background:var(--warn-soft);border:1px solid rgba(255,176,32,.3);border-radius:8px;padding:14px 16px;margin-top:24px}
+.status p{margin:0}
+
+section{border-top:1px solid var(--line);padding-block:36px 8px}
+h2{font-family:var(--disp);font-weight:400;font-size:clamp(26px,5vw,34px);line-height:1.15;margin:0 0 14px;text-wrap:balance}
+h3{font-size:18px;font-weight:600;margin:30px 0 8px;color:var(--ink)}
+p{margin:0 0 14px;max-width:68ch}
+ul,ol{margin:0 0 16px;padding-left:22px;max-width:68ch}
+li{margin-bottom:6px}
+.where{font-family:var(--mono);font-size:12px;color:var(--dim);margin:-6px 0 16px;max-width:none}
+.where b{color:var(--soft);font-weight:500}
+.beta{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn);border:1px solid rgba(255,176,32,.45);border-radius:3px;padding:1px 6px;vertical-align:2px;white-space:nowrap}
+.note{background:var(--panel);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:12px 14px;margin:16px 0 18px;max-width:68ch}
+.note p:last-child{margin:0}
+
+figure{margin:20px 0 24px}
+figure img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#000}
+figure.narrow{max-width:300px}
+figure.mid{max-width:560px}
+figcaption{font-size:13.5px;color:var(--dim);margin-top:8px;max-width:68ch}
+
+.tw{overflow-x:auto;margin:14px 0 22px;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:14.5px;font-variant-numeric:tabular-nums}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);font-weight:500;text-align:left;background:var(--panel)}
+th,td{padding:8px 12px;border-bottom:1px solid var(--line2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--soft)}
+@media (max-width:520px){.lede{font-size:17px}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<nav aria-label="Sections">
+  <a class="logo" href="#top">Screen</a>
+  <a class="s" href="#setup">Set up</a>
+  <a class="s" href="#connect">Connect</a>
+  <a class="s" href="#modules">Modules</a>
+  <a class="s" href="#pad">Pad</a>
+  <a class="s" href="#controls">Controls</a>
+  <a class="s" href="#devices">Devices</a>
+  <a class="s" href="#routing">Routing</a>
+  <a class="s" href="#link">Link</a>
+  <a class="s" href="#au">AUv3</a>
+  <a class="s" href="#know">Good to know</a>
+</nav>
+
+<div class="wrap" id="top">
+
+<header class="mast">
+  <p class="eyebrow">Alchemy Lab · iPhone and iPad · version 0.1</p>
+  <h1>Alchemy Screen</h1>
+  <p class="lede">Your phone or iPad as a screen and controller for the Alchemy Lab. See Belt's tuning, play its knobs, move presets and files, plug controllers into a hub, and run two modules as one instrument.</p>
+  <div class="status">
+    <p><span class="beta">Beta</span> So far the app has run in the iOS Simulator, against pretend modules and two emulated ones running the real firmware. It has not yet been used with a real module. Anything marked <span class="beta">Untested</span> below is built but unproven on hardware.</p>
+  </div>
+</header>
+
+<section id="setup">
+<h2>Set up the module</h2>
+<p>The app talks to the module over its front USB-C, in a USB mode called Phone. You need a Belt build that includes it. Phone mode isn't in a Belt release yet, so check you have a build that has it before you start: the <span class="ui">USB port</span> setting will offer <span class="ui">Phone</span> if it does.</p>
+<ol>
+  <li>On the module, hold <b>B2 + B3</b> for 2 seconds to open Settings.</li>
+  <li>Press <b>B1</b> until you reach the Firmware page.</li>
+  <li>Turn <b>P6</b>, <span class="ui">USB port</span>, to <span class="ui">Phone</span>.</li>
+  <li>Power the module off and on. The setting takes effect at power-up.</li>
+</ol>
+<div class="tw"><table>
+  <tr><th>USB port</th><th>What the front USB-C does</th></tr>
+  <tr><td>Mac</td><td>The default. For the web programmer and a computer.</td></tr>
+  <tr><td>Launchpad</td><td>The module hosts controllers itself.</td></tr>
+  <tr><td>Audio</td><td>A USB audio interface.</td></tr>
+  <tr><td>Phone</td><td>The app: screen, knobs, files, firmware, and controllers on the phone's hub.</td></tr>
+  <tr><td>Phone+Audio <span class="beta">Untested</span></td><td>All of Phone, plus 2-in, 2-out audio at 48 kHz on the same cable. With two modules, only one can carry audio.</td></tr>
+</table></div>
+<p>To get back to Mac mode for one boot, hold <b>B1</b> while powering up. The setting is shared across firmwares on the card, so switching firmware keeps it.</p>
+</section>
+
+<section id="connect">
+<h2>Connect</h2>
+<p class="where"><b>Connect</b> appears by itself until a module is connected. After that it's a tab. On an iPad in portrait, tap <b>&gt;</b> at the end of the tab bar to reach it.</p>
+
+<h3>USB cable or hub</h3>
+<p>Plug one module straight into the phone, or two through a USB-C hub. There's nothing to tap: a device with "alchemy" in its name connects by itself. The app tells modules apart by a number each one reports, so it doesn't matter which hub port they're in.</p>
+<p>The modules take no power from USB. Use a hub with a USB-C PD power-in port for the hub and any controllers. At 30 W or more it also charges an iPad. Two identical modules on one hub are <span class="beta">Untested</span>.</p>
+
+<h3>Bluetooth <span class="beta">Untested</span></h3>
+<p>Fit a USB-host Bluetooth MIDI adapter, such as a CME WIDI Uhost, to each module's USB-C. Then tap <span class="ui">Pair a Bluetooth MIDI adapter</span>. If the adapter doesn't connect by itself, tap it under <span class="ui">Other MIDI devices</span>. Once it has answered, it connects by itself next time. One adapter on a hub serving two modules doesn't work.</p>
+<div class="tw"><table>
+  <tr><th></th><th>USB</th><th>Bluetooth</th></tr>
+  <tr><td>Screen updates per second</td><td>15</td><td>6</td></tr>
+  <tr><td>Knob writes per second, at most</td><td>60</td><td>20</td></tr>
+  <tr><td>File speed</td><td>about 60 KB/s</td><td>about 4 KB/s</td></tr>
+</table></div>
+
+<h3>Try it without a module</h3>
+<p>Tap <span class="ui">Try one demo module</span> or <span class="ui">Try two demo modules</span> for pretend modules inside the app, with fake singing, a saved preset and a small card. On a phone these are further down the page. <span class="ui">Stop the demo</span> ends it. Connecting a real module stops the demo too.</p>
+
+<h3>The module emulator</h3>
+<p>For developers. The Alchemy Lab emulator runs real firmware on a Mac. Start it with <code>--usb phone --hostlink 5071</code>, and <code>5072</code> for a second one, then tap <span class="ui">Connect to the module emulator</span>. In the Simulator the host is <code>127.0.0.1</code>. On a real device, type the Mac's address. The app retries every 2 seconds until the emulator answers. Firmware switching lists nothing here.</p>
+
+<h3>Names and the module menu</h3>
+<p>With two modules, the lower unit number is <span class="ui">Left</span> and the other <span class="ui">Right</span>. The round <b>…</b> button at the top of each module shows its firmware, plus <span class="ui">Rename…</span> and <span class="ui">Disconnect</span>. A name stays with that module on any cable or adapter.</p>
+<p>After <span class="ui">Disconnect</span>, or if a device never answers, the app leaves it alone. Tap it under <span class="ui">Other MIDI devices</span> to try again, or relaunch the app.</p>
+</section>
+
+<section id="modules">
+<h2>Modules</h2>
+<p class="where"><b>iPad:</b> two modules side by side, each with its own controls. <b>iPhone:</b> a Left / Right switch at the top.</p>
+<figure>
+  <img src="img/modules.jpg" width="900" height="1200" loading="lazy" alt="Two Belt screens side by side on an iPad, each showing a large note name, a tuning needle, a pitch graph, four voices, HARD and MUTE buttons and level meters.">
+  <figcaption>iPad, two demo modules. Each has its icon bar for Screen, Knobs, Presets, Samples and Firmware.</figcaption>
+</figure>
+
+<h3>Screen</h3>
+<ul>
+  <li><b>The big note</b> is the note Belt is pulling the voice to, not the note you sang. It's green within 10 cents, orange outside that, and grey when you aren't singing.</li>
+  <li><b>Cents and needle</b> show how far off you are. The needle stops at ±50, and the green zone is the middle.</li>
+  <li><b>The pitch graph</b> shows the last 5 seconds or so, newest at the right, with gaps where you stopped. Notes in the scale are brighter and labelled, and the target's line is green. Rings mark the harmony notes.</li>
+  <li><b>Voice 1 to 4</b> show each harmony's interval and note.</li>
+  <li><b>In, Out, CPU:</b> the meters turn yellow above −12 dB and red above −3 dB. CPU turns red above 85%.</li>
+  <li>When a hand moves a knob on the panel, its name and value appear for a moment. The <span class="ui">Play</span> and <span class="ui">Setup</span> chips show the panel's page. They aren't buttons.</li>
+</ul>
+<figure class="narrow">
+  <img src="img/phone.jpg" width="480" height="1044" loading="lazy" alt="One Belt screen on an iPhone, with a Left and Right switch at the top, the note A4, plus 77 cents, a pitch graph, voices, and HARD and MUTE buttons.">
+  <figcaption>iPhone, with the Left / Right switch at the top.</figcaption>
+</figure>
+
+<h3>HARD and MUTE</h3>
+<p>Tap to latch on or off. A lock icon shows it's latched. For on-only-while-held, hold past about half a second. A shorter press also latches.</p>
+<div class="note"><p>MUTE here is a plain mute. It isn't the panel's long B2 press, which is Belt's HOLD. HOLD has no control in the app, so use the panel.</p></div>
+
+<h3>Other firmware</h3>
+<p>A firmware that doesn't report Belt's state gets a copy of the panel instead: drag a ring up or down to turn its knob, 220 points for full travel. Button presses work only if the firmware allows them.</p>
+
+<h3>Knobs</h3>
+<p>Every knob and setting, by page, using the chips at the top. Each page has six positions, P1 to P6, like the panel. Drag a dial up to raise it, or tap one of the named choices. <span class="ui">What it does</span> opens the help text where the firmware provides it.</p>
+<p>You can't change <span class="ui">USB port</span> here, because that would cut the phone off.</p>
+<figure>
+  <img src="img/knobs.jpg" width="900" height="802" loading="lazy" alt="Left shows the Knobs view with Key, Scale, Retune, Amount, Harmony and Formant. Right shows the Presets view: sixteen slots, with slot 1 saved.">
+  <figcaption>Left on Knobs, Right on Presets. On iPad, each module keeps its own view.</figcaption>
+</figure>
+
+<h3>Presets</h3>
+<p>Sixteen slots, marked <span class="ui">saved</span>, <span class="ui">empty</span> or <span class="ui">other fw</span>, which means another firmware owns that slot. Tap a saved slot to load it. Touch and hold a slot for <span class="ui">Save current sound here</span>, <span class="ui">Load</span> and <span class="ui">Clear</span>.</p>
+<p><span class="ui">Clear</span> doesn't ask first. Saving over a used slot does. Pull down to refresh after saving on the panel.</p>
+
+<h3>Samples</h3>
+<p>The module's SD card. Tap a folder to open it and <span class="ui">Up</span> to go back. The buttons at the top left are <span class="ui">New folder</span>, <span class="ui">Record</span> and <span class="ui">Add files</span>. Swipe a file or folder to delete it, which doesn't ask first. Locked files stay put.</p>
+<p>Files arrive in one piece or not at all, so a pulled cable leaves no half-written file. For big batches, a USB-C card reader is much quicker. The app can't download files from the card or rename them.</p>
+<p><b>Record a clip.</b> <span class="ui">Record</span> captures up to 30 seconds from the phone's mic as 48 kHz mono WAV. <span class="ui">Listen</span> plays it back, and you can then name it and save it to the folder you're in. A 5-second clip takes about 8 seconds over USB and about 2 minutes over Bluetooth. Belt doesn't play samples, so clips are for firmwares that do.</p>
+
+<h3>Firmware</h3>
+<p>Lists the <code>.bin</code> files in <code>/alchemy</code> on the card. Tap one, then <span class="ui">Write it and reboot</span>. The module checks, erases, writes, verifies and reboots, and the steps show as it goes. Don't unplug its power while it writes. <span class="ui">Add a .bin</span> copies a file to the card.</p>
+<p>Picking the firmware already running changes nothing. If the new firmware has no Phone mode, the phone loses the module. Switch back from the panel, a Mac or the card.</p>
+
+<h3>One screen</h3>
+<p class="where"><b>Modules</b> tab, with two modules: <b>One screen</b> at the top.</p>
+<p>Both pitch traces on one graph, Left in orange and Right in cyan, on Left's note lanes. Below that is a tuner, voices and levels for each. This view is for watching only: use <span class="ui">Side by side</span> or <span class="ui">Each module</span> for the buttons.</p>
+<figure>
+  <img src="img/onescreen.jpg" width="900" height="802" loading="lazy" alt="One graph with an orange and a cyan pitch trace, above tuner, voice and level panels for Left and Right.">
+  <figcaption>Left in orange, Right in cyan.</figcaption>
+</figure>
+</section>
+
+<section id="pad">
+<h2>Pad</h2>
+<p>A square you play with one finger or an Apple Pencil, giving X, Y and pressure. The chips at the top show what each one drives. Set those on the <a href="#sources">Controls</a> tab.</p>
+<p>Apple Pencil gives true pressure. A finger gives contact size, so pressing flatter reads harder.</p>
+<ul>
+  <li><span class="ui">Hold</span> leaves X and Y where you let go. <span class="ui">Spring back</span> returns them to the centre. Pressure drops to zero with either.</li>
+  <li><b>Loops:</b> tap <span class="ui">Record</span>, then draw. When you lift your finger, the gesture loops at once, as long as you drew it. Touching the pad stops the loop, and <span class="ui">Play loop</span> starts it again.</li>
+  <li>The only way to replace a loop is to record a new one. Loops and the Hold setting aren't kept between launches.</li>
+</ul>
+<figure class="mid">
+  <img src="img/pad.jpg" width="760" height="1013" loading="lazy" alt="The XY pad with a recorded gesture drawn as a faint diagonal trail, a dot for the current position, and Hold, Spring back, Play loop and Record controls at the bottom.">
+  <figcaption>A recorded gesture shows as a faint trail. Nothing is assigned yet, so X, Y and Press read <span class="ui">Not set</span>.</figcaption>
+</figure>
+</section>
+
+<section id="controls">
+<h2>Controls</h2>
+<h3 id="sources">Pad, tilt and mic</h3>
+<p>Each source can drive one knob on either module, over any part of its range, and can also send MIDI. Tap a source, pick a knob, then set <span class="ui">From</span> and <span class="ui">To</span>. Setting From higher than To turns it round, and <span class="ui">Flip</span> swaps them. If two sources share a knob, the later one wins.</p>
+<div class="tw"><table>
+  <tr><th>Source</th><th>Moved by</th></tr>
+  <tr><td>Pad X, Pad Y, Pressure</td><td>The <a href="#pad">Pad</a> tab.</td></tr>
+  <tr><td>Tilt, Roll, Turn</td><td>Moving the device, once <span class="ui">Use tilt and turn</span> is on. Tilt leans the top away or towards you, roll leans it sideways, turn spins it flat on a table. <span class="ui">Zero</span> makes the current position the middle. Full sweep is 10° to 90° either side, 40° by default.</td></tr>
+  <tr><td>Mic level, Mic pitch</td><td>The phone's mic, once <span class="ui">Use the mic</span> is on. Level follows loudness. Pitch follows the note up to about B5.</td></tr>
+</table></div>
+<p>The mic only moves knobs. To sing into Belt, cable the phone's audio out to the module's input. Tilt and mic switch off when the app relaunches.</p>
+
+<h3>Controllers on the hub <span class="beta">Untested</span></h3>
+<p>A Launchpad Mini MK3, a Launch Control XL, a gamepad or any MIDI device can share the hub with the modules. Each one's menu sets where it goes:</p>
+<div class="tw"><table>
+  <tr><th>Setting</th><th>What happens</th></tr>
+  <tr><td>Left, Right, Both</td><td>It plays that module as in the module's own Launchpad mode, with its LEDs. With Both, the LEDs come from the first module. Not offered for other MIDI gear.</td></tr>
+  <tr><td>App only</td><td>Only what you've mapped below. The default for other MIDI gear.</td></tr>
+  <tr><td>Off</td><td>Ignored, and it can't be learned.</td></tr>
+</table></div>
+<p>Only the Mini MK3 and the original XL get this treatment. A newer Launchpad or XL counts as plain MIDI. On iPad, set a Haute42 to PS4 mode, because iPadOS doesn't recognise its XInput mode.</p>
+
+<h3>Learn and mappings</h3>
+<ol>
+  <li>Tap <span class="ui">Learn: move a control, then pick what it does</span>.</li>
+  <li>Move a knob, fader, pad or button. Nothing reaches the modules while Learn waits.</li>
+  <li>Tap <span class="ui">Pick what it does</span> and choose a target, then <span class="ui">Save</span>.</li>
+  <li>Use <span class="ui">Add another target</span> to drive more things, each over its own range.</li>
+</ol>
+<p>Targets are any knob on either module, the Pad, sharing the key, splitting harmonies, HARD, mute, next or previous preset, or a MIDI CC or note on another device. A button can <span class="ui">Hold</span> or <span class="ui">Latch</span>. A mapped control isn't sent to the module as well.</p>
+<p>The <span class="ui">Device</span> picker starts on the first device that isn't the one you learned from, so check it before saving. Mappings are kept by controller name and come back when you plug it in again. <span class="ui">Mapped in the app</span> lists them. Swipe to remove.</p>
+</section>
+
+<section id="devices">
+<h2>On-screen devices</h2>
+<p class="where"><b>iPad:</b> Devices tab, all four at once. <b>iPhone:</b> Controls &gt; On-screen devices &gt; Play them, one at a time. <b>Demo and emulator only.</b></p>
+<p>A Launchpad Mini MK3, Launch Control XL, gamepad and Daisy Patch on the screen, for trying controllers, Learn and routes without any hardware. They reach the app the way real ones do, under the real ones' names, so what you set up by device name carries over. Anything tied to a demo or emulated module doesn't, because modules are kept by unit number.</p>
+<figure>
+  <img src="img/devices.jpg" width="900" height="1055" loading="lazy" alt="The Devices tab on iPad with a Launchpad grid, Launch Control XL knobs, faders and buttons, a gamepad, and a Daisy Patch with four knobs, a gate and a MIDI monitor.">
+  <figcaption>The status at the top right of each panel shows where it's sending and the last control moved.</figcaption>
+</figure>
+<ul>
+  <li><b>Launchpad:</b> lit with the colours the module sends. The top-right logo isn't a button. Several fingers work at once.</li>
+  <li><b>Launch Control XL:</b> drag knobs up or right. Faders jump to your finger.</li>
+  <li><b>Gamepad:</b> buttons only, with no sticks.</li>
+  <li><b>Daisy Patch:</b> four knobs on CC 21 to 24, a gate on note C4, all on channel 1, and a monitor of the last 50 MIDI messages it received.</li>
+</ul>
+<p><span class="ui">Learn</span> at the top of the page works in place: the devices stay visible until a control moves. To use the names your real gamepad and Daisy Patch show, set them under Controls &gt; On-screen devices.</p>
+</section>
+
+<section id="routing">
+<h2>Routing</h2>
+<p class="where"><b>iPad:</b> Routing tab, as a List or a Matrix. <b>iPhone:</b> Controls &gt; MIDI routing, list only.</p>
+<p>The phone is the hub's only host, so everything between devices goes through the app and no TRS cables are needed. A route sends any source to any destination. Routing pauses while the app is in the background.</p>
+<figure class="mid">
+  <img src="img/matrix.jpg" width="800" height="580" loading="lazy" alt="A grid with sources down the side and destinations across the top. Dots mark Left to Launch Control XL, Launchpad to Right, and Daisy Patch to Left.">
+  <figcaption>A filled dot is a route that's on, a ring one that's off, and a number means several. Tap an empty square to add a route.</figcaption>
+</figure>
+<p>In the list, tap a route to edit it, use its switch to turn it off, or swipe to remove it. Held notes are let go when a route goes away. A route that would feed back into itself is refused, even through a route that's switched off.</p>
+<div class="tw"><table>
+  <tr><th>From</th><th>Options</th></tr>
+  <tr><td>A MIDI device</td><td>What passes: Notes, CC, Pitch bend, Aftertouch, Program change, Clock and transport. In channel, Out channel, and Transpose up to ±48.</td></tr>
+  <tr><td>A gamepad</td><td>Buttons play notes, rising from a first note, C2 by default, in this order: up, down, left, right, start, back, L3, R3, LB, RB, home, A, B, X, Y, LT, RT. Gamepads only send.</td></tr>
+  <tr><td>A module</td><td><span class="ui">Sung note</span>, <span class="ui">Harmony voices too</span>, and to a device, knobs as CCs. It follows a few tens of milliseconds behind.</td></tr>
+</table></div>
+
+<h3>Notes to a module</h3>
+<p>A module plays routed notes as a keyboard, with CC 64 as its sustain pedal. It holds up to 10 notes on 4 voices, and a new note takes the oldest note's voice. In Harmony mode a held note replaces a voice's interval. In Target mode the newest held note is the correction target. Other CCs reach it only through mappings you've learned.</p>
+<p>To reach both modules, make a route to each. A route has no Both destination.</p>
+<div class="note"><p>A controller set to Left, Right or Both, or a mapped control, isn't routed as well, so nothing plays twice. If a route from one seems silent, set it to <span class="ui">App only</span> or turn on <span class="ui">Include mapped controls</span> in the route.</p></div>
+<p>SysEx is never routed.</p>
+</section>
+
+<section id="link">
+<h2>Linking two modules</h2>
+<p class="where"><b>Link</b> tab, once two modules are connected.</p>
+<p>The app is the go-between. The modules never talk to each other directly.</p>
+<ul>
+  <li><span class="ui">Share key and scale</span>: turning it on copies Left's key and scale to Right. After that, change either and the other follows.</li>
+  <li><span class="ui">Split harmonies across both</span>: four voices, two sung by each module. Left sings Voices 1 and 2, and Right sings 3 and 4 on its own Voice 1 and 2. Cable the same voice into both modules. Each output carries its two harmonies. The key stays shared while this is on.</li>
+  <li><span class="ui">Add a knob that drives another</span>: one knob drives a knob on the other module, over the range you set. It's one way, and a follow that would loop back is refused. Swipe to remove.</li>
+</ul>
+<p>Clock, gates and audio between the modules belong on patch cables. Through the phone they arrive a few milliseconds late over USB, and 25 ms or more over Bluetooth.</p>
+</section>
+
+<section id="au">
+<h2>AUv3 plug-in <span class="beta">Untested</span></h2>
+<p>The app includes an Audio Unit MIDI processor called <b>Alchemy Lab: Alchemy Screen</b>, for AUM, Loopy Pro and other hosts. It loads in the Simulator but hasn't been tried in a host app yet.</p>
+<p>It gives each module, A and B (the app's Left and Right), 14 automatable parameters. All incoming MIDI also passes to the host's MIDI output. A CC on any channel moves the matching parameter across its whole range.</p>
+<div class="tw"><table>
+  <tr><th>Parameter</th><th>Range</th><th>CC, module A</th><th>CC, module B</th></tr>
+  <tr><td>Key</td><td>12 notes</td><td>20</td><td>52</td></tr>
+  <tr><td>Scale</td><td>9 scales</td><td>21</td><td>53</td></tr>
+  <tr><td>Retune</td><td>0–100%</td><td>22</td><td>54</td></tr>
+  <tr><td>Amount</td><td>0–100%</td><td>23</td><td>55</td></tr>
+  <tr><td>Harmony</td><td>0–100%</td><td>24</td><td>56</td></tr>
+  <tr><td>Formant</td><td>−100 to +100</td><td>25</td><td>57</td></tr>
+  <tr><td>Voice 1–4</td><td>12 intervals</td><td>26–29</td><td>58–61</td></tr>
+  <tr><td>Doubler</td><td>0–100%</td><td>30</td><td>62</td></tr>
+  <tr><td>Spread</td><td>0–100%</td><td>31</td><td>63</td></tr>
+  <tr><td>HARD</td><td>Off, on (64 and up)</td><td>32</td><td>64</td></tr>
+  <tr><td>Mute</td><td>Off, on (64 and up)</td><td>33</td><td>65</td></tr>
+</table></div>
+<div class="note"><p>Disconnect the module in the app, or close the app, while a host uses the plug-in. Both can hold a module at once, and that can cause occasional failed writes.</p></div>
+<p>The plug-in finds modules by name, so keep "Alchemy" in the name of any Bluetooth adapter. A module that connects after a session loads keeps its own settings, and the parameters follow it. Its output bus is silent. Audio from a module reaches iOS by an audio interface or Phone+Audio.</p>
+</section>
+
+<section id="know">
+<h2>Good to know</h2>
+<h3>Things that don't ask first</h3>
+<ul>
+  <li><span class="ui">Clear</span> on a preset, and swiping to delete a file or folder.</li>
+</ul>
+<h3>In the background</h3>
+<p>The app works in the foreground only. Leave it and routing pauses, a Launchpad goes back to Live mode, an XL's LEDs go off, and modules are told their controllers have gone.</p>
+<h3>Kept between launches</h3>
+<p>Module names, routes, mappings, Link settings, controller settings and emulator settings. Not kept: Hold or Spring back, the recorded loop, tilt and mic switches, and which view each module was on.</p>
+<h3>Messages</h3>
+<div class="tw"><table>
+  <tr><th>Message</th><th>What to do</th></tr>
+  <tr><td>A module doesn't appear</td><td>Check its <span class="ui">USB port</span> is on Phone and power it up again. Then tap it under <span class="ui">Other MIDI devices</span>. Giving up on a silent device can take about 20 seconds.</td></tr>
+  <tr><td>This will be slow</td><td>A file that will take a while over this link. Use a cable or card reader, or <span class="ui">Send it anyway</span>.</td></tr>
+  <tr><td>No SD card in the module.</td><td>Fit a card. Samples and Firmware need one.</td></tr>
+  <tr><td>That change didn't reach the module</td><td>A knob write failed. Try again and check the connection.</td></tr>
+  <tr><td>It stopped (…). Nothing was booted.</td><td>A firmware switch failed. If it stopped while writing, switch again before you power the module off.</td></tr>
+  <tr><td>This module's firmware doesn't play notes</td><td>A route can't play on this firmware. Update to a build with Phone mode that supports notes.</td></tr>
+  <tr><td>CCs are dropped: none learned</td><td>Only CC 64 reaches a module by route. Learn a mapping for anything else.</td></tr>
+  <tr><td>Firmware without controller support</td><td>Update the firmware to forward controllers.</td></tr>
+  <tr><td>Can't add that route</td><td>It would loop, even through a route that's switched off, or the destination is a gamepad.</td></tr>
+  <tr><td>Allow the microphone in Settings</td><td>Go to Settings &gt; Privacy &gt; Microphone and allow Alchemy Screen.</td></tr>
+</table></div>
+<p><a href="../">Belt manual</a> · <a href="https://timncox.github.io/alchemy-lab/">Alchemy Lab homepage</a></p>
+</section>
+
+</div>
+</body>
+</html>
