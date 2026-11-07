@@ -29,7 +29,7 @@ struct ControllersSection: View {
             }
             if let line = unsupportedLine {
                 Label(line, systemImage: "exclamationmark.triangle")
-                    .font(.footnote).foregroundStyle(.orange)
+                    .font(.footnote).foregroundStyle(Theme.key)
             }
         } header: {
             Text("Controllers")
@@ -54,7 +54,7 @@ private struct ControllerRow: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .frame(width: 28)
-                .foregroundColor(.orange)
+                .foregroundColor(Theme.key)
             VStack(alignment: .leading, spacing: 2) {
                 Text(controller.name).lineLimit(1)
                 Text(hub.lastMoved[controller.id] ?? controller.kind.label)

@@ -8,6 +8,8 @@ struct AlchemyScreenApp: App {
     @StateObject private var controllers = ControllerHub()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() { Theme.applyAppearance() }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -78,21 +80,23 @@ struct ModulesView: View {
     @AppStorage("oneScreen") private var oneScreen = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if rig.canLink {
-                Picker("View", selection: $oneScreen) {
-                    Text(hsc == .regular ? "Side by side" : "Each module").tag(false)
-                    Text("One screen").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal).padding(.top, 6)
-            }
-            if oneScreen && rig.canLink {
-                CombinedScreen()
-            } else {
+        // One screen scrolls, so its switch rides at the top of the scroll
+        // rather than under the tab bar.
+        if oneScreen && rig.canLink {
+            CombinedScreen(header: AnyView(layoutTabs.padding(.horizontal, -16)))
+        } else {
+            VStack(spacing: 0) {
+                if rig.canLink { layoutTabs.padding(.top, 6) }
                 columns
             }
         }
+    }
+
+    private var layoutTabs: some View {
+        SectionTabs(items: ModulesLayout.allCases,
+                    title: { $0 == .one ? "One screen" : (hsc == .regular ? "Side by side" : "Each module") },
+                    selection: Binding(get: { oneScreen ? .one : .each }, set: { oneScreen = $0 == .one }),
+                    quiet: true)
     }
 
     @ViewBuilder private var columns: some View {
@@ -110,6 +114,12 @@ struct ModulesView: View {
 
 /// Everything for one module: its screen, knobs, presets, files and
 /// firmware. Each half of the iPad has its own.
+/// The Modules tab's two layouts, for its word tabs.
+enum ModulesLayout: String, CaseIterable, Identifiable {
+    case each, one
+    var id: String { rawValue }
+}
+
 struct ModuleColumn: View {
     @ObservedObject var module: ModuleStore
     @EnvironmentObject var rig: Rig
@@ -150,7 +160,7 @@ struct ModuleColumn: View {
                 Spacer()
             case .failed(let why):
                 Spacer()
-                Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).padding()
+                Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.key).padding()
                 Spacer()
             case .ready:
                 SectionTabs(items: sections, title: { $0.title }, selection: $section)

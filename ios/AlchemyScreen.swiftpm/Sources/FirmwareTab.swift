@@ -41,7 +41,7 @@ struct FirmwareTab: View {
                     Text("Tap one to switch to it. Picking the firmware that is already running changes nothing. The phone keeps working afterwards only if the new firmware has Phone mode too; otherwise use the module, a Mac, or the card.")
                 }
             }
-            .navigationTitle("Firmware")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Not .bottomBar: inside a TabView it sits behind the tab bar.

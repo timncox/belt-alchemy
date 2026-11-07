@@ -80,7 +80,7 @@ struct RoutingScreen: View {
             Section {
                 ForEach(endpoints, id: \.self) { e in
                     HStack(spacing: 12) {
-                        Image(systemName: hub.endpointIcon(e)).frame(width: 28).foregroundColor(.orange)
+                        Image(systemName: hub.endpointIcon(e)).frame(width: 28).foregroundColor(Theme.key)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(hub.endpointName(e)).lineLimit(1)
                             Text(role(e)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -128,17 +128,17 @@ private struct MIDIRouteRow: View {
             Button(action: edit) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Image(systemName: hub.endpointIcon(route.from)).foregroundColor(.orange)
+                        Image(systemName: hub.endpointIcon(route.from)).foregroundColor(Theme.key)
                         Text(hub.endpointName(route.from)).lineLimit(1)
                         Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary)
-                        Image(systemName: hub.endpointIcon(route.to)).foregroundColor(.orange)
+                        Image(systemName: hub.endpointIcon(route.to)).foregroundColor(Theme.key)
                         Text(hub.endpointName(route.to)).lineLimit(1)
                     }
                     Text(route.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     if let note = hub.routeNote(route) {
                         Label(note.text, systemImage: note.warn ? "exclamationmark.triangle" : "info.circle")
                             .font(.caption)
-                            .foregroundColor(note.warn ? .orange : .secondary)
+                            .foregroundColor(note.warn ? Theme.key : .secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -161,6 +161,7 @@ private struct RoutingMatrix: View {
 
     var body: some View {
         let sources = hub.routeSources, dests = hub.routeDestinations
+        GeometryReader { geo in
         ScrollView([.horizontal, .vertical]) {
             VStack(alignment: .leading, spacing: 12) {
                 if sources.isEmpty || dests.isEmpty {
@@ -173,7 +174,7 @@ private struct RoutingMatrix: View {
                                 .frame(width: labelWidth, alignment: .leading)
                             ForEach(dests, id: \.self) { d in
                                 VStack(spacing: 2) {
-                                    Image(systemName: hub.endpointIcon(d)).foregroundColor(.orange)
+                                    Image(systemName: hub.endpointIcon(d)).foregroundColor(Theme.key)
                                     Text(hub.endpointName(d)).font(.caption2).lineLimit(2).multilineTextAlignment(.center)
                                 }
                                 .frame(width: cell, height: rowHeight + 8)
@@ -183,7 +184,7 @@ private struct RoutingMatrix: View {
                         ForEach(sources, id: \.self) { s in
                             GridRow {
                                 HStack(spacing: 8) {
-                                    Image(systemName: hub.endpointIcon(s)).foregroundColor(.orange).frame(width: 24)
+                                    Image(systemName: hub.endpointIcon(s)).foregroundColor(Theme.key).frame(width: 24)
                                     Text(hub.endpointName(s)).font(.subheadline).lineLimit(1)
                                 }
                                 .frame(width: labelWidth, height: rowHeight, alignment: .leading)
@@ -198,6 +199,9 @@ private struct RoutingMatrix: View {
                 }
             }
             .padding()
+            // Pinned to the top left; a two-way scroll view centres what's smaller than it.
+            .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
+        }
         }
     }
 
@@ -211,8 +215,8 @@ private struct RoutingMatrix: View {
                 RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(usable ? 0.06 : 0.02))
                 if let r = rs.first {
                     Circle()
-                        .fill(rs.contains { $0.enabled } ? Color.orange : Color.clear)
-                        .overlay(Circle().stroke(Color.orange, lineWidth: 2))
+                        .fill(rs.contains { $0.enabled } ? Theme.key : Color.clear)
+                        .overlay(Circle().stroke(Theme.key, lineWidth: 2))
                         .frame(width: 18, height: 18)
                         .accessibilityLabel(r.enabled ? "Route on" : "Route off")
                     if rs.count > 1 {

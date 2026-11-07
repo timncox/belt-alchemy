@@ -23,7 +23,7 @@ struct DevicesScreen: View {
                     Button("Cancel") { hub.cancelLearn() }
                 }
                 .padding(.horizontal).padding(.vertical, 8)
-                .background(Color.orange.opacity(0.2))
+                .background(Theme.key.opacity(0.2))
             }
             if !rig.virtualOn {
                 Spacer()
@@ -72,7 +72,7 @@ private struct DevicePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Label(name, systemImage: device.icon).font(.headline).lineLimit(1)
+                Label(name, systemImage: device.icon).font(Theme.display(17, weight: .bold)).foregroundStyle(Theme.mist).lineLimit(1)
                 Spacer(minLength: 8)
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -84,7 +84,7 @@ private struct DevicePanel: View {
             }
         }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.05)))
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Theme.surface))
     }
 
     private var name: String {
@@ -150,7 +150,7 @@ struct KnobView: View {
                     .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(135))
                 Circle().trim(from: 0, to: 0.75 * Double(value) / 127)
-                    .stroke(Color.orange, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(Theme.key, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(135))
                 if let led { Circle().fill(led).frame(width: 9, height: 9) }
             }
@@ -323,7 +323,7 @@ private struct GamepadPanel: View {
     }
 
     private func button(_ b: XInputButton, _ label: String, round: Bool = false) -> some View {
-        PressPad(colour: virtual.pad.held.contains(b) ? .orange : Color(white: 0.22), round: round, label: label) { down in
+        PressPad(colour: virtual.pad.held.contains(b) ? Theme.key : Color(white: 0.22), round: round, label: label) { down in
             virtual.gamepad(b, down: down)
         }
     }
@@ -364,7 +364,7 @@ private struct DaisyPatchPanel: View {
                     }
                 }
             }
-            PressPad(colour: d.gate ? .orange : Color(white: 0.22),
+            PressPad(colour: d.gate ? Theme.key : Color(white: 0.22),
                      label: "Gate · note \(BeltTheory.name(Int(VirtualDaisyPatch.gateNote)))") { down in
                 virtual.daisyGate(down)
             }

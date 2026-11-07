@@ -51,7 +51,7 @@ struct SamplesTab: View {
                     footer
                 }
             }
-            .navigationTitle("Samples")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Not .bottomBar: inside a TabView it sits behind the tab bar.

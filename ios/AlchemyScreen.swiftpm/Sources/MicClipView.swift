@@ -56,7 +56,7 @@ struct MicClipView: View {
                     }
                 }
                 if let p = rec.problem {
-                    Section { Label(p, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                    Section { Label(p, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.key) }
                 }
             }
             .navigationTitle("Record a clip")

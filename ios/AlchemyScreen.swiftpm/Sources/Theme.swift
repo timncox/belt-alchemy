@@ -6,6 +6,7 @@
 // (belt_alchemy.cpp kCol*) so it reads the same as on the module.
 
 import SwiftUI
+import UIKit
 import AlchemyLink
 
 enum Theme {
@@ -37,6 +38,36 @@ enum Theme {
         .system(size: size, weight: weight).width(.expanded)
     }
     static func slab(_ size: CGFloat) -> Font { display(size) }
+
+    /// The same look for the system's own pieces: navigation titles in the
+    /// expanded face, lists and forms on black, segmented controls in mist.
+    static func applyAppearance() {
+        let mistUI = UIColor(mist), fogUI = UIColor(fog)
+        let large = UIFont.systemFont(ofSize: 34, weight: .heavy, width: .expanded)
+        let inline = UIFont.systemFont(ofSize: 17, weight: .bold, width: .expanded)
+
+        let edge = UINavigationBarAppearance()
+        edge.configureWithTransparentBackground()
+        edge.largeTitleTextAttributes = [.font: large, .foregroundColor: mistUI]
+        edge.titleTextAttributes = [.font: inline, .foregroundColor: mistUI]
+        let scrolled = UINavigationBarAppearance()
+        scrolled.configureWithDefaultBackground()
+        scrolled.largeTitleTextAttributes = edge.largeTitleTextAttributes
+        scrolled.titleTextAttributes = edge.titleTextAttributes
+        UINavigationBar.appearance().scrollEdgeAppearance = edge
+        UINavigationBar.appearance().standardAppearance = scrolled
+        UINavigationBar.appearance().compactAppearance = scrolled
+
+        UICollectionView.appearance().backgroundColor = .black
+        UITableView.appearance().backgroundColor = .black
+
+        let seg = UISegmentedControl.appearance()
+        seg.selectedSegmentTintColor = mistUI
+        seg.setTitleTextAttributes([.foregroundColor: UIColor.black,
+                                    .font: UIFont.systemFont(ofSize: 14, weight: .semibold)], for: .selected)
+        seg.setTitleTextAttributes([.foregroundColor: fogUI,
+                                    .font: UIFont.systemFont(ofSize: 14, weight: .medium)], for: .normal)
+    }
 }
 
 /// How a knob's value is drawn, as the firmware's ring draws it.
@@ -155,6 +186,7 @@ struct SectionTabs<T: Hashable & Identifiable>: View {
     var items: [T]
     var title: (T) -> String
     @Binding var selection: T
+    var quiet = false               // small type: a mode switch, not a place
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -163,7 +195,8 @@ struct SectionTabs<T: Hashable & Identifiable>: View {
                     let on = it == selection
                     Button { withAnimation(.easeOut(duration: 0.2)) { selection = it } } label: {
                         Text(title(it))
-                            .font(on ? Theme.display(22) : .system(size: 15, weight: .medium))
+                            .font(quiet ? .system(size: 14, weight: on ? .semibold : .regular)
+                                        : on ? Theme.display(22) : .system(size: 15, weight: .medium))
                             .foregroundStyle(on ? Theme.mist : Theme.fog)
                     }
                     .buttonStyle(.plain)

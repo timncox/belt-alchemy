@@ -30,7 +30,7 @@ struct ScreenTab: View {
                     if let f = touched {
                         HStack(spacing: 8) {
                             Text(f.name).font(.headline)
-                            Text(f.show(store.value(f))).font(.headline.monospacedDigit()).foregroundStyle(.orange)
+                            Text(f.show(store.value(f))).font(.headline.monospacedDigit()).foregroundStyle(Theme.key)
                         }
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .background(.ultraThinMaterial, in: Capsule())
