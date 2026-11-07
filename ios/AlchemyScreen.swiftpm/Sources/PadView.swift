@@ -16,8 +16,8 @@ struct PadView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                HStack(spacing: 10) {
+            VStack(spacing: 16) {
+                HStack(alignment: .top, spacing: 14) {
                     axis(.padX, "X")
                     axis(.padY, "Y")
                     axis(.pressure, "Press")
@@ -28,43 +28,53 @@ struct PadView: View {
                         .frame(width: side, height: side)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                SectionTabs(items: Inputs.Release.allCases, title: { $0.title }, selection: $inputs.release)
+                    .padding(.horizontal, -16)
                 HStack(spacing: 10) {
-                    Picker("Release", selection: $inputs.release) {
-                        ForEach(Inputs.Release.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 240)
                     Spacer()
                     if inputs.looping {
-                        Button { inputs.stopLoop() } label: { Label("Stop loop", systemImage: "stop.fill") }
+                        pill("Stop loop", "stop.fill", on: false) { inputs.stopLoop() }
                     } else if !inputs.motion.isEmpty {
-                        Button { inputs.playLoop() } label: { Label("Play loop", systemImage: "repeat") }
+                        pill("Play loop", "repeat", on: false) { inputs.playLoop() }
                     }
-                    Toggle(isOn: $inputs.recordArmed) {
-                        Label(inputs.recording ? "Recording" : "Record", systemImage: "record.circle")
+                    pill(inputs.recording ? "Recording" : "Record", "record.circle", on: inputs.recordArmed, tint: Theme.alarm) {
+                        inputs.recordArmed.toggle()
                     }
-                    .toggleStyle(.button)
-                    .tint(.red)
                 }
-                .buttonStyle(.bordered)
             }
             .padding()
-            .navigationTitle("Pad")
-            .navigationBarTitleDisplayMode(.inline)
+            .background(Theme.ground)
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
     private func axis(_ s: ControlSource, _ t: String) -> some View {
         let r = rig.target(of: s)
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(t).font(.caption.weight(.bold)).foregroundStyle(.orange)
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(t).font(Theme.display(22, weight: .black))
+                .foregroundStyle(r == nil ? Theme.fog : Theme.key)
             Text(r.map { rig.label($0.target) } ?? "Not set")
-                .font(.caption).lineLimit(1)
-                .foregroundStyle(r == nil ? Color.secondary : Color.primary)
+                .font(.footnote).lineLimit(1)
+                .foregroundStyle(r == nil ? Theme.fog : Theme.mist)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func pill(_ title: String, _ icon: String, on: Bool, tint: Color = Theme.mist,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1).fixedSize()
+                .foregroundStyle(on ? Color.black : Theme.mist)
+                .padding(.horizontal, 16).padding(.vertical, 11)
+                .background {
+                    if on { Capsule().fill(tint).shadow(color: tint.opacity(0.5), radius: 10) }
+                    else { Capsule().fill(.ultraThinMaterial) }
+                }
+                .overlay(Capsule().stroke(Color.white.opacity(on ? 0 : 0.10)))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -77,14 +87,17 @@ private struct PadSurface: View {
         GeometryReader { g in
             let w = g.size.width, h = g.size.height
             ZStack {
-                RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.05))
+                RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Theme.surface)
                 Canvas { ctx, size in
-                    for i in 1..<4 {
-                        let f = CGFloat(i) / 4
-                        var p = Path()
-                        p.move(to: CGPoint(x: size.width * f, y: 0)); p.addLine(to: CGPoint(x: size.width * f, y: size.height))
-                        p.move(to: CGPoint(x: 0, y: size.height * f)); p.addLine(to: CGPoint(x: size.width, y: size.height * f))
-                        ctx.stroke(p, with: .color(.white.opacity(i == 2 ? 0.12 : 0.05)))
+                    // A field of fine dots, the centre lines a touch brighter.
+                    let step = size.width / 16
+                    for gx in 1..<16 {
+                        for gy in 1..<16 {
+                            let centre = gx == 8 || gy == 8
+                            let p = CGPoint(x: CGFloat(gx) * step, y: CGFloat(gy) * size.height / 16)
+                            ctx.fill(Path(ellipseIn: CGRect(x: p.x - 1, y: p.y - 1, width: 2, height: 2)),
+                                     with: .color(Theme.mist.opacity(centre ? 0.22 : 0.08)))
+                        }
                     }
                     if !inputs.motion.isEmpty {
                         var trail = Path()
@@ -92,21 +105,27 @@ private struct PadSurface: View {
                             let q = CGPoint(x: pt.x * size.width, y: (1 - pt.y) * size.height)
                             if i == 0 { trail.move(to: q) } else { trail.addLine(to: q) }
                         }
-                        ctx.stroke(trail, with: .color(.orange.opacity(0.3)), lineWidth: 2)
+                        var glow = ctx
+                        glow.addFilter(.blur(radius: 5))
+                        glow.stroke(trail, with: .color(Theme.key.opacity(0.5)), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                        ctx.stroke(trail, with: .color(Theme.key.opacity(0.8)), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                     }
                 }
-                let r = 14 + 26 * inputs.pressure
+                let r = 16 + 30 * inputs.pressure
+                let live = inputs.touching || inputs.looping
                 Circle()
-                    .fill(Color.orange.opacity(inputs.touching || inputs.looping ? 0.9 : 0.45))
+                    .fill(RadialGradient(colors: [Theme.mist, Theme.key, Theme.key.opacity(0)],
+                                         center: .center, startRadius: 0, endRadius: r))
                     .frame(width: r * 2, height: r * 2)
-                    .shadow(color: .orange.opacity(0.6), radius: 10 * inputs.pressure + 2)
+                    .opacity(live ? 1 : 0.55)
+                    .shadow(color: Theme.key.opacity(0.7), radius: 12 * inputs.pressure + 4)
                     .position(x: inputs.pad.x * w, y: (1 - inputs.pad.y) * h)
                 TouchCatcher(
                     began: { inputs.padBegan() },
                     moved: { x, y, p in inputs.padMoved(x: x, y: 1 - y, pressure: p) },
                     ended: { inputs.padEnded() })
             }
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
         .accessibilityElement()
         .accessibilityLabel("XY pad")

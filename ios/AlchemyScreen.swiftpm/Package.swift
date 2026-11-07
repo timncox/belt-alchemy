@@ -30,7 +30,6 @@ let package = Package(
     ],
     dependencies: [.package(path: "../AlchemyLink")],
     targets: [
-        .executableTarget(name: "AppModule", dependencies: ["AlchemyLink"], path: "Sources",
-                          resources: [.copy("Fonts")])
+        .executableTarget(name: "AppModule", dependencies: ["AlchemyLink"], path: "Sources")
     ]
 )

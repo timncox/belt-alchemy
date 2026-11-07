@@ -1,9 +1,8 @@
-// Belt's screen on the phone: not a copy of the LED rings but what a singer
-// wants to see. The note being sung against the note it's pulled to, how
-// far off in cents, a scrolling pitch graph over the key's lanes with the
-// harmony voices beside it, the knob a hand is on, the page, HARD and the
-// mute as real buttons, and the levels. All from STATE, polled as fast as
-// the link allows (about 15 a second over USB, 6 over Bluetooth); the
+// Belt's screen on the phone: the voice drawn across the whole view, and
+// over it what a singer wants to see. The note it's pulled to, how far off
+// in cents, the harmony voices, the knob a hand is on, the page, HARD and
+// the mute as real buttons, and the levels. All from STATE, polled as fast
+// as the link allows (about 15 a second over USB, 6 over Bluetooth); the
 // graph itself carries every frame the module saw, 60 a second.
 
 import SwiftUI
@@ -15,110 +14,109 @@ struct BeltScreen: View {
     let belt: BeltState
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                PageChips(st: st)
-                Spacer()
-                Text("\(BeltTheory.keys[belt.key % 12]) \(BeltTheory.scales[min(belt.scale, BeltTheory.scales.count - 1)])")
-                    .font(Theme.slab(19))
-                    .foregroundStyle(Theme.key)
-            }
-            HStack(alignment: .center, spacing: 14) {
-                Tuner(belt: belt)
-                    .frame(width: 168, height: 168)
-                Voices(belt: belt)
-            }
-            ZStack(alignment: .top) {
-                PitchGraph(lines: [PitchLine(trace: store.trace, belt: belt, color: Theme.key)])
-                    .frame(minHeight: 160)
-                if let f = store.touchedField {
-                    HStack(spacing: 8) {
-                        Text(f.name).font(.headline).foregroundStyle(Theme.silk)
-                        Text(f.show(store.value(f))).font(Theme.slab(18)).foregroundStyle(KnobLook.of(f, pageColor: nil).color)
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Theme.raised, in: Capsule())
-                    .overlay(Capsule().stroke(Theme.silk.opacity(0.12)))
-                    .padding(.top, 8)
-                    .transition(.opacity)
+        ZStack {
+            PitchGraph(lines: [PitchLine(trace: store.trace, belt: belt, color: Theme.key)], fieldStyle: true)
+                .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.28),
+                                             .init(color: .black, location: 0.72), .init(color: .clear, location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
+                .padding(.vertical, 8)
+
+            VStack(alignment: .leading, spacing: 0) {
+                NoteReadout(belt: belt)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("\(BeltTheory.keys[belt.key % 12]) \(BeltTheory.scales[min(belt.scale, BeltTheory.scales.count - 1)].lowercased())")
+                        .font(Theme.display(18, weight: .semibold))
+                        .foregroundStyle(Theme.mist)
+                    PageLine(st: st)
                 }
+                .padding(.top, 10)
+                Spacer(minLength: 20)
+                Voices(belt: belt)
+                    .padding(.bottom, 16)
+                HStack(spacing: 10) {
+                    BeltButton(title: "Hard", on: belt.hard, latched: belt.hardLatched, button: 0)
+                    BeltButton(title: "Mute", on: belt.muted, latched: belt.muteLatched, button: 1)
+                }
+                .padding(.bottom, 14)
+                Meters(st: st)
             }
-            .animation(.easeOut(duration: 0.15), value: store.touchedField?.id)
-            HStack(spacing: 12) {
-                BeltButton(title: "HARD", on: belt.hard, latched: belt.hardLatched, button: 0)
-                BeltButton(title: "MUTE", on: belt.muted, latched: belt.muteLatched, button: 1)
+            .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 12)
+
+            if let f = store.touchedField {
+                let look = KnobLook.of(f, pageColor: nil)
+                VStack(spacing: 4) {
+                    Text(f.show(store.value(f))).font(Theme.display(34)).foregroundStyle(look.color)
+                    Text(f.name).font(.subheadline.weight(.medium)).foregroundStyle(Theme.mist)
+                }
+                .padding(.horizontal, 26).padding(.vertical, 16)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
-            Meters(st: st)
         }
-        .padding(.horizontal).padding(.bottom, 8)
-        .background(Theme.plate)
+        .animation(.easeOut(duration: 0.15), value: store.touchedField?.id)
+        .background(Theme.ground)
     }
 }
 
-private struct PageChips: View {
+/// The page the panel is on, as words.
+private struct PageLine: View {
     let st: ModuleState
     var body: some View {
-        HStack(spacing: 6) {
-            chip("Play", on: !st.settingsOpen && st.page == 0, color: Color(hex: "#ff9020")!)
-            chip("Setup", on: !st.settingsOpen && st.page == 1, color: Color(hex: "#c060ff")!)
-            if st.settingsOpen { chip("Settings", on: true, color: .gray) }
-            if st.firmwareBusy { chip("Switching firmware", on: true, color: .red) }
-        }
-    }
-    private func chip(_ t: String, on: Bool, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Circle().fill(on ? color : Theme.ledOff).frame(width: 8, height: 8)
-                .shadow(color: on ? color.opacity(0.8) : .clear, radius: 4)
-            Text(t).font(.subheadline.weight(on ? .semibold : .regular))
-                .foregroundStyle(on ? Theme.silk : Theme.silkDim)
-        }
+        let page = st.firmwareBusy ? "Switching firmware" : st.settingsOpen ? "Settings" : st.page == 1 ? "Setup page" : "Play page"
+        Text(page)
+            .font(.footnote)
+            .foregroundStyle(st.firmwareBusy ? Theme.alarm : Theme.fog)
     }
 }
 
-/// The note the voice is pulled to, inside a ring of LEDs: one lights where
-/// the pitch is, the middle one is dead on, ±50 cents at the ends. Green
-/// within 10 cents, amber outside, dark when nobody's singing.
-struct Tuner: View {
+/// The note the voice is pulled to, very large, and a hairline for the cents.
+private struct NoteReadout: View {
     let belt: BeltState
-    private let count = 21
 
     var body: some View {
         let inTune = abs(belt.cents) <= 10
-        let lamp = belt.voiced ? (inTune ? Theme.inTune : Theme.key) : Theme.silkDim
-        GeometryReader { g in
-            let d = min(g.size.width, g.size.height)
-            let led = d * 0.06
-            let r = d / 2 - led
-            let c = CGPoint(x: g.size.width / 2, y: g.size.height / 2)
-            let pos = (Double(max(-50, min(50, belt.cents))) + 50) / 100 * Double(count - 1)
-            ZStack {
-                ForEach(0..<count, id: \.self) { i in
-                    let a = (135 + 270 * Double(i) / Double(count - 1)) * .pi / 180
-                    let centre = i == count / 2
-                    let near = abs(Double(i) - pos) < 0.5 && belt.voiced
-                    let fill: Color = near ? lamp : centre ? Theme.inTune.opacity(0.28) : Theme.ledOff
-                    Circle().fill(fill)
-                        .frame(width: centre ? led * 1.25 : led, height: centre ? led * 1.25 : led)
-                        .shadow(color: near ? lamp.opacity(0.9) : .clear, radius: led)
-                        .position(x: c.x + r * cos(a), y: c.y + r * sin(a))
-                        .animation(.easeOut(duration: 0.08), value: near)
-                }
-                VStack(spacing: 2) {
-                    Text(belt.target.map(BeltTheory.name) ?? "–")
-                        .font(Theme.slab(d * 0.25))
-                        .foregroundStyle(lamp)
-                        .minimumScaleFactor(0.5).lineLimit(1)
-                    Text(belt.voiced ? "\(belt.cents > 0 ? "+" : "")\(belt.cents) cents" : "not singing")
-                        .font(.caption.monospacedDigit()).foregroundStyle(Theme.silkDim)
-                }
-                .frame(width: d * 0.62)
-                .position(c)
-                .transaction { $0.animation = nil }
+        let colour = belt.voiced ? (inTune ? Theme.inTune : Theme.key) : Theme.fog.opacity(0.6)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(belt.target.map(BeltTheory.name) ?? "–")
+                .font(Theme.display(76, weight: .black))
+                .foregroundStyle(colour)
+                .lineLimit(1).minimumScaleFactor(0.5)
+                .contentTransition(.identity)
+            HStack(spacing: 10) {
+                CentsRail(cents: belt.cents, voiced: belt.voiced, colour: colour)
+                    .frame(width: 120, height: 10)
+                Text(belt.voiced ? "\(belt.cents > 0 ? "+" : "")\(belt.cents) cents" : "not singing")
+                    .font(.footnote.monospacedDigit()).foregroundStyle(Theme.fog)
+                    .fixedSize()
             }
         }
         .accessibilityElement()
-        .accessibilityLabel("Tuner")
+        .accessibilityLabel("Target note")
         .accessibilityValue(belt.voiced ? "\(belt.target.map(BeltTheory.name) ?? ""), \(belt.cents) cents" : "not singing")
+    }
+}
+
+/// ±50 cents on a hairline, the middle marked.
+private struct CentsRail: View {
+    let cents: Int
+    let voiced: Bool
+    let colour: Color
+
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width, mid = w / 2
+            let x = mid + CGFloat(max(-50, min(50, cents))) / 50 * (mid - 4)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.14)).frame(height: 2)
+                Rectangle().fill(Theme.inTune.opacity(0.5)).frame(width: w * 0.2, height: 2).offset(x: w * 0.4)
+                Rectangle().fill(Theme.mist.opacity(0.6)).frame(width: 1, height: 10).offset(x: mid)
+                if voiced {
+                    Circle().fill(colour).frame(width: 8, height: 8).shadow(color: colour, radius: 4).offset(x: x - 4)
+                        .animation(.easeOut(duration: 0.08), value: cents)
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
     }
 }
 
@@ -131,9 +129,11 @@ struct PitchLine {
 /// The last few seconds of sung pitch over the key's note lanes. Scale
 /// notes are brighter, the root brightest; the target lane is lit; the
 /// harmony voices sit at the right edge. With two modules, both lines share
-/// the lanes (the first module's key).
+/// the lanes (the first module's key). `fieldStyle` draws it bare, to sit
+/// behind the Belt screen.
 struct PitchGraph: View {
     let lines: [PitchLine]
+    var fieldStyle = false
 
     var body: some View {
         Canvas { ctx, size in
@@ -155,10 +155,11 @@ struct PitchGraph: View {
                 let yy = y(Double(n))
                 var p = Path(); p.move(to: CGPoint(x: 0, y: yy)); p.addLine(to: CGPoint(x: plotW, y: yy))
                 let isTarget = lines.contains { $0.belt.target == n && $0.belt.voiced }
-                let a = isTarget ? 0.55 : root ? 0.3 : inScale ? 0.14 : 0.04
-                ctx.stroke(p, with: .color(isTarget ? Theme.inTune.opacity(a) : Theme.silk.opacity(a)), lineWidth: isTarget ? 2 : 1)
+                let a = isTarget ? 0.5 : root ? 0.18 : inScale ? 0.08 : 0.025
+                ctx.stroke(p, with: .color(isTarget ? Theme.inTune.opacity(a) : Theme.mist.opacity(a)), lineWidth: isTarget ? 1.5 : 1)
                 if inScale {
-                    ctx.draw(Text(BeltTheory.name(n)).font(.system(size: 9, weight: root ? .bold : .regular)).foregroundColor(root ? Theme.silk : Theme.silkDim),
+                    ctx.draw(Text(BeltTheory.name(n)).font(.system(size: 9, weight: root ? .semibold : .regular).width(.expanded))
+                                .foregroundColor(root ? Theme.mist : Theme.fog),
                              at: CGPoint(x: plotW + 17, y: yy))
                 }
             }
@@ -175,6 +176,9 @@ struct PitchGraph: View {
                     let pt = CGPoint(x: x0 + CGFloat(i) * dx, y: y(n))
                     if pen { path.addLine(to: pt) } else { path.move(to: pt); pen = true }
                 }
+                var glow = ctx
+                glow.addFilter(.blur(radius: 6))
+                glow.stroke(path, with: .color(line.color.opacity(0.55)), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
                 ctx.stroke(path, with: .color(line.color),
                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
 
@@ -193,17 +197,18 @@ struct PitchGraph: View {
                 }
             }
         }
-        .background(Theme.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+        .background(fieldStyle ? Color.clear : Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityLabel("Pitch graph")
     }
 }
 
+/// The four harmony voices in a row: a dot in the voice's colour, the
+/// interval, and the note it sings.
 struct Voices: View {
     let belt: BeltState
     var body: some View {
-        Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-            GridRow { cell(0); cell(1) }
-            GridRow { cell(2); cell(3) }
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(0..<4, id: \.self) { i in cell(i).frame(maxWidth: .infinity, alignment: .leading) }
         }
     }
 
@@ -211,27 +216,22 @@ struct Voices: View {
         let itv = belt.voices[i]
         let on = itv != 0 && !belt.muted
         let col = Theme.voices[i]
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Circle().fill(on ? col : Theme.ledOff).frame(width: 8, height: 8)
-                    .shadow(color: on ? col.opacity(0.8) : .clear, radius: 4)
-                Text("Voice \(i + 1)").font(.caption).foregroundStyle(Theme.silkDim)
+                Circle().fill(on ? col : Color.white.opacity(0.14)).frame(width: 7, height: 7)
+                    .shadow(color: on ? col : .clear, radius: 4)
+                Text(itv == 0 ? "Off" : BeltTheory.intervals[min(itv, BeltTheory.intervals.count - 1)])
+                    .font(Theme.display(17, weight: .bold))
+                    .foregroundStyle(itv == 0 ? Theme.fog.opacity(0.6) : Theme.mist)
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
-            Text(BeltTheory.intervals[min(itv, BeltTheory.intervals.count - 1)])
-                .font(Theme.slab(22))
-                .foregroundStyle(itv == 0 ? Theme.silkDim : Theme.silk)
-                .lineLimit(1).minimumScaleFactor(0.6)
-            Text(itv == 0 ? " " : (belt.harmonyNotes[i].map(BeltTheory.name) ?? "–"))
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(on ? col : Theme.silkDim)
+            Text(itv == 0 ? "Voice \(i + 1)" : (belt.harmonyNotes[i].map(BeltTheory.name) ?? "–"))
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(on ? col : Theme.fog.opacity(0.7))
+                .padding(.leading, 13)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 12)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(on ? col.opacity(0.6) : Theme.ledOff).frame(width: 2)
-        }
-        .opacity(itv == 0 ? 0.6 : 1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Voice \(i + 1)")
     }
 }
 
@@ -247,24 +247,19 @@ private struct BeltButton: View {
     @State private var held = false
 
     var body: some View {
-        let lamp = button == 0 ? Theme.silk : Theme.alarm
-        VStack(spacing: 6) {
-            HStack(spacing: 5) {
-                ForEach(0..<2, id: \.self) { _ in
-                    Circle().fill(on ? lamp : Theme.ledOff).frame(width: 7, height: 7)
-                        .shadow(color: on ? lamp.opacity(0.9) : .clear, radius: 5)
-                }
-            }
-            HStack(spacing: 6) {
-                Text(title).font(Theme.slab(17)).tracking(0.5)
-                if latched { Image(systemName: "lock.fill").font(.caption2) }
-            }
-            .foregroundStyle(on ? Theme.silk : Theme.silkDim)
+        let tint = button == 0 ? Theme.mist : Theme.alarm
+        HStack(spacing: 8) {
+            Text(title).font(Theme.display(16, weight: .bold))
+            if latched { Image(systemName: "lock.fill").font(.caption2.weight(.bold)) }
         }
-            .frame(maxWidth: .infinity, minHeight: 58)
-            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? lamp.opacity(0.5) : Theme.silk.opacity(0.08), lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(on ? Color.black : Theme.mist)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background {
+                if on { Capsule().fill(tint).shadow(color: tint.opacity(0.5), radius: 12) }
+                else { Capsule().fill(.ultraThinMaterial) }
+            }
+            .overlay(Capsule().stroke(Color.white.opacity(on ? 0 : 0.10)))
+            .contentShape(Capsule())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -289,18 +284,26 @@ private struct BeltButton: View {
 struct Meters: View {
     let st: ModuleState
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 16) {
             meter("In", st.inLevel)
             meter("Out", st.outLevel)
             Text("CPU \(Int((st.cpu * 100).rounded()))%")
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(st.cpu > 0.85 ? Theme.alarm : Theme.silkDim)
+                .foregroundStyle(st.cpu > 0.85 ? Theme.alarm : Theme.fog)
         }
     }
     private func meter(_ t: String, _ db: Double) -> some View {
-        HStack(spacing: 6) {
-            Text(t).font(.caption).foregroundStyle(Theme.silkDim)
-            LEDLadder(db: db).frame(height: 7)
+        HStack(spacing: 8) {
+            Text(t).font(.caption).foregroundStyle(Theme.fog)
+            LevelLine(db: db)
         }
+    }
+}
+
+/// The tuner on its own, for the combined screen: note, rail and cents.
+struct Tuner: View {
+    let belt: BeltState
+    var body: some View {
+        NoteReadout(belt: belt)
     }
 }

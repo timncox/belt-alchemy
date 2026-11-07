@@ -153,11 +153,8 @@ struct ModuleColumn: View {
                 Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).padding()
                 Spacer()
             case .ready:
-                Picker("Section", selection: $section) {
-                    ForEach(sections) { s in Image(systemName: s.icon).accessibilityLabel(s.title).tag(s) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal).padding(.bottom, 6)
+                SectionTabs(items: sections, title: { $0.title }, selection: $section)
+                    .padding(.bottom, 8)
                 Group {
                     switch section {
                     case .screen: ScreenTab()
@@ -204,13 +201,20 @@ struct ModuleBar: View {
     var body: some View {
         HStack(spacing: 10) {
             if hsc != .regular && rig.modules.count > 1 {
-                Picker("Module", selection: Binding(get: { rig.selected?.id ?? "" }, set: { rig.selectedID = $0 })) {
-                    ForEach(rig.modules) { m in Text(rig.name(m)).tag(m.id) }
+                HStack(alignment: .lastTextBaseline, spacing: 16) {
+                    ForEach(rig.modules) { m in
+                        let on = rig.selected?.id == m.id
+                        Button { withAnimation(.easeOut(duration: 0.2)) { rig.selectedID = m.id } } label: {
+                            Text(rig.name(m))
+                                .font(on ? Theme.display(26, weight: .black) : Theme.display(17, weight: .semibold))
+                                .foregroundStyle(on ? Theme.mist : Theme.fog)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 260)
             } else {
-                Text(rig.name(module)).font(.headline)
+                Text(rig.name(module)).font(Theme.display(26, weight: .black)).foregroundStyle(Theme.mist)
             }
             Spacer()
             LinkBadge(kind: module.kind)
@@ -222,7 +226,7 @@ struct ModuleBar: View {
                 Image(systemName: "ellipsis.circle").imageScale(.large)
             }
         }
-        .padding(.horizontal).padding(.vertical, 8)
+        .padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
         .alert("Name this module", isPresented: $renaming) {
             TextField("Name", text: $newName)
             Button("Save") { rig.rename(module, to: newName) }
@@ -237,10 +241,8 @@ struct LinkBadge: View {
     var kind: LinkKind
     var body: some View {
         Label(kind.label, systemImage: icon)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Color.white.opacity(0.08), in: Capsule())
-            .foregroundStyle(kind == .bluetooth ? Color.cyan : Color.secondary)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(kind == .bluetooth ? Color.cyan : Theme.fog)
     }
     private var icon: String {
         switch kind {

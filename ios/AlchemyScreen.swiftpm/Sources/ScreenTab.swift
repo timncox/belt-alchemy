@@ -160,21 +160,24 @@ struct PagePicker: View {
         let all = Array(store.pages.enumerated()).filter { !onlyGrid || ($0.element.grid && !$0.element.isSettings) }
         if all.count > 1 {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 20) {
                     ForEach(all, id: \.element.id) { item in
                         let i = item.offset, pg = item.element
                         let on = store.pageIndex == i
+                        let c = Color(hex: pg.color) ?? Theme.fog
                         Button {
                             store.pageIndex = i
                         } label: {
-                            HStack(spacing: 6) {
-                                Circle().fill(Color(hex: pg.color) ?? .secondary).frame(width: 8, height: 8)
-                                Text(pg.name)
+                            HStack(spacing: 7) {
+                                Circle().fill(on ? c : c.opacity(0.35)).frame(width: 7, height: 7)
+                                    .shadow(color: on ? c : .clear, radius: 4)
+                                Text(pg.name).font(.subheadline.weight(on ? .semibold : .regular))
+                                    .foregroundStyle(on ? Theme.mist : Theme.fog)
                             }
-                            .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(on ? Color.orange.opacity(0.25) : Color.white.opacity(0.06), in: Capsule())
+                            .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
             }

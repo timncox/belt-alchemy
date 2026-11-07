@@ -1,23 +1,29 @@
-// The look: the module's own panel, lit. Colours are Belt's LED colours as
-// the firmware paints them (belt_alchemy.cpp kCol*), each knob in its ring
-// colour and ring kind, so a knob looks the same on the phone as on the
-// module. Notes and values are set in Alfa Slab One, the face of Belt's
-// manual (SIL OFL, Fonts/OFL.txt); everything else stays system type.
+// The look: the voice is the interface. The pitch field runs edge to edge
+// and everything floats over it; nothing is boxed. Type is SF Pro, with the
+// expanded width at heavy weight for notes, values and titles. Colour is
+// black and greys, Belt's KEY orange for what's active, and the four voice
+// colours only for voices. Each knob keeps its firmware ring colour
+// (belt_alchemy.cpp kCol*) so it reads the same as on the module.
 
 import SwiftUI
-import UIKit
-import CoreText
 import AlchemyLink
 
 enum Theme {
-    static let plate = Color(red: 0.047, green: 0.039, blue: 0.035)      // #0C0A09, the panel
-    static let raised = Color(red: 0.090, green: 0.075, blue: 0.059)     // #17130F, a raised field
-    static let silk = Color(red: 0.933, green: 0.898, blue: 0.820)       // #EEE5D1, silkscreen
-    static let silkDim = Color(red: 0.549, green: 0.510, blue: 0.451)    // #8C8273
-    static let ledOff = Color(red: 0.150, green: 0.125, blue: 0.098)     // #26201A, an unlit LED
+    static let ground = Color.black                                       // #000, OLED
+    static let surface = Color(red: 0.086, green: 0.090, blue: 0.102)    // #16171A
+    static let line = Color.white.opacity(0.08)
+    static let mist = Color(red: 0.925, green: 0.918, blue: 0.949)       // #ECEAF2
+    static let fog = Color(red: 0.541, green: 0.529, blue: 0.580)        // #8A8794
     static let key = led(0xFF9020)
-    static let inTune = led(0x4CFF7A)
-    static let alarm = led(0xFF4A4A)
+    static let inTune = led(0x5BF58C)
+    static let alarm = led(0xFF5A5F)
+
+    // Older names, kept so every screen shares one palette.
+    static var plate: Color { ground }
+    static var raised: Color { surface }
+    static var silk: Color { mist }
+    static var silkDim: Color { fog }
+    static var ledOff: Color { Color.white.opacity(0.10) }
 
     static func led(_ hex: UInt32) -> Color {
         Color(red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255, blue: Double(hex & 0xFF) / 255)
@@ -26,42 +32,22 @@ enum Theme {
     /// Belt's four harmony voices, as their Setup rings (kColV1-V4).
     static let voices: [Color] = [led(0xC060FF), led(0xFF60C0), led(0x60C0FF), led(0x60FFC0)]
 
-    /// The display face, falling back to the system's heaviest rounded face
-    /// if the font file isn't in the bundle.
-    static func slab(_ size: CGFloat) -> Font {
-        registerFonts()
-        return fontReady ? .custom("AlfaSlabOne-Regular", size: size) : .system(size: size, weight: .black, design: .rounded)
+    /// Notes, values and titles: SF Pro, expanded, heavy.
+    static func display(_ size: CGFloat, weight: Font.Weight = .heavy) -> Font {
+        .system(size: size, weight: weight).width(.expanded)
     }
-
-    private static var fontReady = false
-    private static var tried = false
-    private static func registerFonts() {
-        guard !tried else { return }
-        tried = true
-        let name = "AlfaSlabOne-Regular"
-        var urls: [URL?] = [Bundle.main.url(forResource: name, withExtension: "ttf"),
-                            Bundle.main.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")]
-        #if SWIFT_PACKAGE
-        urls.append(Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts"))
-        urls.append(Bundle.module.url(forResource: name, withExtension: "ttf"))
-        #endif
-        guard let url = urls.compactMap({ $0 }).first else { return }
-        var err: Unmanaged<CFError>?
-        fontReady = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &err)
-            || UIFont(name: name, size: 12) != nil
-    }
+    static func slab(_ size: CGFloat) -> Font { display(size) }
 }
 
-/// How a knob's ring shows its value, as the firmware draws it.
+/// How a knob's value is drawn, as the firmware's ring draws it.
 enum RingKind: Equatable {
-    case level                 // lit from the start up to the value
-    case selector(zones: Int)  // one LED for the zone picked
-    case bipolar               // from the middle notch towards the value
+    case level                 // filled from the start up to the value
+    case selector(zones: Int)  // one point for the zone picked
+    case bipolar               // from the middle towards the value
 }
 
-/// A knob's look on the module: its LED colour, the colour below the notch
-/// for a bipolar ring, and the ring kind. Belt's knobs by name; anything else
-/// takes its page colour and a level ring.
+/// A knob's colour, its colour below the middle for a bipolar knob, and
+/// its kind. Belt's knobs by name; anything else takes its page colour.
 struct KnobLook {
     var color: Color
     var below: Color? = nil
@@ -90,73 +76,101 @@ struct KnobLook {
     }
 }
 
-/// Sixteen LEDs on a 270° arc, 7:30 round to 4:30, as a module ring reads.
-struct LEDRing: View {
+/// A knob's value as a thin 270° arc, 7:30 round to 4:30, with a glowing
+/// point where it stands.
+struct ValueArc: View {
     var value: Double              // 0...1
     var look: KnobLook
-    var count = 16
-    var dot: CGFloat? = nil        // LED size; a share of the ring if nil
+    var width: CGFloat = 5
 
     var body: some View {
         GeometryReader { g in
             let d = min(g.size.width, g.size.height)
-            let led = dot ?? max(4, d * 0.085)
-            let r = d / 2 - led / 2 - 2
+            let r = d / 2 - width
             let c = CGPoint(x: g.size.width / 2, y: g.size.height / 2)
+            let v = max(0, min(1, value))
+            let (from, to, col) = span(v)
+            let head = point(c, r, v)
             ZStack {
-                ForEach(0..<count, id: \.self) { i in
-                    let a = (135 + 270 * Double(i) / Double(count - 1)) * .pi / 180
-                    let col = colour(i)
-                    Circle()
-                        .fill(col ?? Theme.ledOff)
-                        .frame(width: led, height: led)
-                        .shadow(color: (col ?? .clear).opacity(0.75), radius: col == nil ? 0 : led * 0.7)
-                        .position(x: c.x + r * cos(a), y: c.y + r * sin(a))
+                ArcShape(from: 0, to: 1, radius: r).stroke(Color.white.opacity(0.09), style: StrokeStyle(lineWidth: width, lineCap: .round))
+                if to > from {
+                    ArcShape(from: from, to: to, radius: r)
+                        .stroke(col, style: StrokeStyle(lineWidth: width, lineCap: .round))
+                        .shadow(color: col.opacity(0.55), radius: width * 1.6)
                 }
+                Circle().fill(Theme.mist).frame(width: width * 1.9, height: width * 1.9)
+                    .shadow(color: col.opacity(0.9), radius: width * 1.5)
+                    .position(head)
             }
         }
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
     }
 
-    private func colour(_ i: Int) -> Color? {
-        let v = max(0, min(1, value))
-        let pos = v * Double(count - 1)
+    private func span(_ v: Double) -> (Double, Double, Color) {
         switch look.kind {
-        case .level:
-            return v > 0.001 && Double(i) <= pos + 0.5 ? look.color : nil
-        case .selector:
-            return i == Int(pos.rounded()) ? look.color : nil
-        case .bipolar:
-            let mid = Double(count - 1) / 2
-            if abs(Double(i) - mid) < 0.6 { return Theme.silk.opacity(0.9) }        // the notch
-            if pos > mid, Double(i) > mid, Double(i) <= pos + 0.5 { return look.color }
-            if pos < mid, Double(i) < mid, Double(i) >= pos - 0.5 { return look.below ?? look.color }
-            return nil
+        case .level: return (0, v, look.color)
+        case .selector: return (max(0, v - 0.03), min(1, v + 0.03), look.color)
+        case .bipolar: return v >= 0.5 ? (0.5, v, look.color) : (v, 0.5, look.below ?? look.color)
         }
+    }
+
+    private func point(_ c: CGPoint, _ r: CGFloat, _ v: Double) -> CGPoint {
+        let a = (135 + 270 * v) * .pi / 180
+        return CGPoint(x: c.x + r * cos(a), y: c.y + r * sin(a))
     }
 }
 
-/// A level as a row of LEDs: green, then yellow above -12 dB, red above -3.
-struct LEDLadder: View {
+struct ArcShape: Shape {
+    var from: Double, to: Double, radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.addArc(center: CGPoint(x: rect.midX, y: rect.midY), radius: radius,
+                 startAngle: .degrees(135 + 270 * from), endAngle: .degrees(135 + 270 * to), clockwise: false)
+        return p
+    }
+}
+
+/// A level as a hairline that fills: mist, warm above -12 dB, red above -3.
+struct LevelLine: View {
     var db: Double
-    var segments = 16
 
     var body: some View {
         GeometryReader { g in
-            let gap: CGFloat = 2
-            let w = (g.size.width - gap * CGFloat(segments - 1)) / CGFloat(segments)
-            let lit = Int(((db + 60) / 60 * Double(segments)).rounded())
-            HStack(spacing: gap) {
-                ForEach(0..<segments, id: \.self) { i in
-                    let segDb = -60 + 60 * Double(i + 1) / Double(segments)
-                    let c = segDb > -3 ? Theme.alarm : segDb > -12 ? Theme.led(0xFFD040) : Theme.inTune
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(i < lit ? c : Theme.ledOff)
-                        .frame(width: max(1, w))
-                }
+            let f = CGFloat(max(0, min(1, (db + 60) / 60)))
+            let c = db > -3 ? Theme.alarm : db > -12 ? Theme.key : Theme.mist
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.10))
+                Capsule().fill(c).frame(width: g.size.width * f)
             }
         }
+        .frame(height: 3)
         .accessibilityHidden(true)
+    }
+}
+
+/// The module's views as words, the one you're on large.
+struct SectionTabs<T: Hashable & Identifiable>: View {
+    var items: [T]
+    var title: (T) -> String
+    @Binding var selection: T
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .lastTextBaseline, spacing: 18) {
+                ForEach(items) { it in
+                    let on = it == selection
+                    Button { withAnimation(.easeOut(duration: 0.2)) { selection = it } } label: {
+                        Text(title(it))
+                            .font(on ? Theme.display(22) : .system(size: 15, weight: .medium))
+                            .foregroundStyle(on ? Theme.mist : Theme.fog)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal)
+        }
     }
 }

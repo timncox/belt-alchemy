@@ -12,10 +12,10 @@ struct KnobsTab: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
                     PagePicker()
                     if let pg = store.page {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 22, alignment: .top), GridItem(.flexible(), spacing: 22, alignment: .top)], spacing: 6) {
                             if pg.grid {
                                 ForEach(0..<6, id: \.self) { pot in cell(pg, pot: pot) }
                             } else {
@@ -26,8 +26,8 @@ struct KnobsTab: View {
                 }
                 .padding()
             }
-            .navigationTitle(store.page?.name ?? "Knobs")
-            .navigationBarTitleDisplayMode(.inline)
+            .background(Theme.ground)
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
@@ -51,12 +51,12 @@ struct Placeholder: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("P\(position + 1)").font(.caption).foregroundStyle(Theme.silkDim)
-            Text(.init(text)).font(.footnote).foregroundStyle(Theme.silkDim)
+            Text("P\(position + 1)").font(.caption).foregroundStyle(Theme.fog)
+            Text(.init(text)).font(.footnote).foregroundStyle(Theme.fog)
         }
-        .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
-        .padding(12)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.silk.opacity(0.10), style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+        .padding(.vertical, 14)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
     }
 }
 
@@ -68,13 +68,15 @@ struct KnobCell: View {
     var body: some View {
         let v = store.value(field)
         let look = KnobLook.of(field, pageColor: store.page?.color)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(field.name).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.silk).lineLimit(2)
-                if let p = position { Text("P\(p + 1)").font(.caption).foregroundStyle(Theme.silkDim) }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(field.name).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.mist).lineLimit(2)
+                if let p = position { Text("P\(p + 1)").font(.caption).foregroundStyle(Theme.fog) }
                 Spacer()
-                Text(field.show(v)).font(Theme.slab(20)).foregroundStyle(look.color)
-                    .lineLimit(1).minimumScaleFactor(0.6)
+                if field.isEnum || field.disp.kind == "snap" || field.disp.kind == "enum" {
+                    Text(field.show(v)).font(Theme.display(17)).foregroundStyle(look.color)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                }
             }
             if field.isEnum {
                 Choices(labels: field.disp.labels ?? (0..<max(1, field.zones)).map(String.init), selected: Int(v),
@@ -89,8 +91,8 @@ struct KnobCell: View {
                     store.set(field, field.disp.kind == "snap" ? Double(i) / Double(max(1, n - 1)) : (Double(i) + 0.5) / Double(n))
                 }
             } else {
-                Dial(value: v, look: look) { store.set(field, $0) }
-                    .frame(height: 104)
+                Dial(value: v, look: look, text: field.show(v)) { store.set(field, $0) }
+                    .frame(height: 132)
                     .frame(maxWidth: .infinity)
             }
             if let help = field.help, !help.isEmpty {
@@ -98,9 +100,9 @@ struct KnobCell: View {
                     .font(.footnote).tint(Theme.silkDim)
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
-        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
     }
 }
 
@@ -129,6 +131,7 @@ struct Choices: View {
 struct Dial: View {
     var value: Double
     var look = KnobLook(color: Theme.key)
+    var text: String? = nil
     var set: (Double) -> Void
     @State private var start: Double?
 
@@ -136,12 +139,12 @@ struct Dial: View {
         GeometryReader { geo in
             let d = min(geo.size.width, geo.size.height)
             ZStack {
-                LEDRing(value: value, look: look)
-                Circle().fill(Theme.plate).padding(d * 0.2)
-                    .overlay(Circle().stroke(Theme.silk.opacity(0.10), lineWidth: 1).padding(d * 0.2))
-                Rectangle().fill(Theme.silk).frame(width: 2.5, height: d * 0.22)
-                    .offset(y: -d * 0.16)
-                    .rotationEffect(.degrees(-135 + 270 * value))
+                ValueArc(value: value, look: look, width: max(4, d * 0.045))
+                if let text {
+                    Text(text).font(Theme.display(d * 0.19)).foregroundStyle(Theme.mist)
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                        .frame(width: d * 0.6)
+                }
             }
             .frame(width: d, height: d)
             .position(x: geo.size.width / 2, y: geo.size.height / 2)
