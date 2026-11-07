@@ -51,12 +51,12 @@ struct Placeholder: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("P\(position + 1)").font(.caption.monospaced()).foregroundStyle(.secondary)
-            Text(.init(text)).font(.footnote).foregroundStyle(.secondary)
+            Text("P\(position + 1)").font(.caption).foregroundStyle(Theme.silkDim)
+            Text(.init(text)).font(.footnote).foregroundStyle(Theme.silkDim)
         }
         .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
         .padding(12)
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4])).foregroundStyle(.secondary.opacity(0.4)))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.silk.opacity(0.10), style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
     }
 }
 
@@ -67,60 +67,68 @@ struct KnobCell: View {
 
     var body: some View {
         let v = store.value(field)
+        let look = KnobLook.of(field, pageColor: store.page?.color)
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                if let p = position { Text("P\(p + 1)").font(.caption.monospaced()).foregroundStyle(.secondary) }
+            HStack(alignment: .firstTextBaseline) {
+                Text(field.name).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.silk).lineLimit(2)
+                if let p = position { Text("P\(p + 1)").font(.caption).foregroundStyle(Theme.silkDim) }
                 Spacer()
-                Text(field.show(v)).font(.callout.monospacedDigit()).foregroundStyle(.orange)
+                Text(field.show(v)).font(Theme.slab(20)).foregroundStyle(look.color)
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
-            Text(field.name).font(.headline).lineLimit(2)
             if field.isEnum {
-                Choices(labels: field.disp.labels ?? (0..<max(1, field.zones)).map(String.init), selected: Int(v)) {
+                Choices(labels: field.disp.labels ?? (0..<max(1, field.zones)).map(String.init), selected: Int(v),
+                        colour: look.color) {
                     store.set(field, Double($0))
                 }
             } else if field.disp.kind == "snap" || field.disp.kind == "enum", let labels = field.disp.labels, !labels.isEmpty {
                 // A float that snaps to named positions: show the names.
                 let n = labels.count
                 let sel = field.disp.kind == "snap" ? Int((v * Double(max(1, n - 1))).rounded()) : min(n - 1, Int(v * Double(n)))
-                Choices(labels: labels, selected: sel) { i in
+                Choices(labels: labels, selected: sel, colour: look.color) { i in
                     store.set(field, field.disp.kind == "snap" ? Double(i) / Double(max(1, n - 1)) : (Double(i) + 0.5) / Double(n))
                 }
             } else {
-                Dial(value: v) { store.set(field, $0) }
-                    .frame(height: 84)
+                Dial(value: v, look: look) { store.set(field, $0) }
+                    .frame(height: 104)
                     .frame(maxWidth: .infinity)
             }
             if let help = field.help, !help.isEmpty {
-                DisclosureGroup("What it does") { Text(.init(help)).font(.footnote) }.font(.footnote)
+                DisclosureGroup("What it does") { Text(.init(help)).font(.footnote).foregroundStyle(Theme.silk) }
+                    .font(.footnote).tint(Theme.silkDim)
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
 struct Choices: View {
     var labels: [String]
     var selected: Int
+    var colour: Color = Theme.key
     var pick: (Int) -> Void
 
     var body: some View {
         FlowRow(spacing: 6) {
             ForEach(Array(labels.enumerated()), id: \.offset) { item in
                 Button(item.element) { pick(item.offset) }
-                    .font(.caption)
+                    .font(.caption.weight(item.offset == selected ? .bold : .regular))
+                    .foregroundStyle(item.offset == selected ? Theme.plate : Theme.silk)
                     .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(item.offset == selected ? Color.orange.opacity(0.35) : Color.white.opacity(0.07), in: Capsule())
+                    .background(item.offset == selected ? colour : Theme.silk.opacity(0.07), in: Capsule())
                     .buttonStyle(.plain)
             }
         }
     }
 }
 
-/// A knob: a 270° arc you drag up and down, like a pot.
+/// A knob: its LED ring around a cap with a pointer, dragged up and down
+/// like a pot.
 struct Dial: View {
     var value: Double
+    var look = KnobLook(color: Theme.key)
     var set: (Double) -> Void
     @State private var start: Double?
 
@@ -128,11 +136,11 @@ struct Dial: View {
         GeometryReader { geo in
             let d = min(geo.size.width, geo.size.height)
             ZStack {
-                Arc(from: 0, to: 1).stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                Arc(from: 0, to: value).stroke(Color.orange, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                Circle().fill(Color.white.opacity(0.08)).padding(14)
-                Rectangle().fill(Color.white).frame(width: 2, height: d / 2 - 18)
-                    .offset(y: -(d / 4 - 9))
+                LEDRing(value: value, look: look)
+                Circle().fill(Theme.plate).padding(d * 0.2)
+                    .overlay(Circle().stroke(Theme.silk.opacity(0.10), lineWidth: 1).padding(d * 0.2))
+                Rectangle().fill(Theme.silk).frame(width: 2.5, height: d * 0.22)
+                    .offset(y: -d * 0.16)
                     .rotationEffect(.degrees(-135 + 270 * value))
             }
             .frame(width: d, height: d)

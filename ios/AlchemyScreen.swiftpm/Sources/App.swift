@@ -25,7 +25,7 @@ struct AlchemyScreenApp: App {
                     if phase == .active { controllers.setActive(true) }
                 }
                 .preferredColorScheme(.dark)
-                .tint(.orange)
+                .tint(Theme.key)
         }
     }
 }

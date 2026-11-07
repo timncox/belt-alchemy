@@ -15,32 +15,35 @@ struct BeltScreen: View {
     let belt: BeltState
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack {
+        VStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
                 PageChips(st: st)
                 Spacer()
                 Text("\(BeltTheory.keys[belt.key % 12]) \(BeltTheory.scales[min(belt.scale, BeltTheory.scales.count - 1)])")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Color.white.opacity(0.07), in: Capsule())
+                    .font(Theme.slab(19))
+                    .foregroundStyle(Theme.key)
             }
-            Tuner(belt: belt)
+            HStack(alignment: .center, spacing: 14) {
+                Tuner(belt: belt)
+                    .frame(width: 168, height: 168)
+                Voices(belt: belt)
+            }
             ZStack(alignment: .top) {
-                PitchGraph(lines: [PitchLine(trace: store.trace, belt: belt, color: .orange)])
+                PitchGraph(lines: [PitchLine(trace: store.trace, belt: belt, color: Theme.key)])
                     .frame(minHeight: 160)
                 if let f = store.touchedField {
                     HStack(spacing: 8) {
-                        Text(f.name).font(.headline)
-                        Text(f.show(store.value(f))).font(.headline.monospacedDigit()).foregroundStyle(.orange)
+                        Text(f.name).font(.headline).foregroundStyle(Theme.silk)
+                        Text(f.show(store.value(f))).font(Theme.slab(18)).foregroundStyle(KnobLook.of(f, pageColor: nil).color)
                     }
                     .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Theme.raised, in: Capsule())
+                    .overlay(Capsule().stroke(Theme.silk.opacity(0.12)))
                     .padding(.top, 8)
                     .transition(.opacity)
                 }
             }
             .animation(.easeOut(duration: 0.15), value: store.touchedField?.id)
-            Voices(belt: belt)
             HStack(spacing: 12) {
                 BeltButton(title: "HARD", on: belt.hard, latched: belt.hardLatched, button: 0)
                 BeltButton(title: "MUTE", on: belt.muted, latched: belt.muteLatched, button: 1)
@@ -48,6 +51,7 @@ struct BeltScreen: View {
             Meters(st: st)
         }
         .padding(.horizontal).padding(.bottom, 8)
+        .background(Theme.plate)
     }
 }
 
@@ -62,47 +66,59 @@ private struct PageChips: View {
         }
     }
     private func chip(_ t: String, on: Bool, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(t).font(.caption.weight(.semibold))
+        HStack(spacing: 6) {
+            Circle().fill(on ? color : Theme.ledOff).frame(width: 8, height: 8)
+                .shadow(color: on ? color.opacity(0.8) : .clear, radius: 4)
+            Text(t).font(.subheadline.weight(on ? .semibold : .regular))
+                .foregroundStyle(on ? Theme.silk : Theme.silkDim)
         }
-        .padding(.horizontal, 9).padding(.vertical, 5)
-        .background(on ? color.opacity(0.28) : Color.white.opacity(0.05), in: Capsule())
-        .opacity(on ? 1 : 0.55)
     }
 }
 
-/// The sung note, its target, and a needle for the cents between them.
+/// The note the voice is pulled to, inside a ring of LEDs: one lights where
+/// the pitch is, the middle one is dead on, ±50 cents at the ends. Green
+/// within 10 cents, amber outside, dark when nobody's singing.
 struct Tuner: View {
     let belt: BeltState
+    private let count = 21
 
     var body: some View {
         let inTune = abs(belt.cents) <= 10
-        HStack(alignment: .center, spacing: 16) {
-            VStack(spacing: 0) {
-                Text(belt.target.map(BeltTheory.name) ?? "–")
-                    .font(.system(size: 52, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(belt.voiced ? (inTune ? Color.green : Color.orange) : Color.secondary)
-                Text(belt.voiced ? "\(belt.cents > 0 ? "+" : "")\(belt.cents) cents" : "not singing")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            .frame(minWidth: 110)
-            GeometryReader { g in
-                let w = g.size.width, mid = w / 2
-                let x = mid + CGFloat(max(-50, min(50, belt.cents))) / 50 * (mid - 6)
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.07)).frame(height: 10)
-                    Rectangle().fill(Color.green.opacity(0.35)).frame(width: w * 0.2, height: 10).offset(x: w * 0.4)
-                    Rectangle().fill(Color.white.opacity(0.5)).frame(width: 2, height: 22).offset(x: mid - 1)
-                    if belt.voiced {
-                        Circle().fill(inTune ? Color.green : .orange).frame(width: 14, height: 14).offset(x: x - 7)
-                            .animation(.easeOut(duration: 0.08), value: belt.cents)
-                    }
+        let lamp = belt.voiced ? (inTune ? Theme.inTune : Theme.key) : Theme.silkDim
+        GeometryReader { g in
+            let d = min(g.size.width, g.size.height)
+            let led = d * 0.06
+            let r = d / 2 - led
+            let c = CGPoint(x: g.size.width / 2, y: g.size.height / 2)
+            let pos = (Double(max(-50, min(50, belt.cents))) + 50) / 100 * Double(count - 1)
+            ZStack {
+                ForEach(0..<count, id: \.self) { i in
+                    let a = (135 + 270 * Double(i) / Double(count - 1)) * .pi / 180
+                    let centre = i == count / 2
+                    let near = abs(Double(i) - pos) < 0.5 && belt.voiced
+                    let fill: Color = near ? lamp : centre ? Theme.inTune.opacity(0.28) : Theme.ledOff
+                    Circle().fill(fill)
+                        .frame(width: centre ? led * 1.25 : led, height: centre ? led * 1.25 : led)
+                        .shadow(color: near ? lamp.opacity(0.9) : .clear, radius: led)
+                        .position(x: c.x + r * cos(a), y: c.y + r * sin(a))
+                        .animation(.easeOut(duration: 0.08), value: near)
                 }
-                .frame(maxHeight: .infinity)
+                VStack(spacing: 2) {
+                    Text(belt.target.map(BeltTheory.name) ?? "–")
+                        .font(Theme.slab(d * 0.25))
+                        .foregroundStyle(lamp)
+                        .minimumScaleFactor(0.5).lineLimit(1)
+                    Text(belt.voiced ? "\(belt.cents > 0 ? "+" : "")\(belt.cents) cents" : "not singing")
+                        .font(.caption.monospacedDigit()).foregroundStyle(Theme.silkDim)
+                }
+                .frame(width: d * 0.62)
+                .position(c)
+                .transaction { $0.animation = nil }
             }
-            .frame(height: 44)
         }
+        .accessibilityElement()
+        .accessibilityLabel("Tuner")
+        .accessibilityValue(belt.voiced ? "\(belt.target.map(BeltTheory.name) ?? ""), \(belt.cents) cents" : "not singing")
     }
 }
 
@@ -140,9 +156,9 @@ struct PitchGraph: View {
                 var p = Path(); p.move(to: CGPoint(x: 0, y: yy)); p.addLine(to: CGPoint(x: plotW, y: yy))
                 let isTarget = lines.contains { $0.belt.target == n && $0.belt.voiced }
                 let a = isTarget ? 0.55 : root ? 0.3 : inScale ? 0.14 : 0.04
-                ctx.stroke(p, with: .color(isTarget ? .green.opacity(a) : .white.opacity(a)), lineWidth: isTarget ? 2 : 1)
+                ctx.stroke(p, with: .color(isTarget ? Theme.inTune.opacity(a) : Theme.silk.opacity(a)), lineWidth: isTarget ? 2 : 1)
                 if inScale {
-                    ctx.draw(Text(BeltTheory.name(n)).font(.system(size: 9)).foregroundColor(.secondary),
+                    ctx.draw(Text(BeltTheory.name(n)).font(.system(size: 9, weight: root ? .bold : .regular)).foregroundColor(root ? Theme.silk : Theme.silkDim),
                              at: CGPoint(x: plotW + 17, y: yy))
                 }
             }
@@ -166,16 +182,18 @@ struct PitchGraph: View {
                     let p = CGPoint(x: plotW, y: y(last))
                     ctx.fill(Path(ellipseIn: CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)), with: .color(line.color))
                     if !line.belt.muted {
-                        for h in line.belt.harmonyNotes.compactMap({ $0 }) where Double(h) > lo && Double(h) < hi {
+                        for (vi, h) in line.belt.harmonyNotes.enumerated() {
+                            guard let h, Double(h) > lo, Double(h) < hi else { continue }
                             let q = CGPoint(x: plotW, y: y(Double(h)))
-                            ctx.stroke(Path(ellipseIn: CGRect(x: q.x - 4, y: q.y - 4, width: 8, height: 8)),
-                                       with: .color(line.color), lineWidth: 2)
+                            let vc = lines.count > 1 ? line.color : Theme.voices[vi % 4]
+                            ctx.stroke(Path(ellipseIn: CGRect(x: q.x - 5, y: q.y - 5, width: 10, height: 10)),
+                                       with: .color(vc), lineWidth: 2)
                         }
                     }
                 }
             }
         }
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+        .background(Theme.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
         .accessibilityLabel("Pitch graph")
     }
 }
@@ -183,23 +201,37 @@ struct PitchGraph: View {
 struct Voices: View {
     let belt: BeltState
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<4, id: \.self) { i in
-                let itv = belt.voices[i]
-                let note = belt.harmonyNotes[i]
-                VStack(spacing: 2) {
-                    Text("Voice \(i + 1)").font(.caption2).foregroundStyle(.secondary)
-                    Text(BeltTheory.intervals[min(itv, BeltTheory.intervals.count - 1)])
-                        .font(.subheadline.weight(.semibold))
-                    Text(itv == 0 ? " " : (note.map(BeltTheory.name) ?? "–"))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color(hex: "#c060ff")!)
-                }
-                .frame(maxWidth: .infinity).padding(.vertical, 6)
-                .background(Color.white.opacity(itv == 0 || belt.muted ? 0.03 : 0.08), in: RoundedRectangle(cornerRadius: 8))
-                .opacity(itv == 0 || belt.muted ? 0.5 : 1)
-            }
+        Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+            GridRow { cell(0); cell(1) }
+            GridRow { cell(2); cell(3) }
         }
+    }
+
+    private func cell(_ i: Int) -> some View {
+        let itv = belt.voices[i]
+        let on = itv != 0 && !belt.muted
+        let col = Theme.voices[i]
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Circle().fill(on ? col : Theme.ledOff).frame(width: 8, height: 8)
+                    .shadow(color: on ? col.opacity(0.8) : .clear, radius: 4)
+                Text("Voice \(i + 1)").font(.caption).foregroundStyle(Theme.silkDim)
+            }
+            Text(BeltTheory.intervals[min(itv, BeltTheory.intervals.count - 1)])
+                .font(Theme.slab(22))
+                .foregroundStyle(itv == 0 ? Theme.silkDim : Theme.silk)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(itv == 0 ? " " : (belt.harmonyNotes[i].map(BeltTheory.name) ?? "–"))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(on ? col : Theme.silkDim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 12)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(on ? col.opacity(0.6) : Theme.ledOff).frame(width: 2)
+        }
+        .opacity(itv == 0 ? 0.6 : 1)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -215,14 +247,24 @@ private struct BeltButton: View {
     @State private var held = false
 
     var body: some View {
-        Text(title)
-            .font(.headline)
-            .frame(maxWidth: .infinity, minHeight: 50)
-            .background(on ? Color.orange.opacity(0.85) : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(alignment: .topTrailing) {
-                if latched { Image(systemName: "lock.fill").font(.caption2).padding(6) }
+        let lamp = button == 0 ? Theme.silk : Theme.alarm
+        VStack(spacing: 6) {
+            HStack(spacing: 5) {
+                ForEach(0..<2, id: \.self) { _ in
+                    Circle().fill(on ? lamp : Theme.ledOff).frame(width: 7, height: 7)
+                        .shadow(color: on ? lamp.opacity(0.9) : .clear, radius: 5)
+                }
             }
-            .foregroundStyle(on ? Color.black : Color.primary)
+            HStack(spacing: 6) {
+                Text(title).font(Theme.slab(17)).tracking(0.5)
+                if latched { Image(systemName: "lock.fill").font(.caption2) }
+            }
+            .foregroundStyle(on ? Theme.silk : Theme.silkDim)
+        }
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? lamp.opacity(0.5) : Theme.silk.opacity(0.08), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -252,20 +294,13 @@ struct Meters: View {
             meter("Out", st.outLevel)
             Text("CPU \(Int((st.cpu * 100).rounded()))%")
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(st.cpu > 0.85 ? Color.red : Color.secondary)
+                .foregroundStyle(st.cpu > 0.85 ? Theme.alarm : Theme.silkDim)
         }
     }
     private func meter(_ t: String, _ db: Double) -> some View {
         HStack(spacing: 6) {
-            Text(t).font(.caption).foregroundStyle(.secondary)
-            GeometryReader { g in
-                let f = CGFloat(max(0, min(1, (db + 60) / 60)))
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.07))
-                    Capsule().fill(db > -3 ? Color.red : db > -12 ? .yellow : .green).frame(width: g.size.width * f)
-                }
-            }
-            .frame(height: 6)
+            Text(t).font(.caption).foregroundStyle(Theme.silkDim)
+            LEDLadder(db: db).frame(height: 7)
         }
     }
 }
