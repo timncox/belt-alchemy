@@ -316,12 +316,13 @@ struct PulseWave: View {
 
 /// A point that rides a drawn wave at the output's rate, with a hairline
 /// through it: a feel for how fast each output goes round, and where the
-/// hits fall. With STATE (Pulse 0.5.0) it is placed where the module is
-/// (the output's step and the phase in its cycle) and carried on at the
-/// output's rate until the next read; its height is then the module's own
-/// reading of the jack wherever the drawing isn't the whole story (the
-/// random waves, slew, stopped). Without STATE it runs free off the
-/// phone's clock: the right speed, its own place in the bar.
+/// hits fall. With STATE (Pulse 0.5.0) it is placed along the lane where
+/// the module is (the output's step and the phase in its cycle) and
+/// carried on at the output's rate until the next read. Without STATE it
+/// runs free off the phone's clock: the right speed, its own place in the
+/// bar. Either way its height is the drawn line's, always: the drawing is
+/// a picture of the shape, and a point floating off it (at the jack's real
+/// voltage on a random wave, a slewed one or a chance miss) read as a bug.
 struct PulsePoint: View {
     var out: Pulse.Out
     var live: PulseState.Out?
@@ -340,8 +341,7 @@ struct PulsePoint: View {
                     let ahead = min(0.6, max(0, tl.date.timeIntervalSince(at))) * cyclesPerSecond
                     guard let px = out.place(step: live.step, cyclePhase: live.phase, ahead: ahead) else { return }
                     x = px
-                    let drawn = cyclesPerSecond > 0 && out.slew < 0.01 && out.wave != .stepRandom && out.wave != .smoothRandom
-                    v = drawn ? out.volts(atCycle: cycle(x), cycleSeconds: cycleSeconds, sounding: live.sounding) : live.volts
+                    v = out.volts(atCycle: cycle(x), cycleSeconds: cycleSeconds)
                 } else {
                     // Free-running: seconds since a fixed moment, as cycles.
                     let gone = tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 86_400) * cyclesPerSecond
