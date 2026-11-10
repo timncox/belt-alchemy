@@ -124,15 +124,36 @@ public enum Pulse {
         /// swing and slew are left out: this is the shape, not a recording.
         public func curve(points: Int, cycles: Int, cycleSeconds: Double) -> [Double] {
             guard points > 1, cycles > 0 else { return [] }
-            let stand: [Double] = [0.35, 0.8, 0.15, 0.6, 0.95, 0.45, 0.25, 0.7]
             return (0..<points).map { i in
-                let c = Double(i) / Double(points - 1) * Double(cycles) * 0.9999 + phase
-                let n = Int(c.rounded(.down)), p = c - Double(n)
-                let sounding = steps == 0 || Pulse.euclidHit(n % max(1, steps), steps: steps, fills: fills, rotate: rotate)
-                let s = sounding ? Pulse.shape(wave, phase: p, width: width, cycleSeconds: cycleSeconds,
-                                               held: stand[n % stand.count], next: stand[(n + 1) % stand.count]) : 0
-                return min(5, max(-5, s * level * 5 + offsetVolts))
+                volts(atCycle: Double(i) / Double(points - 1) * Double(cycles) * 0.9999 + phase, cycleSeconds: cycleSeconds)
             }
+        }
+
+        /// The drawn voltage at cycle count `c` (whole part: which cycle;
+        /// fraction: where in it). `sounding` overrides the pattern with
+        /// what the module says of this cycle (it knows the chance roll).
+        public func volts(atCycle c: Double, cycleSeconds: Double, sounding known: Bool? = nil) -> Double {
+            let stand: [Double] = [0.35, 0.8, 0.15, 0.6, 0.95, 0.45, 0.25, 0.7]
+            let n = max(0, Int(c.rounded(.down))), p = c - c.rounded(.down)
+            let sounding = known ?? (steps == 0 || Pulse.euclidHit(n % max(1, steps), steps: steps, fills: fills, rotate: rotate))
+            let s = sounding ? Pulse.shape(wave, phase: p, width: width, cycleSeconds: cycleSeconds,
+                                           held: stand[n % stand.count], next: stand[(n + 1) % stand.count]) : 0
+            return min(5, max(-5, s * level * 5 + offsetVolts))
+        }
+
+        /// How many cycles a lane draws: the whole pattern up to eight
+        /// steps, or two cycles with no pattern.
+        public var windowCycles: Int { steps > 0 ? min(steps, 8) : 2 }
+
+        /// Where the module is along a lane's drawing, 0…1, from what STATE
+        /// says of this output; nil when it's in a part of a long pattern
+        /// the lane doesn't draw. `ahead` is cycles gone by since the read.
+        public func place(step: Int, cyclePhase: Double, ahead: Double = 0) -> Double? {
+            let window = Double(windowCycles)
+            let period = steps > 0 ? Double(steps) : window
+            var c = (Double(step) + cyclePhase + ahead - phase).truncatingRemainder(dividingBy: period)
+            if c < 0 { c += period }
+            return c < window ? c / window : nil
         }
     }
 

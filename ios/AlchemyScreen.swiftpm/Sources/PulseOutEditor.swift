@@ -26,6 +26,14 @@ struct PulseOutEditor: View {
                 PulseWave(out: out, color: color, cycles: out.steps > 0 ? min(out.steps, 8) : 2,
                           cycleSeconds: cycleSeconds, width: 2.5)
                     .frame(height: 110)
+                    .overlay {
+                        // With STATE, where the module is; without, free-running at this output's rate.
+                        let st = store.state?.pulse
+                        let moving = st?.running ?? true
+                        PulsePoint(out: out, live: st.flatMap { $0.outs.indices.contains(index) ? $0.outs[index] : nil },
+                                   at: store.stateDate, cyclesPerSecond: moving ? 1 / max(0.0005, cycleSeconds) : 0,
+                                   cycleSeconds: cycleSeconds, color: Theme.mist, radius: 5)
+                    }
                     .overlay(alignment: .topLeading) { scaleLabel("+5 V") }
                     .overlay(alignment: .bottomLeading) { scaleLabel("−5 V") }
                 wavePicker
@@ -225,7 +233,8 @@ struct PulseOutEditor: View {
     private var cycleSeconds: Double {
         let labels = field(.ratio)?.disp.labels ?? []
         let rate = labels.indices.contains(out.ratio) ? Pulse.cyclesPerBeat(labels[out.ratio]) ?? 1 : 1
-        let bpm = Pulse.bpm(fromKnob: store.values[Pulse.tempoId] ?? Pulse.knob(fromBpm: 120))
+        var bpm = Pulse.bpm(fromKnob: store.values[Pulse.tempoId] ?? Pulse.knob(fromBpm: 120))
+        if let l = store.state?.pulse, l.bpm > 0 { bpm = l.bpm }      // J1's tempo while following it
         return 60 / max(1, bpm) / rate
     }
 

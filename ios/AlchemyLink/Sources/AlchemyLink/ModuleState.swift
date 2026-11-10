@@ -23,11 +23,13 @@ public struct ModuleState {
 
     public enum Tail {
         case belt(BeltState)
+        case pulse(PulseState)
         case other(tag: UInt8, bytes: [UInt8])
         case none
     }
 
     public var belt: BeltState? { if case let .belt(b) = tail { return b }; return nil }
+    public var pulse: PulseState? { if case let .pulse(p) = tail { return p }; return nil }
 
     static func db(_ b: UInt8) -> Double { Double(b) * 60 / 255 - 60 }
 
@@ -49,6 +51,8 @@ public struct ModuleState {
         let tag = try r.u8(), ver = try r.u8()
         if tag == UInt8(ascii: "B") && ver == 1 {
             tail = .belt(try BeltState(reading: &r))
+        } else if tag == UInt8(ascii: "P") && ver == 1 {
+            tail = .pulse(try PulseState(reading: &r))
         } else {
             tail = .other(tag: tag, bytes: r.rest())
         }
@@ -162,5 +166,52 @@ public enum BeltTheory {
         if itv == 6 { return q }
         if scale == 0 { return q + Double(itvChroma[itv]) }
         return degreeShift(q, key: key, scale: scale, steps: itvSteps[itv])
+    }
+}
+
+/// Pulse's part of STATE (tag "P", version 1; pulse_alchemy 0.5.0): where
+/// the clock and every output are, about fifteen times a second.
+public struct PulseState: Equatable {
+    public struct Out: Equatable {
+        /// The jack right now, −5…+5 V.
+        public var volts: Double
+        /// Where in its cycle, 0…1 (after PHASE and swing).
+        public var phase: Double
+        /// The cycle's number: the step of its pattern, or the count's low
+        /// byte when the pattern is off.
+        public var step: Int
+        /// This cycle sounds: a hit that passed its chance roll.
+        public var sounding: Bool
+
+        public init(volts: Double, phase: Double, step: Int, sounding: Bool) {
+            self.volts = volts; self.phase = phase; self.step = step; self.sounding = sounding
+        }
+    }
+
+    public var running: Bool
+    /// Following an external clock on J1.
+    public var following: Bool
+    /// What the clock is running at.
+    public var bpm: Double
+    /// Where in the beat, 0…1.
+    public var beat: Double
+    public var outs: [Out]
+
+    public init(running: Bool, following: Bool, bpm: Double, beat: Double, outs: [Out]) {
+        self.running = running; self.following = following; self.bpm = bpm; self.beat = beat; self.outs = outs
+    }
+
+    init(reading r: inout Reader) throws {
+        let flags = try r.u8()
+        running = flags & 1 != 0
+        following = flags & 2 != 0
+        bpm = Double(try r.u16()) / 10
+        beat = Double(try r.u16()) / 65536
+        var o: [Out] = []
+        for _ in 0..<Pulse.outs {
+            let v = try r.u8(), ph = try r.u16(), st = try r.u8(), f = try r.u8()
+            o.append(Out(volts: Double(v) / 255 * 10 - 5, phase: Double(ph) / 65536, step: Int(st), sounding: f & 1 != 0))
+        }
+        outs = o
     }
 }

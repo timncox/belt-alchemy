@@ -41,6 +41,8 @@ final class ModuleStore: ObservableObject, Identifiable {
     /// The module's own state (Belt: the sung note, harmonies, buttons),
     /// for firmwares that answer STATE; the app draws its screen from it.
     @Published private(set) var state: ModuleState?
+    /// When `state` arrived, for a screen that carries motion on between reads.
+    private(set) var stateDate = Date()
     /// The sung pitch for the last ~5 s (MIDI notes, nil for silence),
     /// oldest first, at the module's 60 frames a second.
     @Published private(set) var trace: [Double?] = []
@@ -146,6 +148,11 @@ final class ModuleStore: ObservableObject, Identifiable {
                     if phone?.hasState == true {
                         let st = try await c.state(since: traceLast)
                         absorb(st)
+                        // A firmware with STATE but no screen of Belt's kind
+                        // (Pulse) still shows its panel behind PANEL.
+                        if st.belt == nil, phone?.hasScreen == true, tick % 3 == 0 {
+                            screen = try await c.screen().rgb
+                        }
                     } else if phone?.hasScreen == true {
                         screen = try await c.screen().rgb
                     }
@@ -172,6 +179,7 @@ final class ModuleStore: ObservableObject, Identifiable {
     }
 
     private func absorb(_ st: ModuleState) {
+        stateDate = Date()
         state = st
         onState?(self, st)
         guard let b = st.belt else { return }

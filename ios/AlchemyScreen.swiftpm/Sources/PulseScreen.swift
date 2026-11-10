@@ -3,10 +3,13 @@
 // double time; then a lane per output drawing the voltage it plays and its
 // euclidean pattern. Tap a lane for every setting of that output.
 //
-// Pulse has no STATE of its own, so what is live comes from two places:
-// the knob values (read back every 400 ms, like every screen) and the
-// panel's mirrored LEDs: B2 flashes on the beat (cyan while following J1)
-// and B3 is green while running, red while stopped (pulse_alchemy.cpp).
+// What is live: the knob values (read back every 400 ms, like every
+// screen), and from Pulse 0.5.0 its STATE, about fifteen times a second:
+// running or not, the tempo, the beat, and where each output is in its
+// cycle, so every lane carries a point that rides its wave in time. An
+// older Pulse (0.4.0) has no STATE: the lanes stand still and the beat and
+// start/stop are read off the panel's mirrored LEDs instead (B2 flashes on
+// the beat, cyan while following J1; B3 is green running, red stopped).
 
 import SwiftUI
 import AlchemyLink
@@ -32,7 +35,9 @@ struct PulseScreen: View {
                         ForEach(0..<Pulse.outs, id: \.self) { i in
                             PulseLane(index: i, out: out(i), color: color(i), ratio: ratioLabel(i),
                                       cycleSeconds: cycleSeconds(i), isMuted: muted[i] != nil,
-                                      isSelected: selected == i)
+                                      isSelected: selected == i,
+                                      live: live.flatMap { $0.outs.indices.contains(i) ? $0.outs[i] : nil },
+                                      liveDate: store.stateDate, cyclesPerSecond: cyclesPerSecond(i))
                                 .contentShape(Rectangle())
                                 .onTapGesture { open(i) }
                                 .onLongPressGesture(minimumDuration: 0.35) { toggleMute(i) }
@@ -65,7 +70,7 @@ struct PulseScreen: View {
     private var transport: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(Int(bpm.rounded()))")
+                Text("\(Int(shownBpm.rounded()))")
                     .font(Theme.display(76)).monospacedDigit()
                     .foregroundStyle(running ? Theme.mist : Theme.fog)
                     .minimumScaleFactor(0.6).lineLimit(1)
@@ -76,8 +81,7 @@ struct PulseScreen: View {
                     .accessibilityValue("\(Int(bpm.rounded())) BPM")
                     .accessibilityAdjustableAction { dir in setBpm(bpm + (dir == .increment ? 1 : -1)) }
                 HStack(spacing: 8) {
-                    Circle().fill(beatColor.opacity(beatOn ? 1 : 0.22)).frame(width: 10, height: 10)
-                        .shadow(color: beatOn ? beatColor : .clear, radius: 6)
+                    beatLight
                     Text(following ? "FOLLOWING J1" : "BPM  ·  DRAG TO SET")
                         .font(.caption.weight(.semibold)).tracking(1.2).foregroundStyle(Theme.fog)
                 }
@@ -125,6 +129,29 @@ struct PulseScreen: View {
 
     private var bpm: Double { Pulse.bpm(fromKnob: store.values[Pulse.tempoId] ?? Pulse.knob(fromBpm: 120)) }
 
+    /// Pulse's STATE, when this firmware sends one (0.5.0).
+    private var live: PulseState? { store.state?.pulse }
+    /// What the clock is running at: its own tempo, or the clock on J1's.
+    private var clockBpm: Double { if let l = live, l.bpm > 0 { return l.bpm }; return bpm }
+    /// The large number: the tempo you set, or J1's while following it.
+    private var shownBpm: Double { following ? clockBpm : bpm }
+
+    /// The dot under the tempo: lit for the first fifth of each beat.
+    @ViewBuilder private var beatLight: some View {
+        if let l = live {
+            let at = store.stateDate, rate = l.running ? l.bpm / 60 : 0
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
+                let ahead = min(0.6, max(0, tl.date.timeIntervalSince(at))) * rate
+                let on = l.running && (l.beat + ahead).truncatingRemainder(dividingBy: 1) < 0.2
+                Circle().fill(beatColor.opacity(on ? 1 : 0.22)).frame(width: 10, height: 10)
+                    .shadow(color: on ? beatColor : .clear, radius: 6)
+            }
+        } else {
+            Circle().fill(beatColor.opacity(beatOn ? 1 : 0.22)).frame(width: 10, height: 10)
+                .shadow(color: beatOn ? beatColor : .clear, radius: 6)
+        }
+    }
+
     private func setBpm(_ b: Double) {
         guard let f = store.desc?.field(Pulse.tempoId) else { return }
         store.set(f, Pulse.knob(fromBpm: b))
@@ -144,6 +171,7 @@ struct PulseScreen: View {
     }
     /// B3: green while running. With no LED frame yet, assume running.
     private var running: Bool {
+        if let l = live { return l.running }
         let p = pair(2)
         return p.r + p.g + p.b == 0 ? true : p.g >= p.r
     }
@@ -154,7 +182,10 @@ struct PulseScreen: View {
         return top > max(12, ref * 0.6)
     }
     /// B2 is cyan while an external clock on J1 is driving.
-    private var following: Bool { let p = pair(1); return p.b > p.r && p.b > 0 }
+    private var following: Bool {
+        if let l = live { return l.following }
+        let p = pair(1); return p.b > p.r && p.b > 0
+    }
     private var beatColor: Color { following ? Theme.led(0x20C0FF) : Theme.key }
 
     // MARK: the outputs
@@ -176,7 +207,13 @@ struct PulseScreen: View {
     }
     private func cycleSeconds(_ i: Int) -> Double {
         let rate = Pulse.cyclesPerBeat(ratioLabel(i)) ?? 1
-        return 60 / max(1, bpm) / rate
+        return 60 / max(1, clockBpm) / rate
+    }
+    /// How fast output `i` goes round, for carrying its point on between
+    /// reads; nothing moves while stopped.
+    private func cyclesPerSecond(_ i: Int) -> Double {
+        guard running else { return 0 }
+        return max(1, clockBpm) / 60 * (Pulse.cyclesPerBeat(ratioLabel(i)) ?? 1)
     }
 
     private func select(_ i: Int) {
@@ -209,6 +246,9 @@ private struct PulseLane: View {
     var cycleSeconds: Double
     var isMuted: Bool
     var isSelected: Bool
+    var live: PulseState.Out? = nil
+    var liveDate = Date()
+    var cyclesPerSecond = 0.0
 
     var body: some View {
         HStack(spacing: 12) {
@@ -226,6 +266,12 @@ private struct PulseLane: View {
             PulseWave(out: out, color: color.opacity(isMuted ? 0.3 : 1), cycles: out.steps > 0 ? min(out.steps, 8) : 2,
                       cycleSeconds: cycleSeconds)
                 .frame(height: 46)
+                .overlay {
+                    if live != nil || cyclesPerSecond > 0 {
+                        PulsePoint(out: out, live: live, at: liveDate, cyclesPerSecond: cyclesPerSecond,
+                                   cycleSeconds: cycleSeconds, color: isMuted ? Theme.fog : Theme.mist)
+                    }
+                }
             if out.steps > 0 {
                 PulseRing(hits: out.hits, color: color.opacity(isMuted ? 0.3 : 1), dot: 2.2)
                     .frame(width: 40, height: 40)
@@ -264,6 +310,58 @@ struct PulseWave: View {
             glow.stroke(p, with: .color(color.opacity(0.6)), style: StrokeStyle(lineWidth: width + 2, lineJoin: .round))
             ctx.stroke(p, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
         }
+        .accessibilityHidden(true)
+    }
+}
+
+/// A point that rides a drawn wave at the output's rate, with a hairline
+/// through it: a feel for how fast each output goes round, and where the
+/// hits fall. With STATE (Pulse 0.5.0) it is placed where the module is
+/// (the output's step and the phase in its cycle) and carried on at the
+/// output's rate until the next read; its height is then the module's own
+/// reading of the jack wherever the drawing isn't the whole story (the
+/// random waves, slew, stopped). Without STATE it runs free off the
+/// phone's clock: the right speed, its own place in the bar.
+struct PulsePoint: View {
+    var out: Pulse.Out
+    var live: PulseState.Out?
+    var at: Date
+    var cyclesPerSecond: Double
+    var cycleSeconds: Double
+    var color: Color
+    var radius: CGFloat = 4
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60)) { tl in
+            Canvas { ctx, size in
+                let x: Double, v: Double
+                let cycle = { (x: Double) in x * Double(out.windowCycles) * 0.9999 + out.phase }
+                if let live {
+                    let ahead = min(0.6, max(0, tl.date.timeIntervalSince(at))) * cyclesPerSecond
+                    guard let px = out.place(step: live.step, cyclePhase: live.phase, ahead: ahead) else { return }
+                    x = px
+                    let drawn = cyclesPerSecond > 0 && out.slew < 0.01 && out.wave != .stepRandom && out.wave != .smoothRandom
+                    v = drawn ? out.volts(atCycle: cycle(x), cycleSeconds: cycleSeconds, sounding: live.sounding) : live.volts
+                } else {
+                    // Free-running: seconds since a fixed moment, as cycles.
+                    let gone = tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 86_400) * cyclesPerSecond
+                    guard let px = out.place(step: 0, cyclePhase: out.phase, ahead: gone) else { return }
+                    x = px
+                    v = out.volts(atCycle: cycle(x), cycleSeconds: cycleSeconds)
+                }
+                let px = size.width * x
+                let py = size.height * (1 - (v + 5) / 10) * 0.92 + size.height * 0.04
+                var hair = Path()
+                hair.move(to: CGPoint(x: px, y: 0)); hair.addLine(to: CGPoint(x: px, y: size.height))
+                ctx.stroke(hair, with: .color(color.opacity(0.18)), lineWidth: 1)
+                let dot = CGRect(x: px - radius, y: py - radius, width: 2 * radius, height: 2 * radius)
+                var glow = ctx
+                glow.addFilter(.blur(radius: radius * 1.5))
+                glow.fill(Path(ellipseIn: dot.insetBy(dx: -radius, dy: -radius)), with: .color(color.opacity(0.7)))
+                ctx.fill(Path(ellipseIn: dot), with: .color(color))
+            }
+        }
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 }
