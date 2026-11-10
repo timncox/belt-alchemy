@@ -11,6 +11,6 @@ let package = Package(
     targets: [
         .target(name: "AlchemyLink"),
         .testTarget(name: "AlchemyLinkTests", dependencies: ["AlchemyLink"],
-                    resources: [.copy("Resources/hlmidi_golden.json")]),
+                    resources: [.copy("Resources/hlmidi_golden.json"), .copy("Resources/pulse_0_4_0.descriptor.json"), .copy("Resources/pulse_0_3_0.descriptor.json")]),
     ]
 )

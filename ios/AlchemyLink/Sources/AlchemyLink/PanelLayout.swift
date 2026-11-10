@@ -45,6 +45,12 @@ public enum PanelLayout {
         (16, 33, 86.66, 109.41),
     ]
 
+    /// The two LEDs of button B1…B3 (0…2), as indices into a SCREEN frame.
+    public static func buttonLEDs(_ button: Int) -> (bottom: Int, top: Int) {
+        let b = buttons[min(buttons.count - 1, max(0, button))]
+        return (b.bottom, b.top)
+    }
+
     public static let leds: [PanelLED] = {
         var out: [PanelLED] = []
         for (p, r) in rings.enumerated() {

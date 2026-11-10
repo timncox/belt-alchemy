@@ -1,5 +1,7 @@
 // The module's screen. For Belt (and any firmware that answers STATE) the
-// app draws its own, in BeltScreen.swift. Otherwise: its six LED rings and button lights, drawn from
+// app draws its own, in BeltScreen.swift; for Pulse 0.4.0 and later, its
+// own in PulseScreen.swift (PANEL there shows this one). Otherwise: its six
+// LED rings and button lights, each ring named and valued, drawn from
 // the frame the panel last showed (SCREEN, 0x71), so pages, catch pips and
 // the picker's progress look on the phone as they do on the module. Drag
 // up or down on a ring to turn that knob on the page picked above; tap a
@@ -11,10 +13,13 @@ import AlchemyLink
 struct ScreenTab: View {
     @EnvironmentObject var store: ModuleStore
     @State private var touched: Field?
+    @State private var showPanel = false
 
     var body: some View {
         if let st = store.state, let belt = st.belt {
             BeltScreen(st: st, belt: belt)
+        } else if Pulse.drives(store.desc), !showPanel {
+            PulseScreen(showPanel: $showPanel)
         } else {
             ledScreen
         }
@@ -46,6 +51,13 @@ struct ScreenTab: View {
             .padding()
             .navigationTitle(store.desc?.moduleName ?? "Alchemy Lab")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if Pulse.drives(store.desc) {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Pulse") { showPanel = false }.accessibilityIdentifier("pulse-back")
+                    }
+                }
+            }
         }
     }
 }
@@ -97,6 +109,21 @@ struct PanelView: View {
                         .position(at(c.x, c.y))
                         .gesture(potDrag(c.pot ?? 0))
                         .accessibilityLabel(label(c))
+                }
+                // Each ring's knob on the page shown: its name and value, so
+                // the panel reads without knowing the firmware by heart.
+                ForEach(PanelLayout.controls.filter { $0.pot != nil }) { c in
+                    if let f = store.field(atPot: c.pot ?? 0) {
+                        VStack(spacing: 0) {
+                            Text(f.name).foregroundStyle(Theme.fog)
+                            Text(f.show(store.value(f))).foregroundStyle(Theme.mist).fontWeight(.semibold)
+                        }
+                        .font(.system(size: max(9, 2.5 * s))).lineLimit(1).minimumScaleFactor(0.6)
+                        .frame(width: 30 * s)
+                        .position(at(c.x, c.y + PanelLayout.ringRadius + 5.2))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    }
                 }
                 if store.phone?.hasPress == true {
                     ForEach(PanelLayout.controls.filter { $0.button != nil }) { c in
