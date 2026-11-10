@@ -257,8 +257,9 @@ struct PulseOutEditor: View {
     }
 }
 
-/// A wide slider for a 0…1 setting: its name, its value in the module's
-/// own units, and a track to drag anywhere along.
+/// A slider for a 0…1 setting: its name, its value in the module's own
+/// units, and the system's slider (so the sheet still scrolls when a drag
+/// starts on one; a drag gesture of our own would take every swipe).
 struct PulseSlider: View {
     var title: String
     var text: String
@@ -268,36 +269,20 @@ struct PulseSlider: View {
     var onChange: (Double) -> Void
 
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.subheadline).foregroundStyle(Theme.fog)
                 Spacer()
                 Text(text).font(Theme.display(15, weight: .bold)).monospacedDigit().foregroundStyle(Theme.mist)
             }
-            GeometryReader { g in
-                let w = g.size.width, x = w * min(1, max(0, value))
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.surface).frame(height: 8)
-                    if centre {
-                        Capsule().fill(color).frame(width: abs(x - w / 2), height: 8).offset(x: min(x, w / 2))
-                        Rectangle().fill(Theme.fog.opacity(0.6)).frame(width: 1, height: 16).offset(x: w / 2)
-                    } else {
-                        Capsule().fill(color).frame(width: max(8, x), height: 8)
-                    }
-                    Circle().fill(Theme.mist).frame(width: 22, height: 22).shadow(color: color.opacity(0.8), radius: 6)
-                        .offset(x: min(w - 22, max(0, x - 11)))
+            .accessibilityHidden(true)
+            Slider(value: Binding(get: { min(1, max(0, value)) }, set: { onChange($0) }), in: 0...1)
+                .tint(color)
+                .background(alignment: .center) {
+                    if centre { Rectangle().fill(Theme.fog.opacity(0.6)).frame(width: 1, height: 18) }
                 }
-                .frame(height: 30)
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 4).onChanged { d in
-                    onChange(min(1, max(0, Double(d.location.x / max(1, w)))))
-                })
-            }
-            .frame(height: 30)
+                .accessibilityLabel(title)
+                .accessibilityValue(text)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityValue(text)
-        .accessibilityAdjustableAction { dir in onChange(min(1, max(0, value + (dir == .increment ? 0.05 : -0.05)))) }
     }
 }

@@ -32,6 +32,7 @@ struct ScreenTab: View {
                 PagePicker(onlyGrid: true)
                 ZStack(alignment: .top) {
                     PanelView(touched: $touched)
+                        .padding(.bottom, 40)   // the bottom rings' names sit below the panel
                     if let f = touched {
                         HStack(spacing: 8) {
                             Text(f.name).font(.headline)
