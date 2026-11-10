@@ -189,21 +189,56 @@ struct SectionTabs<T: Hashable & Identifiable>: View {
     var quiet = false               // small type: a mode switch, not a place
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .lastTextBaseline, spacing: 18) {
-                ForEach(items) { it in
-                    let on = it == selection
-                    Button { withAnimation(.easeOut(duration: 0.2)) { selection = it } } label: {
-                        Text(title(it))
-                            .font(quiet ? .system(size: 14, weight: on ? .semibold : .regular)
-                                        : on ? Theme.display(22) : .system(size: 15, weight: .medium))
-                            .foregroundStyle(on ? Theme.mist : Theme.fog)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal)
+        // The row is its own Equatable view: a connected module publishes
+        // its screen many times a second, and a row rebuilt under a finger
+        // loses the press.
+        TabRow(titles: items.map(title), selected: items.firstIndex(of: selection) ?? 0, quiet: quiet) { i in
+            guard items.indices.contains(i) else { return }
+            withAnimation(.easeOut(duration: 0.2)) { selection = items[i] }
         }
+        .equatable()
+    }
+}
+
+private struct TabRow: View, Equatable {
+    var titles: [String]
+    var selected: Int
+    var quiet: Bool
+    var pick: (Int) -> Void
+
+    static func == (a: TabRow, b: TabRow) -> Bool {
+        a.titles == b.titles && a.selected == b.selected && a.quiet == b.quiet
+    }
+
+    var body: some View {
+        // No scroll view while the words fit: it holds a touch back to see
+        // whether it is a drag.
+        ViewThatFits(in: .horizontal) {
+            row.frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: false) { row }
+        }
+    }
+
+    private var row: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 0) {
+            ForEach(Array(titles.enumerated()), id: \.offset) { i, t in
+                let on = i == selected
+                Button { pick(i) } label: {
+                    Text(t)
+                        .font(quiet ? .system(size: 14, weight: on ? .semibold : .regular)
+                                    : on ? Theme.display(22) : .system(size: 15, weight: .medium))
+                        .foregroundStyle(on ? Theme.mist : Theme.fog)
+                        .lineLimit(1)
+                        .fixedSize()
+                        // A full-size target around a small word.
+                        .padding(.horizontal, 9)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 7)
     }
 }

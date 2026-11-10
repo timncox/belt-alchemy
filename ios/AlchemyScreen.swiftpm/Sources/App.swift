@@ -86,7 +86,7 @@ struct ModulesView: View {
             CombinedScreen(header: AnyView(layoutTabs.padding(.horizontal, -16)))
         } else {
             VStack(spacing: 0) {
-                if rig.canLink { layoutTabs.padding(.top, 6) }
+                if rig.canLink { layoutTabs }
                 columns
             }
         }
@@ -164,7 +164,6 @@ struct ModuleColumn: View {
                 Spacer()
             case .ready:
                 SectionTabs(items: sections, title: { $0.title }, selection: $section)
-                    .padding(.bottom, 8)
                 Group {
                     switch section {
                     case .screen: ScreenTab()
@@ -211,18 +210,23 @@ struct ModuleBar: View {
     var body: some View {
         HStack(spacing: 10) {
             if hsc != .regular && rig.modules.count > 1 {
-                HStack(alignment: .lastTextBaseline, spacing: 16) {
+                HStack(alignment: .lastTextBaseline, spacing: 0) {
                     ForEach(rig.modules) { m in
                         let on = rig.selected?.id == m.id
                         Button { withAnimation(.easeOut(duration: 0.2)) { rig.selectedID = m.id } } label: {
                             Text(rig.name(m))
                                 .font(on ? Theme.display(26, weight: .black) : Theme.display(17, weight: .semibold))
                                 .foregroundStyle(on ? Theme.mist : Theme.fog)
+                                // A full-size target around the word.
+                                .padding(.horizontal, 8)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
+                .padding(.leading, -8)
             } else {
                 Text(rig.name(module)).font(Theme.display(26, weight: .black)).foregroundStyle(Theme.mist)
             }
