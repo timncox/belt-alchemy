@@ -119,7 +119,7 @@ public enum AUParams {
             default: kind = .percent
             }
             return Spec(param: p, name: names[p], key: keys[p],
-                        fieldId: p < 12 ? "p\(p / 6).\(p % 6)" : nil, kind: kind)
+                        fieldId: p < 12 ? BeltFields.perf[p] : nil, kind: kind)
         }
     }()
 

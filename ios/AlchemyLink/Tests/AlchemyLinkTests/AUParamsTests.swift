@@ -29,8 +29,7 @@ final class AUParamsTests: XCTestCase {
         let s = AUParams.specs
         XCTAssertEqual(s.map(\.name), ["Key", "Scale", "Retune", "Amount", "Harmony", "Formant",
                                        "Voice 1", "Voice 2", "Voice 3", "Voice 4", "Doubler", "Spread", "HARD", "Mute"])
-        XCTAssertEqual(s.compactMap(\.fieldId), ["p0.0", "p0.1", "p0.2", "p0.3", "p0.4", "p0.5",
-                                                 "p1.0", "p1.1", "p1.2", "p1.3", "p1.4", "p1.5"])
+        XCTAssertEqual(s.compactMap(\.fieldId), BeltFields.perf)
         // The same fields, by name, as the pretend module's descriptor.
         let desc = try! Descriptor(json: Data(FakeModule().descJSON))
         for spec in s where spec.fieldId != nil {

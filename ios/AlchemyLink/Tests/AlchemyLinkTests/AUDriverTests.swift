@@ -35,7 +35,7 @@ final class AUDriverTests: XCTestCase {
         XCTAssertEqual(v[0], 4)
         // The module itself has it, stored the way the app stores it.
         let desc = try Descriptor(json: Data(module.descJSON))
-        XCTAssertEqual(desc.decode(module.live)["p0.0"]!, 4.5 / 12, accuracy: 1e-6)
+        XCTAssertEqual(desc.decode(module.live)["key"]!, 4.5 / 12, accuracy: 1e-6)
     }
 
     func testHardAndMuteArePressedOnlyWhenTheyChange() async throws {
@@ -71,7 +71,7 @@ final class AUDriverTests: XCTestCase {
         await driver.idle()
         // Someone else (the app, the panel) moves Amount back right after.
         let desc = try Descriptor(json: Data(module.descJSON))
-        try await client.setLive(desc.encode(module.live, changes: ["p0.3": 0.9]))
+        try await client.setLive(desc.encode(module.live, changes: ["amount": 0.9]))
         var v = try await driver.read()
         XCTAssertEqual(v[3]!, 10, accuracy: 1e-3, "inside the hold our write is what we report")
         driver.writeHold = 0

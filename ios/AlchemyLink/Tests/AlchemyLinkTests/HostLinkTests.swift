@@ -19,13 +19,13 @@ final class HostLinkTests: XCTestCase {
         var live = try await link.getLive()
         XCTAssertEqual(live.count, desc.size)
         var v = desc.decode(live)
-        XCTAssertEqual(desc.field("p0.0")!.show(v["p0.0"]!), "A")
-        XCTAssertEqual(desc.field("p0.1")!.show(v["p0.1"]!), "Major")
-        live = desc.encode(live, changes: ["p0.2": 0.875, "s0.1": 1])
+        XCTAssertEqual(desc.field("key")!.show(v["key"]!), "A")
+        XCTAssertEqual(desc.field("scale")!.show(v["scale"]!), "Major")
+        live = desc.encode(live, changes: ["retune": 0.875, "s0.1": 1])
         try await link.setLive(live)
         let after = try await link.getLive()
         v = desc.decode(after)
-        XCTAssertEqual(v["p0.2"]!, 0.875, accuracy: 1e-6)
+        XCTAssertEqual(v["retune"]!, 0.875, accuracy: 1e-6)
         XCTAssertEqual(desc.field("s0.1")!.show(v["s0.1"]!), "Normal")
 
         // Presets.
@@ -106,7 +106,7 @@ final class HostLinkTests: XCTestCase {
         // A knob turned from the phone shows up as the touched one.
         let desc = try await link.descriptor()
         let cur = try await link.getLive()
-        let live = desc.encode(cur, changes: ["p1.4": 0.9])
+        let live = desc.encode(cur, changes: ["double_amt": 0.9])
         try await link.setLive(live)
         let t = try await link.state(since: nil)
         XCTAssertEqual(t.touchPage, 1)

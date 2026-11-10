@@ -17,8 +17,14 @@
 import Foundation
 
 public enum BeltFields {
-    public static let key = "p0.0", scale = "p0.1"
-    public static let voices = ["p1.0", "p1.1", "p1.2", "p1.3"]
+    /// Belt's twelve performance knobs by the ids its firmware declares
+    /// (the Ident(...) calls in src/belt_alchemy.cpp), in page and pot
+    /// order. The SDK sends a knob's Ident as its field id; "p0.0" style
+    /// ids are only what it falls back to for a knob with none.
+    public static let perf = ["key", "scale", "retune", "amount", "harm_level", "formant",
+                              "harm1", "harm2", "harm3", "harm4", "double_amt", "spread"]
+    public static let key = perf[0], scale = perf[1]
+    public static let voices = Array(perf[6...9])
     /// "Off" as a stored value: the middle of the first of 12 zones.
     public static let voiceOff = 0.5 / 12
     public static func voiceValue(_ interval: Int) -> Double { (Double(max(0, min(11, interval))) + 0.5) / 12 }

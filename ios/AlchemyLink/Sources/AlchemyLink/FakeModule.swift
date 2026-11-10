@@ -72,7 +72,7 @@ public final class FakeModule: ByteTransport, @unchecked Sendable {
         let perfNames = perf.map { $0.0 }
         var fields: [[String: Any]] = []
         for (i, (n, disp)) in perf.enumerated() {
-            let f: [String: Any] = ["id": "p\(i / 6).\(i % 6)", "name": n, "off": i * 4, "type": "f32",
+            let f: [String: Any] = ["id": BeltFields.perf[i], "name": n, "off": i * 4, "type": "f32",
                                     "page": i / 6, "pot": i % 6, "def": 0.5, "disp": disp]
             fields.append(f)
         }
