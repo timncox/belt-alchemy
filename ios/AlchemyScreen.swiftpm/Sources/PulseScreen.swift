@@ -44,6 +44,7 @@ struct PulseScreen: View {
                                 .accessibilityIdentifier("pulse-lane-\(i + 1)")
                                 .accessibilityLabel("Output \(i + 1), \(ratioLabel(i)), \(waveName(i))")
                                 .accessibilityHint("Tap to edit, hold to mute")
+                                .accessibilityAddTraits(selected == i ? .isSelected : [])
                         }
                     }
                     .padding(.horizontal, 12)
