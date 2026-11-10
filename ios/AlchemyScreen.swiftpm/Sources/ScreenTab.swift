@@ -14,6 +14,7 @@ struct ScreenTab: View {
     @EnvironmentObject var store: ModuleStore
     @State private var touched: Field?
     @State private var showPanel = false
+    @State fileprivate var holdToken = 0
 
     var body: some View {
         if let st = store.state, let belt = st.belt {
@@ -31,7 +32,7 @@ struct ScreenTab: View {
             VStack(spacing: 12) {
                 PagePicker(onlyGrid: true)
                 ZStack(alignment: .top) {
-                    PanelView(touched: $touched)
+                    PanelView(touched: $touched, onHold: { button, down in holdChanged(button, down) })
                         .padding(.bottom, 40)   // the bottom rings' names sit below the panel
                     if let f = touched {
                         HStack(spacing: 8) {
@@ -52,6 +53,8 @@ struct ScreenTab: View {
             .padding()
             .navigationTitle(store.desc?.moduleName ?? "Alchemy Lab")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { followModule() }
+            .onChange(of: store.values[Pulse.selectedId]) { _ in followModule() }
             .toolbar {
                 if Pulse.drives(store.desc) {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -63,9 +66,37 @@ struct ScreenTab: View {
     }
 }
 
+extension ScreenTab {
+    /// Pulse's panel shows the selected output's OUTPUT layer, its PATTERN
+    /// layer while B3 is held and the clock while B2 is held. The page
+    /// picked here names the rings and takes their drags, so it follows:
+    /// otherwise a ring lit with one setting is labelled as another.
+    /// Other firmwares keep the page you pick.
+    fileprivate func followModule(layer: Int = 0) {
+        guard Pulse.drives(store.desc) else { return }
+        let n = Int(store.values[Pulse.selectedId] ?? 0) + 1
+        let name = layer == 2 ? "Clock" : layer == 1 ? "Pat \(n)" : "Out \(n)"
+        if let i = store.pages.firstIndex(where: { $0.name == name }), store.pageIndex != i { store.pageIndex = i }
+    }
+
+    /// A button held on the phone's panel: after the module's own
+    /// tap-or-hold time (300 ms), the page goes to the layer it brings up.
+    fileprivate func holdChanged(_ button: Int, _ down: Bool) {
+        guard Pulse.drives(store.desc), button == 1 || button == 2 else { return }
+        holdToken += 1
+        guard down else { followModule(); return }
+        let token = holdToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if holdToken == token { followModule(layer: button == 1 ? 2 : 1) }
+        }
+    }
+}
+
 struct PanelView: View {
     @EnvironmentObject var store: ModuleStore
     @Binding var touched: Field?
+    /// A panel button going down or coming up under a finger (button 0…2).
+    var onHold: ((Int, Bool) -> Void)? = nil
     @State private var dragStart: Double?
 
     private let b = PanelLayout.bounds
@@ -174,8 +205,8 @@ struct PanelView: View {
 
     private func buttonPress(_ button: Int) -> some Gesture {
         DragGesture(minimumDistance: 0)
-            .onChanged { _ in if dragStart == nil { dragStart = -1; store.press(button: button, .down) } }
-            .onEnded { _ in dragStart = nil; store.press(button: button, .up) }
+            .onChanged { _ in if dragStart == nil { dragStart = -1; store.press(button: button, .down); onHold?(button, true) } }
+            .onEnded { _ in dragStart = nil; store.press(button: button, .up); onHold?(button, false) }
     }
 }
 
@@ -187,6 +218,7 @@ struct PagePicker: View {
     var body: some View {
         let all = Array(store.pages.enumerated()).filter { !onlyGrid || ($0.element.grid && !$0.element.isSettings) }
         if all.count > 1 {
+          ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 20) {
                     ForEach(all, id: \.element.id) { item in
@@ -206,6 +238,7 @@ struct PagePicker: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
+                        .id(i)
                     }
                 }
             }
@@ -213,7 +246,11 @@ struct PagePicker: View {
                 if onlyGrid, !all.contains(where: { $0.offset == store.pageIndex }), let first = all.first {
                     store.pageIndex = first.offset
                 }
+                proxy.scrollTo(store.pageIndex, anchor: .center)
             }
+            // The page can change without a tap (it follows the module): keep its tab in view.
+            .onChange(of: store.pageIndex) { i in withAnimation { proxy.scrollTo(i, anchor: .center) } }
+          }
         }
     }
 }
