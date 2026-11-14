@@ -49,6 +49,7 @@ CPP_SOURCES = \
 C_SOURCES = \
     src/versio_alloc.c \
     src/belt_core_alchemy.c \
+    src/belt_follow.c \
     src/usbh_hub_midi.c \
     src/usb_midi_keys.c \
     src/usb_audio.c \

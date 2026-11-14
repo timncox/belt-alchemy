@@ -1,0 +1,167 @@
+# Emulator script for alchemy-lab/emu (branch claude/emu-hostlink):
+#   make FW=belt-phone FW_ROOT=<this checkout> FW_C="... src/belt_follow.c"
+#   build/belt-phone/emu --headless --flash none --script <this file>
+# FOLLOW: chords that follow the sung note, end to end through the firmware.
+# Settings page 4 (Follow): P1 Follow, P2 Stick, P3 Size, P4 Bass, P5 Color.
+wait 3000
+pot 1 0.04                # KEY  C
+pot 2 0.17                # SCALE Major
+pot 3 0.0                 # RETUNE fast
+pot 4 1.0                 # AMOUNT full
+pot 5 0.9                 # HARMONY level
+pot 6 0.5                 # FORMANT centre
+wait 1000                 # let the PLAY pots settle before Settings
+# Settings: B2 + B3 held 2 s; B1 steps Main -> Firmware -> Chord -> Follow
+press b3
+wait 50
+press b2
+wait 2300
+release b2
+release b3
+wait 300
+tap b1
+wait 300
+tap b1
+wait 300
+tap b1
+wait 300
+print screen
+pot 1 0.0                 # catch Follow at Off
+wait 100
+pot 1 0.1
+wait 100
+pot 1 0.214               # Root
+wait 300
+print screen
+tap b3                    # leave Settings
+wait 600
+pot 1 0.0
+wait 300
+pot 1 0.04                # KEY back to C
+wait 500
+# ---- ROOT: sing C4 -> C chord: G4 E4 G3 C3
+sing 262
+wait 1500
+print tone 392.00
+print tone 329.63
+print tone 196.00
+print tone 130.81
+print tone 440.00
+expect tone 392.00 > 0.02
+expect tone 329.63 > 0.02
+expect tone 196.00 > 0.02
+expect tone 440.00 < 0.005
+# sing F4 -> F chord: C5 A4 C4 F3
+sing 349
+wait 1500
+print tone 440.00
+print tone 174.61
+print tone 329.63
+expect tone 440.00 > 0.02
+expect tone 174.61 > 0.01
+expect tone 329.63 < 0.005
+# ---- HOLD freezes the followed chord
+sing 262
+wait 1500
+hold b2 700
+wait 300
+sing 294                  # D4: Root would go to D A F#
+wait 1500
+print tone 392.00
+print tone 440.00
+print tone 369.99
+expect tone 392.00 > 0.02 # G4 from the held C chord
+expect tone 369.99 < 0.005 # no F#4
+hold b2 700
+wait 600
+# ---- SOPRANO: back into Settings, Follow -> Soprano
+press b3
+wait 50
+press b2
+wait 2300
+release b2
+release b3
+wait 300                  # Settings reopens on the page it was left on (Follow)
+pot 1 0.04
+wait 100
+pot 1 0.080
+wait 80
+pot 1 0.119
+wait 80
+pot 1 0.159
+wait 80
+pot 1 0.199
+wait 80
+pot 1 0.238
+wait 80
+pot 1 0.278
+wait 80
+pot 1 0.317
+wait 80
+pot 1 0.357               # Soprano (caught on the way past Root)
+wait 300
+print screen
+tap b3
+wait 600
+pot 1 0.0
+wait 300
+pot 1 0.04
+wait 500
+sing 330                  # E4 on top of a C chord: C4 G3 C3 (led from the D4 before)
+wait 1500
+print tone 261.63 196.00 130.81 246.94
+expect tone 261.63 > 0.01
+expect tone 196.00 > 0.01
+expect tone 130.81 > 0.005
+expect tone 246.94 < 0.005 # no B3
+sing 294                  # D4 on top of a G chord: B3 G3 G2
+wait 1500
+print tone 246.94 196.00 98.00 261.63
+expect tone 246.94 > 0.01
+expect tone 196.00 > 0.01
+expect tone 98.00 > 0.004
+expect tone 261.63 < 0.005 # no C4
+# ---- CREATIVE
+press b3
+wait 50
+press b2
+wait 2300
+release b2
+release b3
+wait 300                  # Settings reopens on the page it was left on (Follow)
+pot 1 0.04
+wait 100
+pot 1 0.151
+wait 80
+pot 1 0.262
+wait 80
+pot 1 0.373
+wait 80
+pot 1 0.484
+wait 80
+pot 1 0.596
+wait 80
+pot 1 0.707
+wait 80
+pot 1 0.818
+wait 80
+pot 1 0.929               # Creative (caught on the way past Soprano)
+wait 300
+print screen
+tap b3
+wait 600
+pot 1 0.0
+wait 300
+pot 1 0.04
+wait 500
+silence
+wait 700
+sing 330                  # E4 as the major 7th of F: A3 F3 C3 F2
+wait 1500
+print tone 220.00 174.61 130.81 87.31
+expect tone 220.00 > 0.01
+expect tone 174.61 > 0.01
+expect tone 130.81 > 0.005
+expect tone 87.31 > 0.002
+expect tone 196.00 < 0.005 # no G3
+expect rms > 0.05

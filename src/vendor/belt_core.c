@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "belt_core.h"
+#include "../belt_follow.h"   /* belt-alchemy: FOLLOW (see belt_core.h) */
 
 #define IN_RING   16384              /* mono float input history */
 #define IN_MASK   (IN_RING - 1)
@@ -142,6 +143,13 @@ struct belt {
                            * Vocalist "vocoder" sound of Hide and Seek) */
     int hold_mode;        /* HOLD_FREEZE / HOLD_LOCK (saved, CC 39) */
     int hold;             /* performance: harmonies held (never saved) */
+    /* FOLLOW (belt-alchemy): the harmony voices hold a chord picked from
+     * the sung note and change it when a new note has lasted STICK */
+    int follow;           /* FOLLOW_OFF .. FOLLOW_CREATIVE (belt_follow.h) */
+    int follow_stick;     /* 0-100 -> 20..600 ms */
+    int follow_size;      /* FOLLOW_TRIAD / 7TH / 9TH */
+    int follow_bass;      /* 0/1 */
+    int follow_color;     /* 0-100: CREATIVE's reach */
     int monitor;          /* 0 = output muted (feedback guard, never saved) */
     int hw_input;         /* set by the gen wrapper: mic guard applies */
 
@@ -215,6 +223,15 @@ struct belt {
     int      fz_n;
     float    fz_T;                     /* period of the frozen slice */
     float    fz_note;                  /* its MIDI note */
+
+    /* ---- FOLLOW ---- */
+    follow_state_t fol;
+    int      fol_sig;     /* settings the chord was built with */
+    int      fol_pend;    /* sung note waiting out STICK, -1 none */
+    float    fol_pend_t;
+    float    fol_silent_t;
+    int      fol_fresh;        /* a new phrase: commit its first note fast */
+    float    fol_fresh_t;
 
     belt_voice_t v[BELT_VOICES];
     uint32_t rng;
@@ -330,6 +347,9 @@ belt_t *belt_create(const host_api_v1_t *host) {
     b->midi_mode = BELT_MIDI_HARMONY; b->vel_sens = 50; b->lead = 100;
     for (int i = 0; i < BELT_HELD_MAX; i++) b->held[i].note = -1;
     for (int i = 0; i < BELT_HARMONIES; i++) b->v_note[i] = -1;
+    b->follow_stick = 40; b->follow_bass = 1; b->follow_color = 50;
+    follow_reset(&b->fol);
+    b->fol_pend = -1;
 
     /* start the clock late enough that (w - LATENCY - grain reach) never
      * underflows the unsigned math */
@@ -512,6 +532,9 @@ static void hold_engage(belt_t *b, float q) {
         if (mnote >= 0) {
             b->hold_note[i] = (float)mnote;
             b->hold_vel[i] = b->v_vel[i];
+        } else if (b->follow) {
+            b->hold_note[i] = (float)b->fol.notes[i];
+            b->hold_act[i] = b->fol.notes[i] >= 0;
         } else if (b->harm[i] != ITV_OFF) {
             b->hold_note[i] = harm_target(b, q, b->harm[i]);
         } else {
@@ -520,6 +543,60 @@ static void hold_engage(belt_t *b, float q) {
     }
     b->hold_frozen = b->hold_mode == HOLD_FREEZE && hold_capture(b);
     b->hold_state = 1;
+}
+
+/* FOLLOW: commit a new chord once a new sung note has held for STICK.
+ * A phrase's first note (nothing yet, or after 0.4 s of silence) commits
+ * almost at once so the chord is there when the voice is. Changing a FOLLOW
+ * setting, the KEY or the SCALE rebuilds the current chord straight away. */
+static void follow_update(belt_t *b, float q, float dt) {
+    if (!b->follow) {
+        if (b->fol.mode >= 0) follow_reset(&b->fol);
+        b->fol_sig = 0;
+        b->fol_pend = -1;
+        return;
+    }
+    const int sig = b->follow | b->follow_size << 3 | b->follow_bass << 5 |
+                    b->key << 6 | b->scale << 10 |
+                    (b->follow == FOLLOW_CREATIVE ? b->follow_color / 10 : 0) << 14;
+    if (sig != b->fol_sig) {
+        const int mel = b->fol.melody;
+        b->fol_sig = sig;
+        follow_reset(&b->fol);
+        if (mel >= 0)
+            follow_commit(&b->fol, mel, b->key, b->scale, b->follow,
+                          b->follow_size, b->follow_bass, b->follow_color);
+    }
+    if (!b->voiced) {
+        b->fol_silent_t += dt;
+        b->fol_pend = -1;
+        if (b->fol_silent_t > 0.4f) { b->fol_fresh = 1; b->fol_fresh_t = 0.0f; }
+        return;
+    }
+    b->fol_silent_t = 0.0f;
+    /* the pitch line still holds the last phrase's note for its first few
+     * analyses, so "a new phrase" lasts 150 ms of singing, not one frame */
+    if (b->fol_fresh && (b->fol_fresh_t += dt) > 0.15f) b->fol_fresh = 0;
+    const int n = (int)lrintf(q);
+    if (n == b->fol.melody) {
+        b->fol_pend = -1;
+        return;
+    }
+    if (n != b->fol_pend) { b->fol_pend = n; b->fol_pend_t = 0.0f; }
+    else b->fol_pend_t += dt;
+    const float st = (float)b->follow_stick / 100.0f;
+    float need = 0.020f + st * st * 0.580f;
+    if ((b->fol.melody < 0 || b->fol_fresh) && need > 0.025f) need = 0.025f;
+    if (b->fol_pend_t + 1e-6f >= need) {
+        /* after a breath: a fresh close voicing around the new note rather
+         * than one led from wherever the last phrase ended */
+        if (b->fol_fresh) b->fol.n_parts = 0;
+        b->fol_fresh = 0;
+        follow_commit(&b->fol, n, b->key, b->scale, b->follow,
+                      b->follow_size, b->follow_bass, b->follow_color);
+        b->fol_pend = -1;
+        b->fol_silent_t = 0.0f;
+    }
 }
 
 static void belt_update_targets(belt_t *b, int frames) {
@@ -585,6 +662,7 @@ static void belt_update_targets(belt_t *b, int frames) {
      * velocity-scaled level; otherwise it tracks the quantized note at its
      * configured interval, carrying half the vibrato */
     belt_assign_voices(b);
+    follow_update(b, q, dt);
     float hlvl = (float)b->harm_level / 100.0f * 0.9f;
     if (b->hmute_mom) hlvl = 0.0f;           /* control-note breakdown */
     float vs01 = (float)b->vel_sens / 100.0f;
@@ -618,6 +696,16 @@ static void belt_update_targets(belt_t *b, int frames) {
             v->ratio_tgt = (out - b->note_inst) / 12.0f;
             float velg = (1.0f - vs01) + vs01 * (b->v_vel[i] / 127.0f);
             v->gain_tgt = hlvl * b->voiced_sm * velg;
+        } else if (b->follow) {
+            int fn = b->fol.notes[i];
+            if (fn < 0) {
+                v->gain_tgt = 0.0f;
+            } else {
+                float cents = (v->det_cents + v->wander) * hum01;
+                float out = (float)fn + cents / 100.0f + 0.5f * hum01 * residue;
+                v->ratio_tgt = (out - b->note_inst) / 12.0f;
+                v->gain_tgt = hlvl * b->voiced_sm;
+            }
         } else if (itv == ITV_OFF) {
             v->gain_tgt = 0.0f;
         } else {
@@ -841,7 +929,7 @@ void belt_process(belt_t *b, const int16_t *in, int16_t *out, int frames) {
     int limit_on = b->wet > 0 || b->double_amt > 0;
     for (int i = 0; i < BELT_HARMONIES; i++)
         if (b->harm[i] != ITV_OFF) limit_on = 1;
-    if (b->hold_state) limit_on = 1;
+    if (b->hold_state || b->follow) limit_on = 1;
     for (int i = 0; i < frames; i++) {
         uint64_t t = rd + (uint64_t)i;
         uint64_t ai = t & ACC_MASK;
@@ -892,6 +980,11 @@ static int param_table(belt_t *b, param_map_t *t) {
     t[n++] = (param_map_t){ "vel_sens",   &b->vel_sens,   0, 100 };
     t[n++] = (param_map_t){ "lead",       &b->lead,       0, 100 };
     t[n++] = (param_map_t){ "hold_mode",  &b->hold_mode,  0, 1 };
+    t[n++] = (param_map_t){ "follow",       &b->follow,       0, FOLLOW_MODES - 1 };
+    t[n++] = (param_map_t){ "follow_stick", &b->follow_stick, 0, 100 };
+    t[n++] = (param_map_t){ "follow_size",  &b->follow_size,  0, 2 };
+    t[n++] = (param_map_t){ "follow_bass",  &b->follow_bass,  0, 1 };
+    t[n++] = (param_map_t){ "follow_color", &b->follow_color, 0, 100 };
     return n;
 }
 
@@ -900,7 +993,8 @@ static int param_table(belt_t *b, param_map_t *t) {
  *   20 key   21 scale  22 retune  23 amount  24 flex    25 humanize
  *   26 harm1 27 harm2  28 harm3   29 harm4   30 harm_level  31 spread
  *   32 double_amt  33 formant  34 wet  35 hard  36 midi_mode  37 vel_sens
- *   38 lead  39 hold_mode
+ *   38 lead  39 hold_mode  40 follow  41 follow_stick  42 follow_size
+ *   43 follow_bass  44 follow_color
  * The 0-127 CC value scales linearly into each param's range. New params
  * are APPENDED to param_table so existing CC assignments never shift.
  *
@@ -1037,7 +1131,7 @@ void belt_on_midi(belt_t *b, const uint8_t *msg, int len, int source) {
     b->cc_last[0] = msg[0]; b->cc_last[1] = msg[1]; b->cc_last[2] = msg[2];
     b->cc_last_w = b->w;
 
-    param_map_t t[24];
+    param_map_t t[32];
     int n = param_table(b, t);
     int idx = (int)msg[1] - BELT_CC_BASE;
     if (idx < 0 || idx >= n) return;
@@ -1070,7 +1164,7 @@ void belt_set_param(belt_t *b, const char *key, const char *val) {
         belt_set_param(b, routed_key, separator + 1);
         return;
     }
-    param_map_t t[24];
+    param_map_t t[32];
     int n = param_table(b, t);
     for (int i = 0; i < n; i++) {
         if (!strcmp(key, t[i].key)) {
@@ -1105,7 +1199,7 @@ void belt_set_param(belt_t *b, const char *key, const char *val) {
 
 int belt_get_param(belt_t *b, const char *key, char *buf, int buf_len) {
     if (!b || !key || !buf || buf_len < 2) return -1;
-    param_map_t t[24];
+    param_map_t t[32];
     int n = param_table(b, t);
     for (int i = 0; i < n; i++)
         if (!strcmp(key, t[i].key))
@@ -1129,7 +1223,7 @@ int belt_get_param(belt_t *b, const char *key, char *buf, int buf_len) {
     if (!strcmp(key, "status")) {
         int mask = 0;
         for (int i = 0; i < BELT_HARMONIES; i++)
-            if (b->harm[i] != ITV_OFF ||
+            if (b->harm[i] != ITV_OFF || (b->follow && b->fol.notes[i] >= 0) ||
                 (b->midi_mode == BELT_MIDI_HARMONY && b->v_note[i] >= 0))
                 mask |= 1 << i;
         int hold = b->hold_state == 0 ? 0
@@ -1144,6 +1238,11 @@ int belt_get_param(belt_t *b, const char *key, char *buf, int buf_len) {
                         b->hard || b->hard_mom ? 1 : 0,
                         hold);
     }
+    /* FOLLOW's chord: "<root pc or -1>:<third>:<n1>,<n2>,<n3>,<n4>" */
+    if (!strcmp(key, "chord"))
+        return snprintf(buf, (size_t)buf_len, "%d:%d:%d,%d,%d,%d",
+                        b->follow ? b->fol.chord.root_pc : -1, b->fol.chord.third,
+                        b->fol.notes[0], b->fol.notes[1], b->fol.notes[2], b->fol.notes[3]);
     if (!strcmp(key, "voiced"))
         return snprintf(buf, (size_t)buf_len, "%d", b->voiced);
     if (!strcmp(key, "detected_note"))

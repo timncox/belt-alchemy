@@ -20,6 +20,9 @@
  *   Settings (B2+B3 2 s): FLEX, HUMANIZE, WET; page 1 = the SD firmware picker
  *   Settings page 2 = CHORD: MIDI NOTES, LEAD (0 = chord only), HOLD
  *          (Freeze / Lock), J8 (Formant CV / Hold gate), VEL SENS;
+ *   Settings page 3 = FOLLOW: the harmony voices pick a chord from the
+ *          sung note -- FOLLOW (Off / Root / Soprano / Alto / Tenor / Bass /
+ *          Creative), STICK, SIZE (Triad / 7th / 9th), BASS, COLOR;
  *   Launchpad top 3 = KEY / PLAY (PLAY pads are held notes: Hide and Seek)
  *   A USB-MIDI keyboard (Launchpad mode) or the phone's (Phone modes, CTRL
  *          types 6/7) plays held notes and the sustain pedal like PLAY pads
@@ -93,7 +96,7 @@ static constexpr uint32_t kBlockSize = 128u;
 static constexpr uint8_t kGateJack = 0u;
 
 enum : uint8_t { kPagePlay = 0, kPageSetup = 1, kNumAppPages = 2 };
-enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1, kSettingsChord = 2 };
+enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1, kSettingsChord = 2, kSettingsFollow = 3 };
 
 /* ---- hardware + engine -------------------------------------------------- */
 
@@ -314,6 +317,12 @@ static hostlink::Host host(presets, "belt_alchemy", "Belt",
 static BeltExtras  extras;
 static KnobHandle  flex_k, humanize_k, wet_k, lead_k, vel_k;
 static SelectorHandle midi_mode_s, hold_mode_s, j8_mode_s;
+static KnobHandle     stick_k, color_k;
+static SelectorHandle follow_s, fsize_s, fbass_s;
+static const char* const kFollowLabels[7] = {"Off", "Root", "Soprano", "Alto",
+                                             "Tenor", "Bass", "Creative"};
+static const char* const kSizeLabels[3]   = {"Triad", "7th", "9th"};
+static const char* const kOffOnLabels[2]  = {"Off", "On"};
 static const char* const kHoldModeLabels[2] = {"Freeze", "Lock"};
 static const char* const kJ8Labels[2]       = {"Formant", "Hold gate"};
 static const char* const kMidiModeLabels[3] = {"Off", "Harmony", "Target"};
@@ -1096,6 +1105,8 @@ static bool     prev_settings = false;
 static int      applied_flex = -1, applied_humanize = -1, applied_wet = -1;
 static int      applied_lead = -1, applied_vel = -1, applied_midi = -1;
 static int      applied_hold_mode = -1, applied_j8 = -1;
+static int      applied_follow = -1, applied_stick = -1, applied_fsize = -1,
+                applied_fbass = -1, applied_color = -1;
 
 static void mark_dirty(uint32_t now)
 {
@@ -1172,6 +1183,15 @@ static void OnFrame(void)
         if (mm != applied_midi) { applied_midi = mm; set_param_int("midi_mode", mm); }
         const int hm = (int)hold_mode_s.Value(), j8 = (int)j8_mode_s.Value();
         if (hm != applied_hold_mode) { applied_hold_mode = hm; set_param_int("hold_mode", hm); }
+        /* The Follow page: chords from the sung note. */
+        const int fo = (int)follow_s.Value(), fz = (int)fsize_s.Value();
+        const int fb = (int)fbass_s.Value();
+        const int sk = settings_pct(stick_k), co = settings_pct(color_k);
+        if (fo != applied_follow) { applied_follow = fo; set_param_int("follow",       fo); }
+        if (sk != applied_stick)  { applied_stick  = sk; set_param_int("follow_stick", sk); }
+        if (fz != applied_fsize)  { applied_fsize  = fz; set_param_int("follow_size",  fz); }
+        if (fb != applied_fbass)  { applied_fbass  = fb; set_param_int("follow_bass",  fb); }
+        if (co != applied_color)  { applied_color  = co; set_param_int("follow_color", co); }
         if (j8 != applied_j8)
         {
             /* J8: the FORMANT knob's CV, or the HOLD gate. Re-pointing a jack
@@ -1680,6 +1700,50 @@ int main(void)
         .Help("How much a held note's velocity sets its voice's level. The "
               "Launchpad Mini MK3 has no velocity (its pads send 100), so this "
               "is for keyboards and the chord sources to come.");
+    /* Settings page 4, Follow: the harmony voices hold a chord picked from
+     * the sung note (belt_follow.h). B1 steps on to it after Chord. */
+    settings.Page(kSettingsFollow).Name("Follow")
+        .Help("Chords that follow your voice. With **Follow** on, the four "
+              "harmony voices stop copying every note you sing: they hold a "
+              "chord in the KEY and SCALE that fits your note and change it "
+              "when you land on a new note for **Stick**. HARMONY still sets "
+              "their level, B2 still mutes them and HOLD still freezes the "
+              "chord. Notes held on a Launchpad or keyboard take over while "
+              "they are down. The Setup page's Voice 1-4 intervals are not "
+              "used while Follow is on.");
+    follow_s = settings.Page(kSettingsFollow).Pot(0)
+        .Selector(kFollowLabels).Default(0)
+        .Ident("follow").Name("Follow")
+        .Help("**Off**: the Voice 1-4 intervals, as always. **Root**: your "
+              "note is the chord's root -- the 3rd and 5th above you and the "
+              "root an octave below. **Soprano**, **Alto**, **Tenor**, "
+              "**Bass**: you sing that part of a four-part chord and Belt "
+              "sings the other three, moving each by the smallest step. "
+              "**Creative**: your note sits on top as a colour -- a 9th, 7th, "
+              "6th or 11th -- over an open chord with the root in the bass.");
+    stick_k = settings.Page(kSettingsFollow).Pot(1).Knob().Default(0.4f)
+        .Ident("follow_stick").Name("Stick").Color(kColRetune)
+        .Help("How long a new note has to last before the chord changes: "
+              "20 ms fully left, about 110 ms at the default, 600 ms fully "
+              "right. Longer rides over passing notes and scoops. A "
+              "phrase's first note always changes it at once.");
+    fsize_s = settings.Page(kSettingsFollow).Pot(2)
+        .Selector(kSizeLabels).Default(0)
+        .Ident("follow_size").Name("Size")
+        .Help("**Triad**, **7th** or **9th** chords. Creative always uses "
+              "7ths and 9ths.");
+    fbass_s = settings.Page(kSettingsFollow).Pot(3)
+        .Selector(kOffOnLabels).Default(1)
+        .Ident("follow_bass").Name("Bass")
+        .Help("**On**: a voice sings the chord's root below you. **Off**: no "
+              "voice below the chord (Root, Creative) or no bass part "
+              "(Soprano, Alto, Tenor) -- lighter, and it leaves room for a "
+              "real bass line.");
+    color_k = settings.Page(kSettingsFollow).Pot(4).Knob().Default(0.5f)
+        .Ident("follow_color").Name("Color").Color(kColHarm)
+        .Help("Creative only: how far out the chords reach. Low keeps your "
+              "note a 3rd, 7th or 9th of the everyday chords; high reaches "
+              "for 6ths, 11ths and the rarer chords of the scale.");
     humanize_k = settings.Page(kSettingsMain).Pot(4).Knob().Default(0.3f)
         .Ident("humanize").Name("Humanize").Color(kColAmount)
         .Help("Vibrato preserved through the correction, and a slow wander "

@@ -13,22 +13,30 @@
 CC     ?= cc
 CFLAGS  = -O2 -g -Wall -Wextra -I../src -I../src/vendor -ffast-math -fno-finite-math-only
 BUILD   = ../build/test
+ENGINE  = ../src/vendor/belt_core.c ../src/vendor/belt_core.h ../src/belt_follow.h
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_usb_keys
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_follow $(BUILD)/test_usb_keys
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
+	./$(BUILD)/test_follow
 	./$(BUILD)/test_usb_keys
 
-$(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
+$(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c ../src/belt_follow.c $(ENGINE)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(CFLAGS) $(filter-out $(ENGINE),$^) -o $@ -lm
 
 # Hide and Seek: held notes, LEAD 0, the firmware's own engine unit.
-$(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
+$(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy.c ../src/belt_follow.c $(ENGINE)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(CFLAGS) $(filter-out $(ENGINE),$^) -o $@ -lm
+
+# FOLLOW: chords from a synthesized singer (Root, SATB, Creative, STICK,
+# gaps, HOLD, latency).
+$(BUILD)/test_follow: test_follow.c ../src/versio_alloc.c ../src/belt_core_alchemy.c ../src/belt_follow.c $(ENGINE)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(filter-out $(ENGINE),$^) -o $@ -lm
 
 # The USB host's hardware-free half: descriptors, roles, keyboard packets.
 $(BUILD)/test_usb_keys: test_usb_keys.c ../src/usb_midi_keys.c

@@ -76,6 +76,16 @@ Page 2 **CHORD** (2026-09-27): what held notes do.
 - **P4 J8**: Formant (default) / Hold gate.
 - **P5 VEL SENS** (default 50).
 
+Page 3 **FOLLOW** (2026-11-14): chords that follow the sung note
+(`src/belt_follow.c`, below).
+- **P1 FOLLOW**: Off (default) / Root / Soprano / Alto / Tenor / Bass /
+  Creative.
+- **P2 STICK** 0-100 (default 40): how long a new note must last before the
+  chord changes, 20 ms + 580 ms x (STICK/100)^2 (about 110 ms at 40).
+- **P3 SIZE**: Triad (default) / 7th / 9th.
+- **P4 BASS**: Off / On (default).
+- **P5 COLOR** 0-100 (default 50): Creative only.
+
 The Launchpad's PLAY pads (below) are the note source for now. The chord
 sequencer and the front/back links of `docs/alchemy-chord-vocoder-design.md`
 feed the same `belt_on_midi`.
@@ -86,6 +96,52 @@ re-pitched to it; there are four voices, and the newest press steals the
 oldest note's voice. ✅ `test/test_chord.c` at 48 kHz, voice-like A3 with
 C4-E4-G4 held: C4 23.4, E4 15.3, G4 18.8 (Goertzel power), D#4 0.05, and the
 A3 lead drops from 25.5 to 0.002 at LEAD 0. Release gives silence.
+
+### FOLLOW (2026-11-14)
+
+With FOLLOW on, the four harmony voices stop copying every sung note at
+fixed intervals: they hold a chord in KEY + SCALE built on the sung note and
+change it only when a new quantized note has lasted STICK. A phrase's first
+note (nothing yet, or 0.4 s of silence before it) commits after 25 ms, so the
+chord is there with the voice; after a breath the voicing is built fresh
+around the new note rather than led from where the last phrase ended.
+Changing a FOLLOW setting, KEY or SCALE rebuilds the current chord at once.
+Engine params `follow`, `follow_stick`, `follow_size`, `follow_bass`,
+`follow_color` (CC 40-44, appended); `get_param("chord")` reads it back.
+
+- **Root**: the sung note is the root of the scale's chord on it (major when
+  the note is outside the scale): 3rd and 5th above, root an octave below,
+  and the 5th below (triad) / 7th / 9th above.
+- **Soprano / Alto / Tenor / Bass**: the sung note is that part. Candidates
+  are the scale's diatonic chords that hold the note (Pentatonic borrows its
+  parent major/minor, Blues natural minor, Chromatic major; outside the
+  scale, major/minor chords weighted toward secondary dominants). Scored by
+  degree (I, IV, V first), staying put, and root motion by 4ths/5ths; then
+  every voicing in range is scored for chord-tone coverage (no doubled 3rd,
+  root in the bass), smallest motion from the last voicing, no parallel 5ths
+  or octaves, nothing below A1 and a cost below E2. BASS Off drops the bass
+  part (three parts).
+- **Creative**: the sung note sits on top as a colour tone (9th, maj7/7th,
+  6th, 11th, #11) over an open voicing with the root in the bass; COLOR
+  sets how far out the chord choice reaches.
+
+HOLD snapshots the followed chord like any other; held MIDI notes still
+take over the voices they are pinned to. The Setup page's VOICE 1-4
+intervals are unused while FOLLOW is on. A commit costs one voicing search
+(a few thousand candidate scores), at most a few times a second.
+
+✅ `test/test_follow.c` at 48 kHz with a synthesized singer (buzz through
+three vowel formants, 5.5 Hz vibrato, a 70-cent scoop into every note,
+consonant gaps and breaths): Root voices measured at their pitches; Soprano
+/ Alto / Tenor / Bass / Creative over a tune in C major keep the sung note
+in the chord with at most one leap over a 5th in any part; a 60 ms passing
+note does not change the chord at the default STICK; 70 ms gaps never
+flicker it; HOLD keeps the C chord while D is sung. Chord change 56 ms after
+the note at STICK 0, 152 ms at 40, 427 ms at 80; 61 ms for a phrase's first
+note. Host cost +5-7 us per 128-frame block (Creative, worst case).
+✅ Emulator (`alchemy-lab/emu`, belt-phone build, `test/emu/follow.emu`):
+Root C4 -> G4 E4 G3 C3 and F4 -> A4 F3, HOLD keeps G4 while D4 is sung,
+Soprano and Creative chords at their pitches.
 
 ### HOLD (2026-10-02)
 
@@ -180,7 +236,8 @@ The SDK's **Presets** manage the pager (both pages), Settings (brightness,
 flex, humanize, wet; midi notes, lead, vel sens) and `BeltExtras` {`cpu_peak`}.
 Adding the Chord page changed the Settings schema hash, so the first boot of
 the `hide-and-seek` build finds no valid Belt state and starts from Belt's
-first-boot defaults, once. Slot 0 is the working
+first-boot defaults, once. Adding the Follow page (2026-11-14) does the same
+once more; the USB mode lives in `/alchemy/usb.cfg` on the card and is kept. Slot 0 is the working
 state, **autosaved** 5 s after the last SETUP / Settings / extras change
 with hands off the buttons and the picker idle. `BeltExtras` carries its
 own schema tag ('BLT'), so a slot 0 written by Smack or Mark on the same

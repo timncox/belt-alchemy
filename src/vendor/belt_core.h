@@ -33,7 +33,10 @@
  *   48 kHz: the YIN lag ceiling (YIN_TAUMAX 260 at 24 kHz) puts the lowest
  *   trackable pitch at ~92 Hz rather than 85; BELT_LATENCY is 24 ms rather
  *   than 26. test/test_tuner.c holds the retarget to a 440 Hz sine.
- * Engine fixes go upstream, then re-vendor and re-apply this edit.
+ * Second edit, belt-alchemy only: FOLLOW (../belt_follow.c), hooked into
+ *   belt_core.c at follow_update(), the harmony loop, hold_engage(), the
+ *   param table (CC 40-44), the status mask and a "chord" readback.
+ * Engine fixes go upstream, then re-vendor and re-apply these edits.
  */
 #ifndef BELT_CORE_H
 #define BELT_CORE_H
