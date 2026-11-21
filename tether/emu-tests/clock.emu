@@ -1,0 +1,44 @@
+# TETHER: clock, reset and drum trigs (J5 16ths, J6 reset on start, J7 KICK
+# channel 1, J8 SNARE channel 2).
+wait 3000
+expect booted
+mark
+midi start
+wait 20
+expect edges 6 = 1             # reset on start
+midi clock 96 120              # one bar at 120 BPM (2 s)
+expect edges 5 = 16            # sixteenths
+expect edges 6 = 1
+midi stop
+mark
+midi clock 24 120
+expect edges 5 = 0             # stopped: the clock jack rests
+mark
+midi on 1 36 100
+wait 30
+midi on 2 38 100
+wait 30
+midi on 1 36 100
+wait 30
+expect edges 7 = 2             # KICK trigs
+expect edges 8 = 1             # SNARE trig
+midi off 1 36
+midi off 2 38
+# 24 PPQN at 300 BPM still comes out as separate pulses (J5 = CLK 24: hold
+# B3, J5's pot P3 to zone 2 of 22)
+press b3
+wait 400
+pot 3 0.05                     # catch (CLK 16 sits at zone 3)
+wait 100
+pot 3 0.16                     # zone 3 = CLK 16: caught
+wait 100
+pot 3 0.114                    # zone 2: CLK 24
+wait 100
+release b3
+wait 100
+mark
+midi start
+midi clock 48 300
+expect edges 5 > 44
+expect finite
+expect alive

@@ -1,0 +1,116 @@
+# TETHER's panel: B1 voice, VOICE pots, B3 test note and JACKS, B2 MASTER
+# and the calibration reference, B2 tap all notes off.
+wait 3000
+expect booted
+# B3 tap: a test C on voice A (0 V, gate A for 300 ms)
+tap b3
+wait 60
+expect cv 3 > 4.5
+expect cv 9 > -0.01
+expect cv 9 < 0.01
+wait 400
+expect cv 3 < 0.5
+# OCTAVE (P4) +2 on voice A: zone 6 of 9
+pot 4 0.72
+wait 50
+tap b3
+wait 60
+expect cv 9 > 1.99
+expect cv 9 < 2.01
+wait 400
+# TRANSPOSE (P5) on A: zone 19 of 25 = +7
+pot 5 0.78
+wait 50
+tap b3
+wait 60
+expect cv 9 > 2.57
+expect cv 9 < 2.60
+wait 400
+# PART (P1): voice A to channel 1 (catch at ch 5, then down)
+pot 1 0.26
+wait 100
+pot 1 0.03
+wait 100
+midi on 1 48 100
+wait 40
+expect cv 3 > 4.5              # A plays channel 1 now
+midi off 1 48
+midi on 5 48 100
+wait 40
+expect cv 3 < 0.5              # and not channel 5
+midi off 5 48
+# B1: voice B; its test note on gate B
+tap b1
+wait 100
+expect led b1 cyan
+tap b3
+wait 60
+expect cv 4 > 4.5
+expect cv 3 < 0.5
+wait 400
+tap b1
+wait 100
+expect led b1 amber
+# GATE (P2) = ACC GATE (zone 2 of 4): an accent is 8 V, a plain note 5 V
+pot 2 0.12                     # catch at GATE
+wait 100
+pot 2 0.62
+wait 50
+midi on 1 48 120
+wait 40
+expect cv 3 > 7.5
+midi off 1 48
+midi on 1 48 90
+wait 40
+expect cv 3 > 4.5
+expect cv 3 < 5.5
+midi off 1 48
+# B2 tap: all notes off
+midi on 1 48 100
+wait 40
+expect cv 3 > 4.5
+tap b2
+wait 40
+expect cv 3 < 0.5
+midi off 1 48
+# hold B2: MASTER. B1 there = the calibration reference, 1 V then 3 V
+press b2
+wait 400
+tap b1
+wait 250
+expect cv 9 > 0.99
+expect cv 9 < 1.01
+expect cv 10 > 0.99
+expect cv 10 < 1.01
+# CAL OFFSET (P1) on voice A: +0.05 V
+pot 1 0.5
+wait 100
+pot 1 0.75
+wait 250
+expect cv 9 > 1.045
+expect cv 9 < 1.055
+tap b1
+wait 250
+expect cv 9 > 3.04
+expect cv 9 < 3.06
+release b2
+wait 250
+expect cv 9 > 1.62               # the reference ends with B2: back to the last note (+0.05 offset)
+expect cv 9 < 1.65
+# hold B3: JACKS. J4's pot (P2) to RUN (zone 8 of 22)
+press b3
+wait 400
+pot 2 0.07                     # catch at GATE B
+wait 100
+pot 2 0.386
+wait 100
+release b3
+wait 100
+midi start
+wait 40
+expect cv 4 > 4.5              # RUN
+midi stop
+wait 40
+expect cv 4 < 0.5
+expect finite
+expect alive

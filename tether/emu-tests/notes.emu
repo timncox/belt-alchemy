@@ -1,0 +1,60 @@
+# TETHER: PROTECTOR's PARTS notes become pitch and gates (first-boot layout:
+# J9 pitch A, J10 pitch B, J3 gate A, J4 gate B). Voice A follows channel 5
+# (BASS), voice B channel 6 (LEAD). 0 V = middle C (note 60).
+wait 3000
+expect booted
+expect led b3 rgb 8 0 0       # dim red: nothing plugged in yet
+midi on 5 48 100               # C3 on BASS
+wait 40
+expect cv 9 > -1.01
+expect cv 9 < -0.99            # -1 V
+expect cv 3 > 4.5              # gate A up
+expect cv 4 < 0.5              # gate B down
+midi off 5 48
+wait 40
+expect cv 3 < 0.5              # gate A down
+expect cv 9 < -0.99            # the pitch stays
+wait 400
+expect led b3 green            # a MIDI device, quiet (it flashes white per message)
+midi on 6 72 100               # C5 on LEAD
+wait 40
+expect cv 10 > 0.99
+expect cv 10 < 1.01            # +1 V
+expect cv 4 > 4.5
+midi off 6 72
+midi on 3 60 100               # HATS: neither voice
+wait 40
+expect cv 3 < 0.5
+expect cv 4 < 0.5
+# PROTECTOR's slide: the new note on before the old one's off. One gate.
+mark
+midi on 5 48 100
+wait 50
+midi on 5 55 100
+midi off 5 48
+wait 50
+expect cv 9 > -0.43
+expect cv 9 < -0.40            # G3 = -5/12 V
+midi off 5 55
+wait 40
+expect edges 3 = 1             # legato: no new gate
+# a plain off-then-on is a new gate
+mark
+midi on 5 48 100
+wait 50
+midi off 5 48
+midi on 5 48 100
+wait 50
+midi off 5 48
+wait 40
+expect edges 3 = 2
+# pulled out while a note is held: nothing left hanging
+midi on 5 48 100
+wait 40
+expect cv 3 > 4.5
+midi unplug
+wait 40
+expect cv 3 < 0.5
+expect led b3 rgb 8 0 0
+expect finite
+expect alive
