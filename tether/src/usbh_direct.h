@@ -1,5 +1,5 @@
 /* usbh_direct -- patience for a USB-MIDI device straight on the Lab's front
- * USB-C (TETHER 0.3.1, 0.3.2).
+ * USB-C (TETHER 0.3.1 to 0.3.3).
  *
  * Behind a hub, Belt's hub driver sets the device up itself: 20 ms after the
  * port reset, 5 ms after it gives the device an address, and a device that
@@ -85,9 +85,11 @@ struct Step
     uint8_t  ctl;   /* Control.state */
     uint8_t  err;   /* Control.errorcount */
     char     ev;    /* s state, w wait, x extra round, n names skipped, E core error,
-                       A abort, T stuck, R restart, K class running */
+                       A abort, T stuck, R restart, K class running;
+                       0.3.3, from tether_usbh: C attached, U detached,
+                       H host turn, D device turn */
 };
-constexpr unsigned kSteps = 64u;
+constexpr unsigned kSteps = 128u;
 
 /* The core runs control requests in these states while a device is set up. */
 inline bool setting_up(uint8_t g)
@@ -138,6 +140,30 @@ inline uint8_t place_midi(USBH_HandleTypeDef* ph)
     return (uint8_t)(d.bInterfaceNumber + 1u);
 }
 
+/* 0.3.3: the try log lives outside Watch. 0.3.2 kept it inside, and the port
+ * turning to device mode (host_stop) reset Watch and wiped it: the file on
+ * the card then held an empty log. */
+struct Log
+{
+    Step     steps[kSteps] = {};   /* a ring */
+    uint32_t n       = 0;          /* steps logged since power-up */
+    uint32_t fails   = 0;          /* failed tries since power-up (all turns) */
+    uint32_t oks     = 0;          /* classes started since power-up */
+    uint32_t Serial() const { return fails + oks; }   /* changes: time to write */
+
+    void add(USBH_HandleTypeDef* ph, uint32_t now, char ev)
+    {
+        Step& s = steps[n % kSteps];
+        s.t   = now;
+        s.g   = ph ? ph->gState : 0xFF;
+        s.e   = ph ? ph->EnumState : 0xFF;
+        s.ctl = ph ? ph->Control.state : 0xFF;
+        s.err = ph ? ph->Control.errorcount : 0xFF;
+        s.ev  = ev;
+        n++;
+    }
+};
+
 struct Watch
 {
     uint8_t  g = 0xFF, e = 0xFF;   /* gState / EnumState as last seen */
@@ -155,21 +181,9 @@ struct Watch
     uint32_t restarts  = 0;        /* clean starts made here, for the log */
     uint32_t names     = 0;        /* times the name strings were skipped */
     bool     ask_names = false;    /* 0.3.1's way, for the tests: let the core ask for them */
-    Step     steps[kSteps] = {};   /* the try log, a ring */
-    uint32_t nsteps    = 0;        /* steps logged since power-up */
-    uint32_t serial    = 0;        /* bumps on a failed try or a class starting (write the log) */
+    struct Log* lg     = nullptr;  /* the try log (0.3.3: kept outside, so a role turn doesn't wipe it) */
 
-    void log(USBH_HandleTypeDef* ph, uint32_t now, char ev)
-    {
-        Step& s = steps[nsteps % kSteps];
-        s.t   = now;
-        s.g   = ph->gState;
-        s.e   = ph->EnumState;
-        s.ctl = ph->Control.state;
-        s.err = ph->Control.errorcount;
-        s.ev  = ev;
-        nsteps++;
-    }
+    void log(USBH_HandleTypeDef* ph, uint32_t now, char ev);
 
     /* The device went away: a new one starts from nothing. */
     void Unplugged()
@@ -237,7 +251,7 @@ struct Watch
             if (ph->gState == HOST_CLASS && g != HOST_CLASS)
             {
                 log(ph, now, 'K');
-                serial++;
+                if (lg) lg->oks++;
             }
             else
                 log(ph, now, 's');
@@ -276,7 +290,7 @@ struct Watch
     {
         where = w;
         tries++;
-        serial++;
+        if (lg) lg->fails++;
         if (fails < 255u) fails++;
     }
 
@@ -314,4 +328,8 @@ struct Watch
         log(ph, now, 'R');
     }
 };
+inline void Watch::log(USBH_HandleTypeDef* ph, uint32_t now, char ev)
+{
+    if (lg) lg->add(ph, now, ev);
+}
 } // namespace usbdirect

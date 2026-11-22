@@ -147,8 +147,11 @@ blinks dark every 3 s to say where it stopped:
   say).
 
 Each failed try (and each keyboard that starts) also writes a log to the card
-as `/alchemy/tether_usb.txt`, at most every 3 s: the steps of the last tries,
-the device and its configuration bytes. Read it in Mac mode with HostLink
+as `/alchemy/tether_usb.txt`, at most every 3 s: the state at that moment
+(the device and its configuration bytes), then the last 128 steps, with the
+cable coming and going and the port's turns as host and device. (0.3.2 kept
+the log where a turn to device mode wiped it, and could write an empty one;
+0.3.3 keeps it for the whole power-up and writes only after a try.) Read it in Mac mode with HostLink
 (`node tools/hostlink-fs.mjs get /alchemy/tether_usb.txt tether_usb.txt`).
 
 It keeps trying while red, and goes green as soon as one works.

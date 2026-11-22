@@ -40,6 +40,7 @@ namespace
 daisy::USBHostHandle g_usbh;
 bool                 g_direct = false;   /* MIDI class active straight on the port */
 usbdirect::Watch     g_watch;          /* 0.3.1: patience with a device straight on the port */
+usbdirect::Log       g_log;            /* 0.3.3: its log, kept across role turns */
 usbrole::Role        g_role;
 daisy::UsbHandle     g_usbd;           /* the port as a device */
 bool                 g_dev_up = false;
@@ -72,14 +73,67 @@ void on_class_active(void*)
     g_direct = true;
 }
 void on_error(void*) { g_watch.OnError(); }
+void on_connect(void*) { g_log.add(&hUsbHostHS, daisy::System::GetNow(), 'C'); }
 void on_disconnect(void*)
 {
+    g_log.add(&hUsbHostHS, daisy::System::GetNow(), 'U');
     g_direct = false;
     g_watch.Unplugged();
     /* What was held when the cable came out is let go by the firmware
      * (Stage drops below 3). */
 }
 bool via_hub() { return g_usbh.IsActiveClass(USBH_HUB_MIDI_CLASS); }
+
+/* 0.3.3: the state at the moment a try failed (or a class started), taken
+ * then, before the next try or a role turn clears it. */
+char     g_snap[2048];
+int      g_snap_n      = 0;
+uint32_t g_snap_serial = 0;
+
+void snapshot(uint32_t now, bool was_red)
+{
+    char* b   = g_snap;
+    const int cap = (int)sizeof g_snap;
+    int n = 0;
+#define OUT(...) do { if (n < cap) n += snprintf(b + n, (size_t)(cap - n), __VA_ARGS__); } while (0)
+    const USBH_HandleTypeDef& h = hUsbHostHS;
+    OUT("at %lu ms: %s, blinks %u, %u failed in a row (red before: %u), names skipped %lu, moved %u, "
+        "turns %lu\n",
+        (unsigned long)now, h.gState == HOST_CLASS ? "a class started" : "a try failed", (unsigned)g_watch.where,
+        (unsigned)g_watch.fails, (unsigned)was_red, (unsigned long)g_watch.names, (unsigned)g_watch.moved,
+        (unsigned long)g_switches);
+    OUT("core: gState %u (before %u), EnumState %u (before %u), Control %u, RequestState %u, errorcount %u, "
+        "address %u, speed %u, connected %u, class %s\n",
+        (unsigned)h.gState, (unsigned)g_watch.pre_g, (unsigned)h.EnumState, (unsigned)g_watch.pre_e,
+        (unsigned)h.Control.state, (unsigned)h.RequestState, (unsigned)h.Control.errorcount,
+        (unsigned)h.device.address, (unsigned)h.device.speed, (unsigned)h.device.is_connected,
+        h.pActiveClass ? (const char*)h.pActiveClass->Name : "none");
+    const USBH_DevDescTypeDef& d = h.device.DevDesc;
+    OUT("device: usb %04x, class %u/%u/%u, ep0 %u, %04x:%04x rel %04x, configs %u\n", d.bcdUSB,
+        d.bDeviceClass, d.bDeviceSubClass, d.bDeviceProtocol, d.bMaxPacketSize, d.idVendor, d.idProduct,
+        d.bcdDevice, d.bNumConfigurations);
+    const USBH_CfgDescTypeDef& c = h.device.CfgDesc;
+    OUT("config: %u B, %u interfaces, value %u, attributes %02x, power %u\n", c.wTotalLength,
+        c.bNumInterfaces, c.bConfigurationValue, c.bmAttributes, c.bMaxPower);
+    for (unsigned i = 0; i < USBH_MAX_NUM_INTERFACES; i++)
+    {
+        const USBH_InterfaceDescTypeDef& f = c.Itf_Desc[i];
+        OUT("slot %u: interface %u alt %u class %u/%u, %u endpoints", i, f.bInterfaceNumber,
+            f.bAlternateSetting, f.bInterfaceClass, f.bInterfaceSubClass, f.bNumEndpoints);
+        for (unsigned e = 0; e < f.bNumEndpoints && e < USBH_MAX_NUM_ENDPOINTS; e++)
+            OUT(" %02x/%u/%u", f.Ep_Desc[e].bEndpointAddress, f.Ep_Desc[e].bmAttributes,
+                f.Ep_Desc[e].wMaxPacketSize);
+        OUT("\n");
+    }
+    unsigned len = c.wTotalLength;
+    if (len > USBH_MAX_SIZE_CONFIGURATION) len = USBH_MAX_SIZE_CONFIGURATION;
+    OUT("config bytes:");
+    for (unsigned i = 0; i < len; i++) OUT("%s%02x", (i % 32u) ? " " : "\n", h.device.CfgDesc_Raw[i]);
+    OUT("\n");
+#undef OUT
+    g_snap_n      = n < cap ? n : cap - 1;
+    g_snap_serial = g_log.Serial();
+}
 
 /* 0.1.1's place_midi_interface (the FM-1's MIDI is interface 3) is now
  * usbdirect::place_midi, called from Watch::After. */
@@ -101,6 +155,7 @@ bool dev_seen()
 void host_start()
 {
     daisy::USBHostHandle::Config cfg;
+    cfg.connect_callback      = on_connect;
     cfg.disconnect_callback   = on_disconnect;
     cfg.class_active_callback = on_class_active;
     cfg.error_callback        = on_error;
@@ -108,6 +163,8 @@ void host_start()
     g_usbh.RegisterClass(USBH_MIDI_CLASS);
     g_usbh.RegisterClass(USBH_HUB_MIDI_CLASS);
     HUBMIDI_SetReceiveCallback(on_rx_hub, nullptr);
+    g_watch.lg = &g_log;
+    g_log.add(nullptr, daisy::System::GetNow(), 'H');
 }
 void host_stop()
 {
@@ -115,6 +172,8 @@ void host_stop()
     hhcd_USB_OTG_HS.Instance = nullptr;   /* the shared OTG_HS interrupt then serves the device alone */
     g_direct = false;
     g_watch  = usbdirect::Watch{};
+    g_watch.lg = &g_log;
+    g_log.add(nullptr, daisy::System::GetNow(), 'D');
 }
 void dev_start()
 {
@@ -184,7 +243,10 @@ void Poll(uint32_t now)
         && hUsbHostHS.device.CfgDesc.wTotalLength > USBH_MAX_SIZE_CONFIGURATION)
         hUsbHostHS.device.CfgDesc.wTotalLength = USBH_MAX_SIZE_CONFIGURATION;
     const uint32_t restarts = g_watch.restarts;
+    const uint32_t serial   = g_log.Serial();
+    const uint8_t  red      = g_watch.Failed();
     g_watch.After(&hUsbHostHS, now);
+    if (g_log.Serial() != serial) snapshot(now, red);
     if (g_watch.restarts != restarts) g_direct = false;   /* its MIDI class went with it */
 }
 
@@ -229,46 +291,22 @@ int Report(char* b, int cap)
     return n < cap ? n : cap;
 }
 
-uint32_t TraceSerial() { return g_watch.serial; }
+uint32_t TraceSerial() { return g_snap_serial; }
 
 int Trace(char* b, int cap)
 {
-    int n = Report(b, cap);
+    int n = 0;
 #define OUT(...) do { if (n < cap) n += snprintf(b + n, (size_t)(cap - n), __VA_ARGS__); } while (0)
-    const USBH_HandleTypeDef& h = hUsbHostHS;
-    OUT("tether %s, %lu ms since power-up, blinks %u, names skipped %lu times\n", TETHER_VERSION,
-        (unsigned long)daisy::System::GetNow(), (unsigned)FailWhere(), (unsigned long)g_watch.names);
-    OUT("now: gState %u, EnumState %u, Control %u, RequestState %u, errorcount %u, address %u, "
-        "speed %u, connected %u, class %s\n",
-        (unsigned)h.gState, (unsigned)h.EnumState, (unsigned)h.Control.state, (unsigned)h.RequestState,
-        (unsigned)h.Control.errorcount, (unsigned)h.device.address, (unsigned)h.device.speed,
-        (unsigned)h.device.is_connected, h.pActiveClass ? (const char*)h.pActiveClass->Name : "none");
-    const USBH_DevDescTypeDef& d = h.device.DevDesc;
-    OUT("device: usb %04x, class %u/%u/%u, ep0 %u, %04x:%04x rel %04x, configs %u\n", d.bcdUSB,
-        d.bDeviceClass, d.bDeviceSubClass, d.bDeviceProtocol, d.bMaxPacketSize, d.idVendor, d.idProduct,
-        d.bcdDevice, d.bNumConfigurations);
-    const USBH_CfgDescTypeDef& c = h.device.CfgDesc;
-    OUT("config: %u B, %u interfaces, value %u, attributes %02x, power %u\n", c.wTotalLength,
-        c.bNumInterfaces, c.bConfigurationValue, c.bmAttributes, c.bMaxPower);
-    for (unsigned i = 0; i < USBH_MAX_NUM_INTERFACES; i++)
+    OUT("tether %s, written %lu ms after power-up, %lu failed tries and %lu starts in all\n", TETHER_VERSION,
+        (unsigned long)daisy::System::GetNow(), (unsigned long)g_log.fails, (unsigned long)g_log.oks);
+    OUT("--- at the last failed try or start ---\n");
+    const int k = g_snap_n < cap - n ? g_snap_n : cap - n;
+    if (k > 0) { memcpy(b + n, g_snap, (size_t)k); n += k; }
+    OUT("--- steps (ms g e ctl err what) ---\n");
+    const uint32_t first = g_log.n > usbdirect::kSteps ? g_log.n - usbdirect::kSteps : 0u;
+    for (uint32_t i = first; i < g_log.n; i++)
     {
-        const USBH_InterfaceDescTypeDef& f = c.Itf_Desc[i];
-        OUT("slot %u: interface %u alt %u class %u/%u, %u endpoints", i, f.bInterfaceNumber,
-            f.bAlternateSetting, f.bInterfaceClass, f.bInterfaceSubClass, f.bNumEndpoints);
-        for (unsigned e = 0; e < f.bNumEndpoints && e < USBH_MAX_NUM_ENDPOINTS; e++)
-            OUT(" %02x/%u/%u", f.Ep_Desc[e].bEndpointAddress, f.Ep_Desc[e].bmAttributes,
-                f.Ep_Desc[e].wMaxPacketSize);
-        OUT("\n");
-    }
-    unsigned len = c.wTotalLength;
-    if (len > USBH_MAX_SIZE_CONFIGURATION) len = USBH_MAX_SIZE_CONFIGURATION;
-    OUT("config bytes:");
-    for (unsigned i = 0; i < len; i++) OUT("%s%02x", (i % 32u) ? " " : "\n", h.device.CfgDesc_Raw[i]);
-    OUT("\nsteps (ms g e ctl err what):\n");
-    const uint32_t first = g_watch.nsteps > usbdirect::kSteps ? g_watch.nsteps - usbdirect::kSteps : 0u;
-    for (uint32_t i = first; i < g_watch.nsteps; i++)
-    {
-        const usbdirect::Step& s = g_watch.steps[i % usbdirect::kSteps];
+        const usbdirect::Step& s = g_log.steps[i % usbdirect::kSteps];
         OUT("%lu %u %u %u %u %c\n", (unsigned long)s.t, s.g, s.e, s.ctl, s.err, s.ev);
     }
 #undef OUT

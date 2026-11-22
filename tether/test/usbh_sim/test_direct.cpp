@@ -56,6 +56,7 @@ static SimDev smk37_dev()
 /* ---- the Lab's host side (tether_usbh.cpp, minus the device turns) ---- */
 static USBH_HandleTypeDef h;
 static usbdirect::Watch   w;
+static usbdirect::Log     lg;
 static bool               use_watch = true;
 static bool               direct = false;
 static uint32_t           rx = 0;
@@ -170,6 +171,8 @@ static void fresh(bool watch)
 {
     sim::Reset();
     w         = usbdirect::Watch{};
+    lg        = usbdirect::Log{};
+    w.lg      = &lg;
     use_watch = watch;
     direct    = false;
     rx        = 0;
@@ -427,21 +430,27 @@ int main()
         sim::Plug(&h, &d);
         run(16000);
         CHECK(w.Failed() && w.where != usbdirect::kNowhere, "should be red");
-        CHECK(w.nsteps > 0 && w.serial >= 1, "nothing logged");
+        CHECK(lg.n > 0 && lg.fails >= 3 && lg.Serial() >= 3, "nothing logged");
         bool has_t = false;
-        const uint32_t first = w.nsteps > usbdirect::kSteps ? w.nsteps - usbdirect::kSteps : 0u;
+        const uint32_t first = lg.n > usbdirect::kSteps ? lg.n - usbdirect::kSteps : 0u;
         uint32_t last_t = 0;
         bool ordered = true;
-        for (uint32_t i = first; i < w.nsteps; i++)
+        for (uint32_t i = first; i < lg.n; i++)
         {
-            const usbdirect::Step& s = w.steps[i % usbdirect::kSteps];
+            const usbdirect::Step& s = lg.steps[i % usbdirect::kSteps];
             if (s.ev == 'T') has_t = true;
             if (s.t < last_t) ordered = false;
             last_t = s.t;
         }
-        printf("  %u steps logged, last blinks %u\n", w.nsteps, w.where);
+        printf("  %u steps logged, last blinks %u\n", lg.n, w.where);
         CHECK(has_t, "no stuck step in the log");
         CHECK(ordered, "log out of order");
+        /* 0.3.3: the port turning to device mode resets Watch (host_stop);
+         * the log outside it keeps the failed tries. */
+        const uint32_t n0 = lg.n, f0 = lg.fails;
+        w      = usbdirect::Watch{};
+        w.lg   = &lg;
+        CHECK(lg.n == n0 && lg.fails == f0 && f0 >= 3, "a role turn wiped the log");
     }
 
     printf(g_fail ? "usbh_sim: %d FAILED\n" : "usbh_sim: all passed\n", g_fail);
