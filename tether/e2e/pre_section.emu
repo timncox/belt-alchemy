@@ -1,0 +1,16 @@
+press b3
+wait 400
+pot 4 0.30
+wait 100
+pot 4 0.36
+wait 100
+pot 4 0.432
+wait 100
+pot 6 0.75
+wait 100
+pot 6 0.68
+wait 100
+pot 6 0.386
+wait 100
+release b3
+wait 300
