@@ -24,6 +24,13 @@ The Lab puts no power on its USB port. A keyboard with its own battery (the
 FM-1) or its own power can plug straight in. A keyboard that runs off USB
 power needs a powered hub between them, which also charges it.
 
+**PROTECTOR on the FM-1 or the SMK-37:** set CLOCK OUT to **PARTS** (SONG
+page) so every part comes over USB on its own channel with the clock, start
+and stop. The SMK-37 (PROTECTOR 0.4.7, USB name "Felucca") is audio control
+0, MIDI 1, audio in 2, so the host opens its MIDI as it is (the FM-1 needs
+its MIDI moved, 0.1.1). If it stays on with its USB cable out, plug it
+straight in; if it goes dark, use the powered hub.
+
 Hold **B1** while powering up for Mac mode (the port is the Mac tools' device,
 for HostLink; B3 shows blue). Mac mode is not remembered.
 
@@ -73,6 +80,14 @@ jack for 3 ms first so the module hears two hits. J3 to J6 update about every
 millisecond, J7 and J8 within one; so a drum on J3 to J6 can be up to about
 1 ms later than one on J7 or J8, and a hit that starts as the last one ends
 up to about 3 ms later still.
+
+J3 to J6 are written from the main loop, which stops for a few milliseconds
+each frame while the screen and lights are drawn. So that no hit or clock
+pulse is lost in a stop, every rise is counted as it happens, and the jack
+then shows a low and the hit, each for 3 ms at least, late if it must be
+(gates, triggers, clocks, accents, reset, run; never pitch, envelopes,
+velocity or section). Before this, about one hat in twenty on J5 could run
+into the last one in the emulator.
 
 ## Controls
 

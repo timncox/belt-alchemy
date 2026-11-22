@@ -47,6 +47,7 @@
 #include "midi_host.h"
 #include "picker.h"
 #include "tether_engine.h"
+#include "mcp_edges.h"
 #include "tether_sysex.h"
 
 #ifndef TETHER_VERSION
@@ -81,7 +82,10 @@ static constexpr uint32_t kTestMs     = 300u;
 static AlchemyLab     hw;
 static tether::Engine engine;
 
-static volatile float g_mcp_volts[4] = {0, 0, 0, 0};   /* J3-J6, flushed by the poll */
+/* J3-J6, flushed by the poll: the audio side's view (mcp_edges.h), and a
+ * count bumped after each write so the poll can take a whole snapshot. */
+static mcpedge::Feed     g_mcp[4];
+static volatile uint32_t g_mcp_seq = 0;
 
 /* Panel -> audio thread: test notes, all notes off. */
 enum : uint32_t { kCmdTestOn = 1, kCmdTestOff, kCmdPanic };
@@ -479,16 +483,33 @@ static void OnPoll(uint32_t now)
 {
     /* J3-J6 over I2C, only when a code would change. */
     {
-        static float sent[4] = {99, 99, 99, 99};
-        bool         any     = false;
+        static mcpedge::Out out[4];
+        mcpedge::Feed       snap[4];
+        uint32_t            seq;
+        do   /* the audio side can't run halfway through a copy that this sees unchanged */
+        {
+            seq = g_mcp_seq;
+            for (int c = 0; c < 4; c++)
+            {
+                const volatile mcpedge::Feed& f = g_mcp[c];
+                snap[c].now   = f.now;
+                snap[c].rises = f.rises;
+                snap[c].peak  = f.peak;
+            }
+        } while (seq != g_mcp_seq);
+        bool any = false;
         for (int c = 0; c < 4; c++)
         {
-            const float v = g_mcp_volts[c];
-            if (fabsf(v - sent[c]) > 0.001f)
+            const uint8_t fn   = engine.master.jack[c];
+            using namespace tether;
+            const bool edgy = fn != kFnSection && fn > kFnPitchC && !(fn >= kFnEnvA && fn <= kFnEnvC)
+                              && !(fn >= kFnVelA && fn <= kFnVelC);
+            const float v = mcpedge::Next(out[c], now, snap[c].now, snap[c].rises, snap[c].peak, edgy);
+            if (fabsf(v - out[c].sent) > 0.001f)
             {
                 hw.cv_jacks[c].StageVolts(v);
-                sent[c] = v;
-                any     = true;
+                out[c].sent = v;
+                any         = true;
             }
         }
         if (any) hw.FlushCvOutputs();
@@ -783,7 +804,8 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle
     engine.Process((uint32_t)n);
 
     for (size_t i = 0; i < n; i++) out[0][i] = out[1][i] = 0.0f;
-    for (int j = 0; j < 4; j++) g_mcp_volts[j] = engine.JackVolts(j);   /* J3-J6 */
+    for (int j = 0; j < 4; j++) mcpedge::Note(g_mcp[j], engine.JackVolts(j));   /* J3-J6 */
+    g_mcp_seq = g_mcp_seq + 1;
     for (int j = 4; j < 8; j++) hw.cv_jacks[j].SetVolts(engine.JackVolts(j));   /* J7-J10 */
 }
 
