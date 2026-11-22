@@ -1,0 +1,52 @@
+/*
+ * MIDI in on the rear header: USART1 RX on header pin 7 (B5 = PB7 =
+ * seed::D14), 31,250 baud, from another Lab's pin 8 (its USART1 TX). The
+ * Lab-to-Lab cable crosses pin 8 to pin 7 both ways plus grounds and
+ * NOTHING else: pins 1 / 11 / 15 are -12 V / +12 V / 3V3A, and a straight
+ * 1:1 ribbon would join TX to TX and put the power rails through it. Never
+ * a straight ribbon. (docs/alchemy-chord-vocoder-design.md, "Back link".)
+ *
+ * RECEIVE ONLY. The UART runs in RX mode with no TX pin, so Belt never
+ * drives header pin 8 (PB6): it stays the reset-state input. Belt sends
+ * nothing on the back link in v1, and an undriven pin is the safer default
+ * on a header that also carries +-12 V. A cable crossed both ways still
+ * works; pin 8 -> the sender's pin 7 is simply unused.
+ *
+ * libDaisy's UartHandler receives into a DMA ring (DMA1_Stream5, unclaimed
+ * by the SDK and this firmware); its callback, an interrupt, only copies
+ * bytes into a small ring here. Poll() -- the control loop only -- feeds
+ * them to libDaisy's MidiParser and hands back note on / note off.
+ * libDaisy's MidiUartHandler is not used: it parses inside that interrupt
+ * and queues 256 events of ~140 bytes (sysex buffers), ~36 KB of SRAM Belt
+ * does not have to spare.
+ *
+ * v1 takes notes only, any channel. Clock (0xF8), start / stop (0xFA /
+ * 0xFC), CCs and everything else are read and ignored.
+ */
+#pragma once
+#include <cstdint>
+
+namespace rearmidi {
+
+/* Set up the UART (pulled-up RX, DMA storm guard). Call once, after the
+ * board's Init(). Does not listen: see Enable(). */
+void Init();
+
+/* Listen only while MIDI is the chord source: an idle receiver costs
+ * nothing and cannot be upset by whatever is (or isn't) on the header. */
+void Enable(bool on);
+
+/* Note callback: status 0x90 (note-on, vel > 0) or 0x80 (note-off, which
+ * includes a note-on at velocity 0). */
+using NoteFn = void (*)(uint8_t status, uint8_t note, uint8_t vel);
+
+/* Parse everything received since the last call. Control loop only.
+ * Restarts the receiver if a UART error stopped it. */
+void Poll(NoteFn fn);
+
+/* Bytes received since boot, and how many were dropped because the ring
+ * was full (Poll() not keeping up). */
+uint32_t Bytes();
+uint32_t Dropped();
+
+} // namespace rearmidi

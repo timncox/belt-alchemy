@@ -41,7 +41,8 @@ CPP_SOURCES = \
     src/launchpad_core.cpp \
     src/usb_shared.cpp \
     src/midi_usb_transport.cpp \
-    src/phone_ext.cpp
+    src/phone_ext.cpp \
+    src/rear_midi.cpp
 
 # belt_core_alchemy.c #includes vendor/belt_core.c with calloc/free
 # redirected to SDRAM. Never list vendor/belt_core.c here as well —
@@ -53,7 +54,13 @@ C_SOURCES = \
     src/usb_midi_keys.c \
     src/usb_audio.c \
     src/usbd_ctlreq_uac.c \
-    src/punch_fx.c
+    src/punch_fx.c \
+    src/chord_src.c \
+    src/vendor/seq.c
+
+# src/vendor/seq.[ch] = seq-alchemy core/seq.[ch] at worktree-core b4453ea,
+# byte-identical: the chord sequencer. seq-alchemy is the source of truth;
+# re-copy, never edit here.
 
 # ── Alchemy SDK, compiled straight from the submodule ───────────────────────
 CPP_SOURCES += $(sort $(shell find $(ALCHEMY_DIR)/framework/src -name '*.cpp'))
@@ -75,6 +82,17 @@ C_DEFS += -DBELT_VERSION=\"$(BELT_VERSION)\" -DBELT_GIT_HASH=\"$(BELT_GIT_HASH)\
 
 ifeq ($(BENCH_USB),1)
 C_DEFS += -DBELT_BENCH_USB
+endif
+# CPU_DIAG=1 (with BUILD_DIR=build-diag): per-block callback cycles into
+# /belt_diag.txt every 2 s. A measuring tool, never a release.
+ifeq ($(CPU_DIAG),1)
+C_DEFS += -DBELT_CPU_DIAG
+endif
+# STALL_DIAG=1 (with BUILD_DIR=build-stall): lockup catcher -- TIM7 watches
+# the control loop's heartbeat; a 1 s stall or a HardFault records PC/LR to
+# backup SRAM, resets, and the next boot appends /belt_stall.txt.
+ifeq ($(STALL_DIAG),1)
+C_DEFS += -DBELT_STALL_DIAG
 endif
 
 # ── Daisy bootloader build (BOOT_SRAM) ──────────────────────────────────────

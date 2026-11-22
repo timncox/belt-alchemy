@@ -16,10 +16,50 @@ BUILD   = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_usb_keys
+test: $(BUILD)/test_tuner $(BUILD)/test_chord $(BUILD)/test_chord_src $(BUILD)/test_usb_keys $(BUILD)/test_hub_unplug rear_link
 	./$(BUILD)/test_tuner
 	./$(BUILD)/test_chord
+	./$(BUILD)/test_chord_src
 	./$(BUILD)/test_usb_keys
+	./$(BUILD)/test_hub_unplug
+
+# The back link end to end: seq-alchemy's own chord-out sender (another
+# repo; skipped when it is not there) -> Belt's rear_midi.cpp + libDaisy's
+# MidiParser -> Belt's engine. `make -C test rear_link EMU_OUT=x.emu` also
+# writes the byte stream as an emulator script.
+#
+# The sender is taken from a COMMITTED revision (git show), never from a
+# working tree another session may be editing. SEQ_CHORD_OUT=<dir> uses a
+# directory with chord_midi.[ch] + seq.h instead.
+SEQ_ALCHEMY_GIT   ?= $(HOME)/tim-os/seq-alchemy
+SEQ_CHORD_OUT_REV ?= 8919592
+LIBDAISY_DIR      ?= $(HOME)/tim-os/belt-alchemy/lib/libDaisy
+ifeq ($(SEQ_CHORD_OUT),)
+ifneq ($(shell git -C $(SEQ_ALCHEMY_GIT) cat-file -e $(SEQ_CHORD_OUT_REV):core/chord_midi.c 2>/dev/null && echo y),)
+SEQ_CHORD_OUT := $(abspath $(BUILD))/seqco-$(SEQ_CHORD_OUT_REV)
+$(SEQ_CHORD_OUT)/chord_midi.c:
+	@mkdir -p $(SEQ_CHORD_OUT)
+	for f in chord_midi.c chord_midi.h seq.h; do \
+	    git -C $(SEQ_ALCHEMY_GIT) show $(SEQ_CHORD_OUT_REV):core/$$f > $(SEQ_CHORD_OUT)/$$f || exit 1; done
+endif
+endif
+.PHONY: rear_link
+ifneq ($(SEQ_CHORD_OUT),)
+rear_link: $(BUILD)/test_rear_link
+	./$(BUILD)/test_rear_link $(EMU_OUT)
+else
+rear_link:
+	@echo "test_rear_link: skipped (no seq-alchemy $(SEQ_CHORD_OUT_REV) at $(SEQ_ALCHEMY_GIT))"
+endif
+
+REAR_C = ../src/versio_alloc.c ../src/belt_core_alchemy.c ../src/vendor/seq.c $(SEQ_CHORD_OUT)/chord_midi.c
+$(BUILD)/test_rear_link: test_rear_link.cpp ../src/rear_midi.cpp $(REAR_C)
+	@mkdir -p $(BUILD)/rear
+	cd $(BUILD)/rear && $(CC) -c $(addprefix $(CURDIR)/,$(filter ../%,$(REAR_C))) \
+	    $(filter /%,$(REAR_C)) $(CFLAGS:-I../%=-I$(CURDIR)/../%)
+	$(CXX) -std=c++17 -O2 -g -Wall -Istubs -I../src -I../src/vendor -idirafter $(LIBDAISY_DIR)/src -idirafter $(SEQ_CHORD_OUT) \
+	    test_rear_link.cpp ../src/rear_midi.cpp $(LIBDAISY_DIR)/src/hid/midi_parser.cpp \
+	    $(BUILD)/rear/*.o -o $@ -lm
 
 $(BUILD)/test_tuner: test_tuner.c ../src/versio_alloc.c ../src/belt_core_alchemy.c
 	@mkdir -p $(BUILD)
@@ -30,10 +70,21 @@ $(BUILD)/test_chord: test_chord.c ../src/versio_alloc.c ../src/belt_core_alchemy
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 
+# The chord sources' rules on seq-alchemy's own core, under ASan + UBSan.
+$(BUILD)/test_chord_src: test_chord_src.c ../src/chord_src.c ../src/vendor/seq.c
+	@mkdir -p $(BUILD)
+	$(CC) -O1 -g -Wall -Wextra -I../src -fsanitize=address,undefined -fno-omit-frame-pointer $^ -o $@ -lm
+
 # The USB host's hardware-free half: descriptors, roles, keyboard packets.
 $(BUILD)/test_usb_keys: test_usb_keys.c ../src/usb_midi_keys.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $@
+
+# The real hub driver against a simulated hub (fake_usbh/ = ST host headers):
+# unplug mid-chord, re-plug, full slots, rejected ports, the proven set-up.
+$(BUILD)/test_hub_unplug: test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_midi_keys.c fake_usbh/usbh_core.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DDMA_SECTION= -Ifake_usbh test_hub_unplug.c ../src/usbh_hub_midi.c ../src/usb_midi_keys.c -o $@
 
 clean:
 	rm -rf $(BUILD)
