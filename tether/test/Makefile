@@ -7,8 +7,13 @@ BUILD    = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_engine
+test: $(BUILD)/test_engine $(BUILD)/test_midi_pick
 	./$(BUILD)/test_engine
+	./$(BUILD)/test_midi_pick
+
+$(BUILD)/test_midi_pick: test_midi_pick.cpp ../src/midi_itf_pick.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) test_midi_pick.cpp -o $@
 
 $(BUILD)/test_engine: test_engine.cpp ../src/tether_engine.cpp ../src/tether_engine.h
 	@mkdir -p $(BUILD)
