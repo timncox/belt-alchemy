@@ -1,5 +1,7 @@
 /*
- * midi_host -- the front USB-C as a USB host for one MIDI device: plugged
+ * midi_host -- the front USB-C as a USB host for one MIDI device, or (0.2.0)
+ * as a USB-MIDI device named TETHER for a computer, an iPhone or an iPad:
+ * the port takes turns until one of them shows up (usb_role.h). As a host:
  * straight in (libDaisy's MIDI class) or behind a hub (../src/usbh_hub_midi,
  * Belt's driver; a powered hub also charges what is plugged into it). Every
  * USB-MIDI event packet received is queued for the audio thread.
@@ -15,7 +17,8 @@ namespace midihost
 void     Init();                 /* start the host (Belt waits ~2 s after boot first) */
 void     Poll(uint32_t now_ms);  /* from the control loop's poll */
 bool     Pop(uint32_t* pkt);     /* the next packet: cable|CIN, status, data 1, data 2 */
-uint8_t  Stage();                /* 0 nothing, 1 enumerating, 2 failed / not MIDI, 3 MIDI ready */
+uint8_t  Stage();                /* 0 nothing, 1 enumerating, 2 failed / not MIDI, 3 MIDI ready,
+                                    4 a computer has it as a MIDI device */
 uint32_t RxCount();              /* packets received */
 uint32_t Dropped();              /* packets the queue had no room for */
 int      Report(char* buf, int cap);   /* a few lines for the HostLink log */

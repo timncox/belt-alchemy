@@ -1,5 +1,6 @@
 # TETHER's panel: B1 voice, VOICE pots, B3 test note and JACKS, B2 MASTER
 # and the calibration reference, B2 tap all notes off.
+midi plug                      # the keyboard is in before power-up (0.2.0: the port finds it in its first turn)
 wait 3000
 expect booted
 # B3 tap: a test C on voice A (0 V, gate A for 300 ms)

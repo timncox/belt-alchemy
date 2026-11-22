@@ -379,7 +379,7 @@ static void OnPoll(uint32_t now)
         {
             midihost::Poll(now);
             const uint8_t st = midihost::Stage();
-            if (g_stage == 3 && st != 3) g_cmd.Push(kCmdPanic);
+            if (g_stage >= 3 && st != g_stage) g_cmd.Push(kCmdPanic);
             g_stage = st;
         }
     }
@@ -605,13 +605,15 @@ static void OnRender(uint32_t t_ms)
                                                                     : scale(kMasterCol, 0.1f)));
     }
 
-    /* B3: the USB host. Blue: Mac mode. Red dim: nothing plugged in;
-     * amber: starting a device; red: not one it can use; green: MIDI,
-     * flashing white with each message. */
+    /* B3: the USB port. Blue: Mac mode. Red dim: nothing plugged in;
+     * amber: starting a device; red: not one it can use; green: a keyboard's
+     * MIDI; cyan (0.2.0): a computer, iPhone or iPad playing TETHER. Green
+     * and cyan flash white with each message. */
     Rgb b3;
     if (g_mac_mode) b3 = kBlue;
     else switch (g_stage)
     {
+        case 4: b3 = engine.MidiFlash() > 0.5f ? kCalCol : kVoiceCol[1]; break;
         case 3: b3 = engine.MidiFlash() > 0.5f ? kCalCol : kGreen; break;
         case 2: b3 = kRed; break;
         case 1: b3 = kAmber; break;

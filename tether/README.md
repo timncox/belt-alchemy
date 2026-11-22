@@ -1,20 +1,31 @@
 # TETHER
 
 A second firmware for the Alchemy Lab V2: it turns USB MIDI from a keyboard
-plugged into the Lab's USB port into pitch CV, gates and triggers. Made for
+plugged into the Lab's USB port, or from a computer, iPhone or iPad the Lab
+is plugged into, into pitch CV, gates and triggers. Made for
 PROTECTOR's PARTS setting, which sends each part on its own channel
 (1 KICK, 2 SNARE, 3 HATS, 4 PERC, 5 BASS, 6 LEAD, 7 PAD, 8 FX) plus clock,
 start/stop and the section (CC 85 on channel 16).
 
 ## Plugging in
 
-The Lab is the USB host and gives no power on its USB port. A keyboard
-running on its own battery may still connect, but this has not been tried.
-The safe set-up is a **powered USB-C hub** between the two: the hub powers and
-charges the keyboard, and the Lab talks to it through the hub.
+The front USB-C works both ways round (0.2.0), and finds out which by itself:
 
-Hold **B1** while powering up for Mac mode (the port acts as a device again,
-for the Mac tools; B3 shows blue). Mac mode is not remembered.
+- **A keyboard** (FM-1, SMK-37, any class-compliant USB-MIDI device) plugged
+  straight into the Lab: the Lab is the host. B3 goes green.
+- **A computer, iPhone or iPad**: the Lab shows up as a USB-MIDI device named
+  **TETHER**, so an app or a DAW can play it. B3 goes cyan.
+
+The port takes turns being a host (1.5 s) and a device (2.5 s) until one of
+them answers, then stays that way until it's unplugged. So a keyboard or a
+computer is picked up within about 4 s of plugging in.
+
+The Lab puts no power on its USB port. A keyboard with its own battery (the
+FM-1) or its own power can plug straight in. A keyboard that runs off USB
+power needs a powered hub between them, which also charges it.
+
+Hold **B1** while powering up for Mac mode (the port is the Mac tools' device,
+for HostLink; B3 shows blue). Mac mode is not remembered.
 
 ## Jacks (first boot)
 
@@ -63,8 +74,8 @@ Buttons:
   Letting go of B2 ends it.
 
 Lights: B2 flashes on the clock's beat (dim amber, no clock). B3 shows USB:
-dim red nothing plugged in, amber connecting, red failed, green ready, a white
-flash on each message.
+dim red nothing plugged in, amber connecting, red failed, green a keyboard,
+cyan a computer, iPhone or iPad, a white flash on each message.
 
 Pot moves are saved after 5 s, as Pulse does.
 

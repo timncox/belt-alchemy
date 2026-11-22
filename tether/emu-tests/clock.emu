@@ -1,5 +1,6 @@
 # TETHER: clock, reset and drum trigs (J5 16ths, J6 reset on start, J7 KICK
 # channel 1, J8 SNARE channel 2).
+midi plug                      # the keyboard is in before power-up (0.2.0: the port finds it in its first turn)
 wait 3000
 expect booted
 mark

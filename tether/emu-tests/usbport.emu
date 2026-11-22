@@ -1,0 +1,49 @@
+# TETHER 0.2.0: the front USB-C takes turns as host and device until a
+# keyboard or a computer shows up, then stays that way. A computer (an iPhone,
+# iPad or Mac) plays TETHER as a USB-MIDI device; B3 cyan. A keyboard: B3 green.
+wait 3000
+expect booted
+wait 6000
+expect led b3 rgb 8 0 0          # nothing plugged in: dim red, taking turns
+# a computer: found once the port's turn as a device comes round
+midi plug computer
+wait 4500
+expect led b3 cyan               # a computer has it as a MIDI device
+mark
+midi on 5 48 100
+wait 40
+expect cv 9 > -1.01
+expect cv 9 < -0.99              # -1 V from the computer's note on channel 5
+expect cv 3 > 4.5                # gate A up
+midi off 5 48
+wait 40
+expect cv 3 < 0.5
+midi start
+wait 20
+expect edges 6 = 1               # reset on start, from the computer too
+midi stop
+# it stays a device while the computer is there
+wait 10000
+expect led b3 cyan
+midi on 6 72 100
+wait 40
+expect cv 10 > 0.99
+expect cv 10 < 1.01              # +1 V on voice B
+expect cv 4 > 4.5
+# unplugged with a note held: nothing left hanging, back to taking turns
+midi unplug
+wait 100
+expect cv 4 < 0.5
+expect led b3 rgb 8 0 0
+# then a keyboard: found once the port's turn as a host comes round
+midi plug
+wait 4500
+expect led b3 green
+midi on 5 60 100
+wait 40
+expect cv 9 > -0.01
+expect cv 9 < 0.01               # middle C: 0 V
+expect cv 3 > 4.5
+midi off 5 60
+wait 10000
+expect led b3 green              # a keyboard keeps the port a host
