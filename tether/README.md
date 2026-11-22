@@ -132,6 +132,19 @@ Lights: B2 flashes on the clock's beat (dim amber, no clock). B3 shows USB:
 dim red nothing plugged in, amber connecting, red failed, green a keyboard,
 cyan a computer, iPhone or iPad, a white flash on each message.
 
+A keyboard straight on the port that won't start (0.3.1): TETHER keeps trying,
+each time from scratch, and after three tries in a row B3 goes red and blinks
+dark every 3 s to say where it stopped:
+
+- **1 blink:** the keyboard never answered. Its USB isn't running; a keyboard
+  that needs USB power to answer needs the powered hub (or a USB-C cable that
+  adds power).
+- **2 blinks:** it answered, then was lost as it took its address.
+- **3 blinks:** it said what it is, but setting it up or opening its MIDI failed
+  (or it has no MIDI).
+
+It keeps trying while red, and goes green as soon as one works.
+
 ## Settings from Loadout (SysEx)
 
 With the Lab plugged into an iPhone, iPad or Mac as the TETHER USB-MIDI

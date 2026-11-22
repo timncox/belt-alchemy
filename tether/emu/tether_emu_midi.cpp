@@ -52,6 +52,7 @@ uint8_t Stage()
     if (!g_init || !far_end_seen()) return 0;
     return g_role.mode == usbrole::kDevice ? 4 : 3;
 }
+uint8_t  FailWhere() { return 0; }
 uint32_t RxCount() { return emu::midi::Count(); }
 bool     Send(const uint8_t (*pk)[4], int n)
 {

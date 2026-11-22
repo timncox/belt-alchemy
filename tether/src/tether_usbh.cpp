@@ -21,7 +21,7 @@
 #include "usbh_hub_midi.h"
 
 #include "tether_engine.h"
-#include "midi_itf_pick.h"
+#include "usbh_direct.h"
 #include "usb_role.h"
 
 extern "C" USBH_HandleTypeDef hUsbHostHS; /* libDaisy's host handle */
@@ -35,8 +35,7 @@ namespace
 {
 daisy::USBHostHandle g_usbh;
 bool                 g_direct = false;   /* MIDI class active straight on the port */
-bool                 g_failed = false;
-uint8_t              g_moved = 0;      /* 0.1.1: the MIDI interface number + 1, when it was moved */
+usbdirect::Watch     g_watch;          /* 0.3.1: patience with a device straight on the port */
 usbrole::Role        g_role;
 daisy::UsbHandle     g_usbd;           /* the port as a device */
 bool                 g_dev_up = false;
@@ -68,57 +67,18 @@ void on_class_active(void*)
     USBH_MIDI_SetReceiveCallback(&hUsbHostHS, on_rx_direct, nullptr);
     g_direct = true;
 }
-void on_error(void*) { g_failed = true; }
+void on_error(void*) { g_watch.OnError(); }
 void on_disconnect(void*)
 {
     g_direct = false;
-    g_failed = false;
-    g_moved  = 0;
+    g_watch.Unplugged();
     /* What was held when the cable came out is let go by the firmware
      * (Stage drops below 3). */
 }
 bool via_hub() { return g_usbh.IsActiveClass(USBH_HUB_MIDI_CLASS); }
 
-/* 0.1.1: the core keeps the first USBH_MAX_NUM_INTERFACES interface entries
- * only, and the MIDI class looks for MIDI streaming there alone. A device
- * that lists audio streaming first (the FM-1: audio control, audio in, audio
- * out, then MIDI as interface 3) never had its MIDI opened. Before the core
- * picks a class, put the MIDI interface found in the raw descriptor where the
- * class looks: slot 1 behind an audio control interface (so slot 0 still
- * names the audio class), slot 0 otherwise. A hub is left to the hub class. */
-void place_midi_interface()
-{
-    USBH_CfgDescTypeDef& cfg = hUsbHostHS.device.CfgDesc;
-    if (cfg.Itf_Desc[0].bInterfaceClass == 0x09) return;   /* a hub */
-    for (unsigned i = 0; i < USBH_MAX_NUM_INTERFACES; i++)
-        if (cfg.Itf_Desc[i].bInterfaceClass == 1 && cfg.Itf_Desc[i].bInterfaceSubClass == 3) return;
-    uint16_t len = cfg.wTotalLength;
-    if (len > USBH_MAX_SIZE_CONFIGURATION) len = USBH_MAX_SIZE_CONFIGURATION;
-    midi_pick_t m;
-    if (!midi_itf_pick(hUsbHostHS.device.CfgDesc_Raw, len, &m)) return;
-    const int slot = (cfg.Itf_Desc[0].bInterfaceClass == 1 && USBH_MAX_NUM_INTERFACES > 1) ? 1 : 0;
-    USBH_InterfaceDescTypeDef& d = cfg.Itf_Desc[slot];
-    memset(&d, 0, sizeof d);
-    d.bLength            = m.itf[0];
-    d.bDescriptorType    = m.itf[1];
-    d.bInterfaceNumber   = m.itf[2];
-    d.bAlternateSetting  = m.itf[3];
-    d.bNumEndpoints      = m.neps < USBH_MAX_NUM_ENDPOINTS ? m.neps : USBH_MAX_NUM_ENDPOINTS;
-    d.bInterfaceClass    = m.itf[5];
-    d.bInterfaceSubClass = m.itf[6];
-    d.bInterfaceProtocol = m.itf[7];
-    d.iInterface         = m.itf[8];
-    for (int e = 0; e < d.bNumEndpoints; e++)
-    {
-        d.Ep_Desc[e].bLength          = m.ep[e][0];
-        d.Ep_Desc[e].bDescriptorType  = m.ep[e][1];
-        d.Ep_Desc[e].bEndpointAddress = m.ep[e][2];
-        d.Ep_Desc[e].bmAttributes     = m.ep[e][3];
-        d.Ep_Desc[e].wMaxPacketSize   = (uint16_t)(m.ep[e][4] | m.ep[e][5] << 8);
-        d.Ep_Desc[e].bInterval        = m.ep[e][6];
-    }
-    g_moved = d.bInterfaceNumber + 1u;
-}
+/* 0.1.1's place_midi_interface (the FM-1's MIDI is interface 3) is now
+ * usbdirect::place_midi, called from Watch::After. */
 
 /* ---- the port as a USB-MIDI device (0.2.0) ---- */
 uint8_t* product_name(USBD_SpeedTypeDef, uint16_t* len)
@@ -150,8 +110,7 @@ void host_stop()
     g_usbh.Deinit();
     hhcd_USB_OTG_HS.Instance = nullptr;   /* the shared OTG_HS interrupt then serves the device alone */
     g_direct = false;
-    g_failed = false;
-    g_moved  = 0;
+    g_watch  = usbdirect::Watch{};
 }
 void dev_start()
 {
@@ -211,15 +170,18 @@ void Poll(uint32_t now)
         return;
     }
     if (g_role.mode != usbrole::kHost) { tx_poll(); return; }
-    g_usbh.Process();
+    /* 0.3.1: Watch around the core (usbh_direct.h; the same loop runs in
+     * test/usbh_sim against the real core). */
+    if (g_watch.Before(&hUsbHostHS, now)) g_usbh.Process();
     /* libDaisy reads the configuration descriptor into 256 bytes, however
      * long the device says it is: ask for no more than fits (Belt). */
     if (hUsbHostHS.gState == HOST_ENUMERATION && hUsbHostHS.EnumState == ENUM_GET_FULL_CFG_DESC
         && hUsbHostHS.RequestState == CMD_SEND
         && hUsbHostHS.device.CfgDesc.wTotalLength > USBH_MAX_SIZE_CONFIGURATION)
         hUsbHostHS.device.CfgDesc.wTotalLength = USBH_MAX_SIZE_CONFIGURATION;
-    if (hUsbHostHS.gState == HOST_CHECK_CLASS) place_midi_interface();
-    if (hUsbHostHS.gState == HOST_ABORT_STATE) g_failed = true;
+    const uint32_t restarts = g_watch.restarts;
+    g_watch.After(&hUsbHostHS, now);
+    if (g_watch.restarts != restarts) g_direct = false;   /* its MIDI class went with it */
 }
 
 bool Pop(uint32_t* pkt) { return g_q.Pop(pkt); }
@@ -235,9 +197,11 @@ uint8_t Stage()
             if (HUBMIDI_DevReady(&hUsbHostHS, d) && HUBMIDI_DevKind(d) == HUBMIDI_KIND_MIDI) return 3;
         return HUBMIDI_GetInfo().fail_state && !HUBMIDI_Ready(&hUsbHostHS) ? 2 : 1;
     }
-    if (g_failed) return 2;
+    if (g_watch.Failed()) return 2;
     return hUsbHostHS.device.is_connected ? 1 : 0;
 }
+
+uint8_t FailWhere() { return Stage() == 2 && !via_hub() ? g_watch.where : 0; }
 
 uint32_t RxCount() { return g_rx; }
 uint32_t Dropped() { return g_q.dropped; }
@@ -249,7 +213,10 @@ int Report(char* b, int cap)
     OUT("tether usb %s: stage %u, direct %d, hub %d, rx %lu, dropped %lu, turns %lu\n",
         g_role.mode == usbrole::kHost ? "host" : "device", Stage(), (int)g_direct, (int)via_hub(),
         (unsigned long)g_rx, (unsigned long)g_q.dropped, (unsigned long)g_switches);
-    if (g_moved) OUT("midi interface %u moved to where the class looks\n", (unsigned)(g_moved - 1u));
+    if (g_watch.moved) OUT("midi interface %u moved to where the class looks\n", (unsigned)(g_watch.moved - 1u));
+    OUT("direct: %lu failed tries (%u in a row, last at step %u), %lu clean starts\n",
+        (unsigned long)g_watch.tries, (unsigned)g_watch.fails, (unsigned)g_watch.where,
+        (unsigned long)g_watch.restarts);
     OUT("device %04x:%04x, cfg %u B (fits %d), state %u\n", hUsbHostHS.device.DevDesc.idVendor,
         hUsbHostHS.device.DevDesc.idProduct, hUsbHostHS.device.CfgDesc.wTotalLength,
         (int)(hUsbHostHS.device.CfgDesc.wTotalLength <= USBH_MAX_SIZE_CONFIGURATION),

@@ -19,6 +19,10 @@ void     Poll(uint32_t now_ms);  /* from the control loop's poll */
 bool     Pop(uint32_t* pkt);     /* the next packet: cable|CIN, status, data 1, data 2 */
 uint8_t  Stage();                /* 0 nothing, 1 enumerating, 2 failed / not MIDI, 3 MIDI ready,
                                     4 a computer has it as a MIDI device */
+/* (0.3.1) While Stage() is 2 for a device straight on the port: how far its
+ * last try got. 1 it never answered, 2 lost around taking its address,
+ * 3 it gave its descriptors but setting it up or opening MIDI failed. 0 otherwise. */
+uint8_t  FailWhere();
 uint32_t RxCount();              /* packets received */
 /* (0.3.0) USB-MIDI event packets back to the computer, iPhone or iPad that
  * has the port as a MIDI device (stage 4): sent over the next polls. False

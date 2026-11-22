@@ -95,6 +95,7 @@ static bool     g_mac_mode = false;   /* B1 at power-up: USB device, no host */
 static bool     g_host_up  = false;
 static uint32_t g_boot_ms  = 0;
 static uint8_t  g_stage    = 0;
+static uint8_t  g_fail_where = 0;   /* 0.3.1: B3's red blinks (midihost::FailWhere) */
 
 /* ---- colours ------------------------------------------------------------ */
 
@@ -530,6 +531,7 @@ static void OnPoll(uint32_t now)
             const uint8_t st = midihost::Stage();
             if (g_stage >= 3 && st != g_stage) g_cmd.Push(kCmdPanic);
             g_stage = st;
+            g_fail_where = midihost::FailWhere();
         }
     }
 
@@ -769,14 +771,22 @@ static void OnRender(uint32_t t_ms)
     /* B3: the USB port. Blue: Mac mode. Red dim: nothing plugged in;
      * amber: starting a device; red: not one it can use; green: a keyboard's
      * MIDI; cyan (0.2.0): a computer, iPhone or iPad playing TETHER. Green
-     * and cyan flash white with each message. */
+     * and cyan flash white with each message. 0.3.1: a keyboard straight on
+     * the port that keeps failing shows red with 1, 2 or 3 dark blinks every
+     * 3 s (midihost::FailWhere: no answer / lost at its address / setting it up). */
     Rgb b3;
     if (g_mac_mode) b3 = kBlue;
     else switch (g_stage)
     {
         case 4: b3 = engine.MidiFlash() > 0.5f ? kCalCol : kVoiceCol[1]; break;
         case 3: b3 = engine.MidiFlash() > 0.5f ? kCalCol : kGreen; break;
-        case 2: b3 = kRed; break;
+        case 2:
+        {
+            b3 = kRed;
+            const uint32_t ph = t_ms % 3000u;   /* n blinks of 200 ms on 400 ms, then a pause */
+            if (g_fail_where && ph < 400u * g_fail_where && (ph % 400u) < 200u) b3 = scale(kRed, 0.05f);
+            break;
+        }
         case 1: b3 = kAmber; break;
         default: b3 = scale(kRed, 0.15f); break;
     }
