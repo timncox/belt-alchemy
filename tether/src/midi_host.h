@@ -19,10 +19,15 @@ void     Poll(uint32_t now_ms);  /* from the control loop's poll */
 bool     Pop(uint32_t* pkt);     /* the next packet: cable|CIN, status, data 1, data 2 */
 uint8_t  Stage();                /* 0 nothing, 1 enumerating, 2 failed / not MIDI, 3 MIDI ready,
                                     4 a computer has it as a MIDI device */
-/* (0.3.1) While Stage() is 2 for a device straight on the port: how far its
- * last try got. 1 it never answered, 2 lost around taking its address,
- * 3 it gave its descriptors but setting it up or opening MIDI failed. 0 otherwise. */
+/* (0.3.1, 0.3.2) While Stage() is 2 for a device straight on the port: how
+ * far its last try got. 1 it never answered, 2 lost taking its address or
+ * giving its descriptors, 3 SET_CONFIGURATION failed, 4 configured but no
+ * MIDI found or the MIDI class wouldn't start. 0 otherwise. */
 uint8_t  FailWhere();
+/* (0.3.2) The direct path's log, for /alchemy/tether_usb.txt: Report's lines,
+ * then each step of the last tries, the device and its configuration. */
+int      Trace(char* buf, int cap);
+uint32_t TraceSerial();          /* changes when a try fails or a class starts: time to write */
 uint32_t RxCount();              /* packets received */
 /* (0.3.0) USB-MIDI event packets back to the computer, iPhone or iPad that
  * has the port as a MIDI device (stage 4): sent over the next polls. False

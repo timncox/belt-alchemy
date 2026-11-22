@@ -89,6 +89,7 @@ void bus_reset(SimDev* d)
     if (!d) return;
     d->addr   = 0;
     d->config = 0;
+    d->wedged = false;
     d->resets++;
     if (g_pend.who == d) g_pend.who = nullptr;
     if (d == g_dev) g_deaf_until = g_now + d->deaf_after_reset_ms;
@@ -271,7 +272,13 @@ USBH_StatusTypeDef USBH_LL_SubmitURB(USBH_HandleTypeDef*, uint8_t pipe, uint8_t 
             p.urb = USBH_URB_DONE;
             return USBH_OK;
         }
-        if (g_ctl.who != d || g_ctl.stall) { p.urb = USBH_URB_STALL; return USBH_OK; }
+        if (d->wedged) { p.urb = USBH_URB_NOTREADY; return USBH_OK; }   /* NAK, NAK, ... */
+        if (g_ctl.who != d || g_ctl.stall)
+        {
+            if (g_ctl.stall && d->wedge_after_stall) d->wedged = true;
+            p.urb = USBH_URB_STALL;
+            return USBH_OK;
+        }
         if (direction == 1 && length && g_ctl.reply)   /* data IN */
         {
             const uint16_t n = length < g_ctl.reply_len ? length : g_ctl.reply_len;

@@ -95,7 +95,7 @@ static bool     g_mac_mode = false;   /* B1 at power-up: USB device, no host */
 static bool     g_host_up  = false;
 static uint32_t g_boot_ms  = 0;
 static uint8_t  g_stage    = 0;
-static uint8_t  g_fail_where = 0;   /* 0.3.1: B3's red blinks (midihost::FailWhere) */
+static uint8_t  g_fail_where = 0;   /* 0.3.1: B3's red blinks, 1 to 4 (midihost::FailWhere) */
 
 /* ---- colours ------------------------------------------------------------ */
 
@@ -480,6 +480,34 @@ static void sysex_poll(uint32_t now)
     midihost::Send(pk, sx::Packets(msg, len, pk, (int)(sizeof pk / sizeof pk[0])));
 }
 
+/* 0.3.2: the direct path's log on the card, /alchemy/tether_usb.txt, after
+ * each failed try (or a class starting), at most every 3 s, overwritten. Read
+ * it back in Mac mode with HostLink. */
+alignas(32) static ALCHEMY_SDMMC_BSS FIL  s_usblog_fil;
+alignas(32) static ALCHEMY_SDMMC_BSS char s_usblog_buf[6144];
+static uint32_t g_usblog_serial = 0;
+static uint32_t g_usblog_at     = 0;
+
+static void usb_log_write(uint32_t now)
+{
+    const uint32_t serial = midihost::TraceSerial();
+    if (serial == g_usblog_serial) return;
+    if (g_usblog_at && now - g_usblog_at < 3000u) return;
+    if (picker::Busy() || !sd.EnsureMounted(now)) return;
+    g_usblog_serial = serial;
+    g_usblog_at     = now ? now : 1u;
+    const int n = midihost::Trace(s_usblog_buf, (int)sizeof s_usblog_buf);
+    SdCard::BusyGuard busy(sd);
+    if (f_open(&s_usblog_fil, "/alchemy/tether_usb.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+    {
+        sd.OnIoError();
+        return;
+    }
+    UINT w = 0;
+    f_write(&s_usblog_fil, s_usblog_buf, (UINT)n, &w);
+    f_close(&s_usblog_fil);
+}
+
 static void OnPoll(uint32_t now)
 {
     /* J3-J6 over I2C, only when a code would change. */
@@ -532,6 +560,7 @@ static void OnPoll(uint32_t now)
             if (g_stage >= 3 && st != g_stage) g_cmd.Push(kCmdPanic);
             g_stage = st;
             g_fail_where = midihost::FailWhere();
+            usb_log_write(now);
         }
     }
 
@@ -772,8 +801,9 @@ static void OnRender(uint32_t t_ms)
      * amber: starting a device; red: not one it can use; green: a keyboard's
      * MIDI; cyan (0.2.0): a computer, iPhone or iPad playing TETHER. Green
      * and cyan flash white with each message. 0.3.1: a keyboard straight on
-     * the port that keeps failing shows red with 1, 2 or 3 dark blinks every
-     * 3 s (midihost::FailWhere: no answer / lost at its address / setting it up). */
+     * the port that keeps failing shows red with 1 to 4 dark blinks every 3 s
+     * (midihost::FailWhere: no answer / lost taking its address or giving its
+     * descriptors / SET_CONFIGURATION / no MIDI; 4 is 0.3.2's). */
     Rgb b3;
     if (g_mac_mode) b3 = kBlue;
     else switch (g_stage)

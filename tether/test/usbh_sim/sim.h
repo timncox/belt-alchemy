@@ -22,9 +22,12 @@ struct SimDev
     uint32_t drop_first      = 0;   /* the first N SETUPs get no answer at all */
     uint32_t drop_every      = 0;   /* then every Nth (0: none) */
     bool     dead            = false;   /* never answers (pulled up, nothing behind it) */
+    bool     wedge_after_stall = false; /* after it stalls a request, NAKs every later control
+                                           data/status stage until a bus reset (the FM-1, 0.3.1) */
 
     /* what happened */
     uint8_t  addr = 0, config = 0;
+    bool     wedged = false;
     uint32_t setups = 0, resets = 0, sets_config = 0, strings_asked = 0;
 };
 

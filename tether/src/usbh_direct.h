@@ -1,5 +1,5 @@
 /* usbh_direct -- patience for a USB-MIDI device straight on the Lab's front
- * USB-C (TETHER 0.3.1).
+ * USB-C (TETHER 0.3.1, 0.3.2).
  *
  * Behind a hub, Belt's hub driver sets the device up itself: 20 ms after the
  * port reset, 5 ms after it gives the device an address, and a device that
@@ -23,6 +23,13 @@
  * Once a class runs (HOST_CLASS: the MIDI class, or the hub driver) it leaves
  * the core alone, so the hub path is as it was.
  *
+ * 0.3.2: it skips the device's name strings, as the hub driver always has.
+ * The FM-1 says it has a serial number string (index 3) but stalls the
+ * request for it, and its USB handling after that stall loses the next
+ * request: 0.3.1 got its descriptors and then hung on SET_CONFIGURATION
+ * (Tim's three blinks). TETHER never shows the names, so it doesn't ask.
+ * It also keeps a short log of each try (Steps) for /alchemy/tether_usb.txt.
+ *
  * It also moves the MIDI interface to where the core's MIDI class looks
  * (place_midi, 0.1.1), so all of the direct path is in one place. */
 #pragma once
@@ -43,19 +50,44 @@ constexpr uint8_t  kRedAfter     = 3u;      /* failed tries in a row before B3 s
 /* How far a failed try got (B3 blinks this many times while red). */
 enum Where : uint8_t
 {
-    kNowhere      = 0,
-    kNoAnswer     = 1,   /* the device never answered its first request */
-    kAfterAddress = 2,   /* it answered, then was lost around taking its address */
-    kSetup        = 3,   /* it gave its descriptors; configuring it or opening MIDI failed */
+    kNowhere     = 0,
+    kNoAnswer    = 1,   /* the device never answered its first request */
+    kEnumerating = 2,   /* it answered, then was lost taking its address or giving descriptors */
+    kConfiguring = 3,   /* it gave its descriptors; SET_CONFIGURATION (or wakeup) failed */
+    kNoMidi      = 4,   /* configured, but no MIDI found or the MIDI class wouldn't start */
 };
 
 inline Where where_of(uint8_t g, uint8_t e)
 {
     if (g == HOST_IDLE || g == HOST_DEV_WAIT_FOR_ATTACHMENT || g == HOST_DEV_ATTACHED) return kNoAnswer;
     if (g == HOST_ENUMERATION)
-        return (e == ENUM_IDLE || e == ENUM_GET_FULL_DEV_DESC) ? kNoAnswer : kAfterAddress;
-    return kSetup;
+        return (e == ENUM_IDLE || e == ENUM_GET_FULL_DEV_DESC) ? kNoAnswer : kEnumerating;
+    if (g == HOST_SET_CONFIGURATION || g == HOST_SET_WAKEUP_FEATURE) return kConfiguring;
+    return kNoMidi;
 }
+
+/* 0.3.2: once the device descriptor is in, forget its string indexes so the
+ * core skips GET_DESCRIPTOR(string) for maker, product and serial. */
+inline bool skip_strings(USBH_HandleTypeDef* ph)
+{
+    if (ph->gState != HOST_ENUMERATION || ph->EnumState < ENUM_SET_ADDR) return false;
+    USBH_DevDescTypeDef& d = ph->device.DevDesc;
+    if (!d.iManufacturer && !d.iProduct && !d.iSerialNumber) return false;
+    d.iManufacturer = d.iProduct = d.iSerialNumber = 0;
+    return true;
+}
+
+/* One line of the try log: what the core was doing, and what happened. */
+struct Step
+{
+    uint32_t t;     /* ms */
+    uint8_t  g, e;  /* gState, EnumState */
+    uint8_t  ctl;   /* Control.state */
+    uint8_t  err;   /* Control.errorcount */
+    char     ev;    /* s state, w wait, x extra round, n names skipped, E core error,
+                       A abort, T stuck, R restart, K class running */
+};
+constexpr unsigned kSteps = 64u;
 
 /* The core runs control requests in these states while a device is set up. */
 inline bool setting_up(uint8_t g)
@@ -121,6 +153,23 @@ struct Watch
     uint8_t  moved     = 0;        /* place_midi's answer, for the log */
     uint32_t tries     = 0;        /* failed tries since power-up, for the log */
     uint32_t restarts  = 0;        /* clean starts made here, for the log */
+    uint32_t names     = 0;        /* times the name strings were skipped */
+    bool     ask_names = false;    /* 0.3.1's way, for the tests: let the core ask for them */
+    Step     steps[kSteps] = {};   /* the try log, a ring */
+    uint32_t nsteps    = 0;        /* steps logged since power-up */
+    uint32_t serial    = 0;        /* bumps on a failed try or a class starting (write the log) */
+
+    void log(USBH_HandleTypeDef* ph, uint32_t now, char ev)
+    {
+        Step& s = steps[nsteps % kSteps];
+        s.t   = now;
+        s.g   = ph->gState;
+        s.e   = ph->EnumState;
+        s.ctl = ph->Control.state;
+        s.err = ph->Control.errorcount;
+        s.ev  = ev;
+        nsteps++;
+    }
 
     /* The device went away: a new one starts from nothing. */
     void Unplugged()
@@ -157,11 +206,13 @@ struct Watch
             {
                 in_err = true;   /* the first look at this miss: give the device a moment, */
                 hold(now, kRetryGapMs * (1u + rounds));   /* longer each round */
+                log(ph, now, 'w');
                 return false;
             }
             /* The core gives up on the next miss: three more of its tries, a few times. */
             if (ph->Control.errorcount >= USBH_MAX_ERROR_COUNT && rounds < kMoreRounds)
             {
+                log(ph, now, 'x');
                 ph->Control.errorcount = 0;
                 rounds++;
             }
@@ -172,12 +223,24 @@ struct Watch
     /* Call after it (or in its place, when Before said no). */
     void After(USBH_HandleTypeDef* ph, uint32_t now)
     {
+        if (!ask_names && skip_strings(ph))
+        {
+            names++;
+            log(ph, now, 'n');
+        }
         if (ph->gState == HOST_CHECK_CLASS && !moved) moved = place_midi(ph);
         if (ph->Control.state != CTRL_ERROR) in_err = false;
         if (pre_e == ENUM_SET_ADDR && ph->EnumState == ENUM_GET_CFG_DESC && ph->gState == HOST_ENUMERATION)
             hold(now, kAddrSettleMs);
         if (ph->gState != g || ph->EnumState != e)
         {
+            if (ph->gState == HOST_CLASS && g != HOST_CLASS)
+            {
+                log(ph, now, 'K');
+                serial++;
+            }
+            else
+                log(ph, now, 's');
             g      = ph->gState;
             e      = ph->EnumState;
             since  = now;
@@ -192,13 +255,18 @@ struct Watch
         if (errored)
         {
             errored = false;
+            log(ph, now, 'E');
             failed(where_of(pre_g, pre_e));
             restart(ph, now);
         }
         else if (ph->gState == HOST_ABORT_STATE && pre_g != HOST_ABORT_STATE)
+        {
+            log(ph, now, 'A');
             failed(where_of(pre_g, pre_e));   /* libDaisy's Process starts the host again */
+        }
         else if (setting_up(ph->gState) && (uint32_t)(now - since) > kStuckMs)
         {
+            log(ph, now, 'T');
             failed(where_of(ph->gState, ph->EnumState));
             restart(ph, now);
         }
@@ -208,6 +276,7 @@ struct Watch
     {
         where = w;
         tries++;
+        serial++;
         if (fails < 255u) fails++;
     }
 
@@ -242,6 +311,7 @@ struct Watch
         g = e   = 0xFF;
         since   = now;
         restarts++;
+        log(ph, now, 'R');
     }
 };
 } // namespace usbdirect

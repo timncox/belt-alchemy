@@ -1,4 +1,4 @@
-/* TETHER 0.3.1: the FM-1 (and SMK-37) straight on the Lab's front USB-C, and
+/* TETHER 0.3.1, 0.3.2: the FM-1 (and SMK-37) straight on the Lab's front USB-C, and
  * through a powered hub, run through ST's real host core (usbh_core.c,
  * usbh_ctlreq.c, usbh_midi.c) and Belt's hub driver against a modelled
  * device (sim.cpp). The loop below is tether_usbh.cpp's host side: libDaisy's
@@ -306,7 +306,7 @@ int main()
         CHECK(w.moved == 0, "nothing to move");
         CHECK(plays(), "a note didn't arrive");
     }
-    /* 9. Not MIDI (a mouse): red, three blinks, keeps out of the way. */
+    /* 9. Not MIDI (a mouse): red, four blinks (0.3.2; three in 0.3.1), keeps out of the way. */
     {
         printf("A mouse\n");
         fresh(true);
@@ -318,7 +318,7 @@ int main()
         run(4000);
         printf("  stage %u, where %u\n", stage(), w.where);
         CHECK(stage() == 2, "red");
-        CHECK(w.where == usbdirect::kSetup, "where %u", w.where);
+        CHECK(w.where == usbdirect::kNoMidi, "where %u", w.where);
     }
     /* 10. Through a powered hub, FM-1 and SMK-37, prompt and slow: as before. */
     for (int which = 0; which < 2; which++)
@@ -380,6 +380,68 @@ int main()
                    t1 ? "green" : "never green", t1);
             CHECK(t1 > 0, "0.3.1 never green: %s", c.what);
         }
+    }
+
+    /* 13. (0.3.2) Tim's three blinks. The FM-1 lists a serial number string
+     *     (index 3) that PROTECTOR has no answer for, so it stalls the request,
+     *     and its EP0 then loses the next request: SET_CONFIGURATION's status
+     *     never comes. 0.3.1 asked for the names and showed red with three
+     *     blinks; 0.3.2 skips them, as the hub driver does, and goes green. */
+    for (int which = 0; which < 2; which++)
+    {
+        printf("%s straight on, serial string stalls and wedges EP0\n", which ? "SMK-37" : "FM-1");
+        fresh(true);
+        w.ask_names = true;   /* 0.3.1 */
+        SimDev d0 = which ? smk37_dev() : fm1_dev();
+        d0.strings[3] = nullptr;
+        d0.wedge_after_stall = true;
+        d0.addr_lag_ms = 6;
+        sim::Plug(&h, &d0);
+        const uint32_t t0 = run_until_green(20000);
+        const uint8_t where0 = w.where;
+        CHECK(t0 == 0 && stage() == 2, "0.3.1 should show red");
+        CHECK(where0 == usbdirect::kConfiguring, "0.3.1 should blink 3 (got %u)", where0);
+        fresh(true);
+        SimDev d1 = which ? smk37_dev() : fm1_dev();
+        d1.strings[3] = nullptr;
+        d1.wedge_after_stall = true;
+        d1.addr_lag_ms = 6;
+        sim::Plug(&h, &d1);
+        const uint32_t t1 = run_until_green(3000);
+        printf("  0.3.1 red, %u blinks; 0.3.2 %s (%u ms), %u strings asked, %u failed tries\n", where0,
+               t1 ? "green" : "never green", t1, d1.strings_asked, w.tries);
+        CHECK(t1 > 0, "0.3.2 never green");
+        CHECK(d1.strings_asked == 0, "0.3.2 asked for %u strings", d1.strings_asked);
+        CHECK(w.tries == 0 && w.names >= 1, "tries %u, names skipped %u", w.tries, w.names);
+        CHECK(plays(), "a note didn't arrive");
+    }
+    /* 14. (0.3.2) The try log: a device that never configures fills it, and
+     *     the steps come out in order, the right blinks with them. */
+    {
+        printf("try log, a device stuck at SET_CONFIGURATION\n");
+        fresh(true);
+        w.ask_names = true;   /* 0.3.1's way, with the wedging FM-1: stuck every try */
+        SimDev d = fm1_dev();
+        d.strings[3] = nullptr;
+        d.wedge_after_stall = true;
+        sim::Plug(&h, &d);
+        run(16000);
+        CHECK(w.Failed() && w.where != usbdirect::kNowhere, "should be red");
+        CHECK(w.nsteps > 0 && w.serial >= 1, "nothing logged");
+        bool has_t = false;
+        const uint32_t first = w.nsteps > usbdirect::kSteps ? w.nsteps - usbdirect::kSteps : 0u;
+        uint32_t last_t = 0;
+        bool ordered = true;
+        for (uint32_t i = first; i < w.nsteps; i++)
+        {
+            const usbdirect::Step& s = w.steps[i % usbdirect::kSteps];
+            if (s.ev == 'T') has_t = true;
+            if (s.t < last_t) ordered = false;
+            last_t = s.t;
+        }
+        printf("  %u steps logged, last blinks %u\n", w.nsteps, w.where);
+        CHECK(has_t, "no stuck step in the log");
+        CHECK(ordered, "log out of order");
     }
 
     printf(g_fail ? "usbh_sim: %d FAILED\n" : "usbh_sim: all passed\n", g_fail);

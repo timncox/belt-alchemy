@@ -132,16 +132,24 @@ Lights: B2 flashes on the clock's beat (dim amber, no clock). B3 shows USB:
 dim red nothing plugged in, amber connecting, red failed, green a keyboard,
 cyan a computer, iPhone or iPad, a white flash on each message.
 
-A keyboard straight on the port that won't start (0.3.1): TETHER keeps trying,
-each time from scratch, and after three tries in a row B3 goes red and blinks
-dark every 3 s to say where it stopped:
+A keyboard straight on the port that won't start (0.3.1, 0.3.2): TETHER keeps
+trying, each time from scratch, and after three tries in a row B3 goes red and
+blinks dark every 3 s to say where it stopped:
 
-- **1 blink:** the keyboard never answered. Its USB isn't running; a keyboard
-  that needs USB power to answer needs the powered hub (or a USB-C cable that
-  adds power).
-- **2 blinks:** it answered, then was lost as it took its address.
-- **3 blinks:** it said what it is, but setting it up or opening its MIDI failed
-  (or it has no MIDI).
+- **1 blink:** the keyboard never answered. Its USB isn't running.
+- **2 blinks:** it answered, then was lost taking its address or giving its
+  descriptors.
+- **3 blinks:** it gave its descriptors, but didn't take SET_CONFIGURATION.
+  This was the FM-1 on 0.3.1: it lists a serial number it can't give, stalls
+  the request for it, and then loses the next one. 0.3.2 doesn't ask a device
+  straight on the port for its names (the hub path never did).
+- **4 blinks:** it's set up, but no MIDI was found or it wouldn't open (a mouse,
+  say).
+
+Each failed try (and each keyboard that starts) also writes a log to the card
+as `/alchemy/tether_usb.txt`, at most every 3 s: the steps of the last tries,
+the device and its configuration bytes. Read it in Mac mode with HostLink
+(`node tools/hostlink-fs.mjs get /alchemy/tether_usb.txt tether_usb.txt`).
 
 It keeps trying while red, and goes green as soon as one works.
 

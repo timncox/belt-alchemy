@@ -53,6 +53,8 @@ uint8_t Stage()
     return g_role.mode == usbrole::kDevice ? 4 : 3;
 }
 uint8_t  FailWhere() { return 0; }
+int      Trace(char* b, int cap) { return Report(b, cap); }
+uint32_t TraceSerial() { return 0; }
 uint32_t RxCount() { return emu::midi::Count(); }
 bool     Send(const uint8_t (*pk)[4], int n)
 {

@@ -24,6 +24,10 @@
 #include "usbh_direct.h"
 #include "usb_role.h"
 
+#ifndef TETHER_VERSION
+#define TETHER_VERSION "0.0.0"
+#endif
+
 extern "C" USBH_HandleTypeDef hUsbHostHS; /* libDaisy's host handle */
 extern "C" USBD_HandleTypeDef hUsbDeviceHS; /* libDaisy's device handle (hid/usb.cpp) */
 extern "C" HCD_HandleTypeDef  hhcd_USB_OTG_HS;
@@ -221,6 +225,52 @@ int Report(char* b, int cap)
         hUsbHostHS.device.DevDesc.idProduct, hUsbHostHS.device.CfgDesc.wTotalLength,
         (int)(hUsbHostHS.device.CfgDesc.wTotalLength <= USBH_MAX_SIZE_CONFIGURATION),
         (unsigned)hUsbHostHS.gState);
+#undef OUT
+    return n < cap ? n : cap;
+}
+
+uint32_t TraceSerial() { return g_watch.serial; }
+
+int Trace(char* b, int cap)
+{
+    int n = Report(b, cap);
+#define OUT(...) do { if (n < cap) n += snprintf(b + n, (size_t)(cap - n), __VA_ARGS__); } while (0)
+    const USBH_HandleTypeDef& h = hUsbHostHS;
+    OUT("tether %s, %lu ms since power-up, blinks %u, names skipped %lu times\n", TETHER_VERSION,
+        (unsigned long)daisy::System::GetNow(), (unsigned)FailWhere(), (unsigned long)g_watch.names);
+    OUT("now: gState %u, EnumState %u, Control %u, RequestState %u, errorcount %u, address %u, "
+        "speed %u, connected %u, class %s\n",
+        (unsigned)h.gState, (unsigned)h.EnumState, (unsigned)h.Control.state, (unsigned)h.RequestState,
+        (unsigned)h.Control.errorcount, (unsigned)h.device.address, (unsigned)h.device.speed,
+        (unsigned)h.device.is_connected, h.pActiveClass ? (const char*)h.pActiveClass->Name : "none");
+    const USBH_DevDescTypeDef& d = h.device.DevDesc;
+    OUT("device: usb %04x, class %u/%u/%u, ep0 %u, %04x:%04x rel %04x, configs %u\n", d.bcdUSB,
+        d.bDeviceClass, d.bDeviceSubClass, d.bDeviceProtocol, d.bMaxPacketSize, d.idVendor, d.idProduct,
+        d.bcdDevice, d.bNumConfigurations);
+    const USBH_CfgDescTypeDef& c = h.device.CfgDesc;
+    OUT("config: %u B, %u interfaces, value %u, attributes %02x, power %u\n", c.wTotalLength,
+        c.bNumInterfaces, c.bConfigurationValue, c.bmAttributes, c.bMaxPower);
+    for (unsigned i = 0; i < USBH_MAX_NUM_INTERFACES; i++)
+    {
+        const USBH_InterfaceDescTypeDef& f = c.Itf_Desc[i];
+        OUT("slot %u: interface %u alt %u class %u/%u, %u endpoints", i, f.bInterfaceNumber,
+            f.bAlternateSetting, f.bInterfaceClass, f.bInterfaceSubClass, f.bNumEndpoints);
+        for (unsigned e = 0; e < f.bNumEndpoints && e < USBH_MAX_NUM_ENDPOINTS; e++)
+            OUT(" %02x/%u/%u", f.Ep_Desc[e].bEndpointAddress, f.Ep_Desc[e].bmAttributes,
+                f.Ep_Desc[e].wMaxPacketSize);
+        OUT("\n");
+    }
+    unsigned len = c.wTotalLength;
+    if (len > USBH_MAX_SIZE_CONFIGURATION) len = USBH_MAX_SIZE_CONFIGURATION;
+    OUT("config bytes:");
+    for (unsigned i = 0; i < len; i++) OUT("%s%02x", (i % 32u) ? " " : "\n", h.device.CfgDesc_Raw[i]);
+    OUT("\nsteps (ms g e ctl err what):\n");
+    const uint32_t first = g_watch.nsteps > usbdirect::kSteps ? g_watch.nsteps - usbdirect::kSteps : 0u;
+    for (uint32_t i = first; i < g_watch.nsteps; i++)
+    {
+        const usbdirect::Step& s = g_watch.steps[i % usbdirect::kSteps];
+        OUT("%lu %u %u %u %u %c\n", (unsigned long)s.t, s.g, s.e, s.ctl, s.err, s.ev);
+    }
 #undef OUT
     return n < cap ? n : cap;
 }
