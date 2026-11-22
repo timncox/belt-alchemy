@@ -20,16 +20,21 @@ The port takes turns being a host (1.5 s) and a device (2.5 s) until one of
 them answers, then stays that way until it's unplugged. So a keyboard or a
 computer is picked up within about 4 s of plugging in.
 
-The Lab puts no power on its USB port. A keyboard with its own battery (the
-FM-1) or its own power can plug straight in. A keyboard that runs off USB
-power needs a powered hub between them, which also charges it.
+The Lab puts no power on its USB port (hardware: no VBUS switch exists, so
+firmware can't add it). The FM-1 and SMK-37 run on their own power, but their
+USB engine only starts with 5 V on the cable (fm1-base and smk37-base usb.c:
+"Powered on without a cable, the SIE does not answer"). Straight in, the Lab
+sees the pull-up but the port never comes out of the bus reset (0.3.3 log:
+WAIT_FOR_ATTACHMENT, PortEnabled never set, abort every ~7 s; B3 red, 1
+blink). So they need a powered hub (or a USB-C adapter that adds 5 V) between
+them and the Lab, which also charges them. Checked on hardware Nov 22: direct
+fails, powered hub works.
 
 **PROTECTOR on the FM-1 or the SMK-37:** set CLOCK OUT to **PARTS** (SONG
 page) so every part comes over USB on its own channel with the clock, start
 and stop. The SMK-37 (PROTECTOR 0.4.7, USB name "Felucca") is audio control
 0, MIDI 1, audio in 2, so the host opens its MIDI as it is (the FM-1 needs
-its MIDI moved, 0.1.1). If it stays on with its USB cable out, plug it
-straight in; if it goes dark, use the powered hub.
+its MIDI moved, 0.1.1). Use the powered hub.
 
 Hold **B1** while powering up for Mac mode (the port is the Mac tools' device,
 for HostLink; B3 shows blue). Mac mode is not remembered.
@@ -136,7 +141,8 @@ A keyboard straight on the port that won't start (0.3.1, 0.3.2): TETHER keeps
 trying, each time from scratch, and after three tries in a row B3 goes red and
 blinks dark every 3 s to say where it stopped:
 
-- **1 blink:** the keyboard never answered. Its USB isn't running.
+- **1 blink:** the keyboard never answered. Its USB isn't running; for the
+  FM-1 and SMK-37 that means no 5 V on the cable (use the powered hub).
 - **2 blinks:** it answered, then was lost taking its address or giving its
   descriptors.
 - **3 blinks:** it gave its descriptors, but didn't take SET_CONFIGURATION.
