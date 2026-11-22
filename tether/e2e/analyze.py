@@ -86,7 +86,7 @@ for k in range(8):
     if nm not in jobs: continue
     j = jobs.index(nm); r = rises(j)
     ons = [t for t, s, a, b in ev if s == 0x90 + k and b > 0]
-    lat = [first_after(r, t, 5) - t for t in ons if first_after(r, t, 5) is not None]
+    lat = [first_after(r, t, 6) - t for t in ons if first_after(r, t, 6) is not None]   # 6: a hit whose last note ends as it starts waits 3 ms low first
     grid = [x - fa - round((x - fa) / step) * step for x in r]
     report(f"trig {k+1} J{j+3}", len(r) == len(ons) and len(lat) == len(ons),
            f"{len(r)} trigs for {len(ons)} notes; after its note {lat_str(lat)}; vs true 16ths {st.mean(grid):+.2f} ms avg, {min(grid):+.2f} to {max(grid):+.2f}" if r else "none")

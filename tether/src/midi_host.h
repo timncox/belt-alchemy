@@ -20,6 +20,10 @@ bool     Pop(uint32_t* pkt);     /* the next packet: cable|CIN, status, data 1, 
 uint8_t  Stage();                /* 0 nothing, 1 enumerating, 2 failed / not MIDI, 3 MIDI ready,
                                     4 a computer has it as a MIDI device */
 uint32_t RxCount();              /* packets received */
+/* (0.3.0) USB-MIDI event packets back to the computer, iPhone or iPad that
+ * has the port as a MIDI device (stage 4): sent over the next polls. False
+ * when nothing has the port that way or the last ones aren't out yet. */
+bool     Send(const uint8_t (*pk)[4], int n);
 uint32_t Dropped();              /* packets the queue had no room for */
 int      Report(char* buf, int cap);   /* a few lines for the HostLink log */
 } // namespace midihost

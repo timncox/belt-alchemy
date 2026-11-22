@@ -14,6 +14,7 @@ bool     Pop(uint32_t* pkt);
 bool     Plugged();
 bool     Computer();
 uint32_t Count();
+void     Out(uint32_t pkt);
 } } // namespace emu::midi
 
 namespace midihost
@@ -52,6 +53,13 @@ uint8_t Stage()
     return g_role.mode == usbrole::kDevice ? 4 : 3;
 }
 uint32_t RxCount() { return emu::midi::Count(); }
+bool     Send(const uint8_t (*pk)[4], int n)
+{
+    if (!g_init || !far_end_seen() || g_role.mode != usbrole::kDevice) return false;
+    for (int i = 0; i < n; i++)
+        emu::midi::Out((uint32_t)pk[i][0] | (uint32_t)pk[i][1] << 8 | (uint32_t)pk[i][2] << 16 | (uint32_t)pk[i][3] << 24);
+    return true;
+}
 uint32_t Dropped() { return 0; }
 int      Report(char* b, int cap)
 {

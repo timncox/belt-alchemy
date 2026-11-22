@@ -171,6 +171,29 @@ void dev_stop()
 
 namespace midihost
 {
+/* Out to the computer: whole buffer kept until sent, 64 bytes a poll (one
+ * full-speed packet), the next only once the last is out. */
+static uint8_t g_tx[512];
+static int     g_tx_n = 0, g_tx_at = 0;
+
+bool Send(const uint8_t (*pk)[4], int n)
+{
+    if (g_role.mode != usbrole::kDevice || !dev_seen() || g_tx_at < g_tx_n) return false;
+    if (n * 4 > (int)sizeof g_tx) return false;
+    memcpy(g_tx, pk, (size_t)n * 4u);
+    g_tx_n  = n * 4;
+    g_tx_at = 0;
+    return true;
+}
+
+static void tx_poll()
+{
+    if (g_tx_at >= g_tx_n) return;
+    if (g_role.mode != usbrole::kDevice || !dev_seen()) { g_tx_at = g_tx_n = 0; return; }
+    const int len = g_tx_n - g_tx_at < 64 ? g_tx_n - g_tx_at : 64;
+    if (g_usbd.TransmitExternal(g_tx + g_tx_at, (size_t)len) == daisy::UsbHandle::Result::OK) g_tx_at += len;
+}
+
 void Init()
 {
     g_role.Start(daisy::System::GetNow());
@@ -187,7 +210,7 @@ void Poll(uint32_t now)
         else { dev_stop(); host_start(); }
         return;
     }
-    if (g_role.mode != usbrole::kHost) return;
+    if (g_role.mode != usbrole::kHost) { tx_poll(); return; }
     g_usbh.Process();
     /* libDaisy reads the configuration descriptor into 256 bytes, however
      * long the device says it is: ask for no more than fits (Belt). */

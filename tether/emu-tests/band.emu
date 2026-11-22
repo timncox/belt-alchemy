@@ -1,0 +1,88 @@
+# TETHER 0.3.0 out of the box, layout BAND, with PROTECTOR's parts:
+# J3 bass gate, J4 lead gate, J5 HATS, J6 16ths clock out, J7 KICK, J8 SNARE,
+# J9 bass pitch, J10 lead pitch. Drums follow velocity: 2.5 V at 1, 5 V at 127,
+# and stay up as long as the note.
+midi plug                      # the keyboard is in before power-up
+wait 3000
+expect booted
+expect led b3 green
+midi on 1 36 127               # KICK, full
+midi on 2 38 1                 # SNARE, softest
+midi on 3 42 64                # HATS, half way
+wait 6
+expect cv 7 > 4.9
+expect cv 8 > 2.4
+expect cv 8 < 2.6
+expect cv 5 > 3.6
+expect cv 5 < 3.9
+wait 40
+expect cv 7 > 4.9              # held: a gate until the note off
+midi off 1 36
+midi off 2 38
+midi off 3 42
+wait 20
+expect cv 7 < 0.5
+expect cv 8 < 0.5
+expect cv 5 < 0.5
+# bass C2 on J9 with its gate on J3
+midi on 5 36 100
+wait 40
+expect cv 9 > -2.01
+expect cv 9 < -1.99
+expect cv 3 > 4.5
+# lead C5 on J10 with its gate on J4
+midi on 6 72 100
+wait 15
+expect cv 10 > 0.99
+expect cv 10 < 1.01
+expect cv 4 > 4.5
+midi off 6 72
+midi off 5 36
+wait 20
+expect cv 4 < 0.5
+expect cv 3 < 0.5
+# J6: 16ths from MIDI clock
+mark
+midi start
+midi clock 48 120
+expect edges 6 > 6
+midi stop
+# B1: voice A (amber), B (cyan), C (purple), back to A
+tap b1
+wait 100
+expect led b1 cyan
+tap b1
+wait 100
+expect led b1 purple
+tap b1
+wait 100
+expect led b1 amber
+# MORE (hold B1): voice A's SUSTAIN (P3) all the way down; a held bass note
+# then rings out to 0 V on an ENV A jack (J5 set to ENV A on JACKS)
+press b3
+wait 400
+pot 3 0.70                     # catch at TRIG 3 (zone 26 of 31)
+wait 100
+pot 3 0.85                     # caught
+wait 100
+pot 3 0.21                     # ENV A, zone 7 of 31
+wait 100
+release b3
+wait 100
+press b1
+wait 400
+pot 3 0.40                     # catch SUSTAIN at 0.4
+wait 100
+pot 3 0.0
+wait 100
+release b1
+wait 100
+expect led b1 amber            # holding B1 for MORE doesn't change the voice
+midi on 5 48 100
+wait 20
+expect cv 5 > 1.0              # attacking
+wait 1200
+expect cv 5 < 0.1              # decayed to sustain 0 though still held
+midi off 5 48
+expect finite
+expect alive

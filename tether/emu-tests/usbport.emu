@@ -3,6 +3,18 @@
 # iPad or Mac) plays TETHER as a USB-MIDI device; B3 cyan. A keyboard: B3 green.
 wait 3000
 expect booted
+# 0.3.0: these checks are 0.2.0's jacks, so first the CLOCK layout: hold B3,
+# tap B1 for page 2, LAYOUT (P3) from BAND to CLOCK.
+press b3
+wait 400
+tap b1
+wait 100
+pot 3 0.17                     # catch at BAND
+wait 100
+pot 3 0.5                      # CLOCK
+wait 100
+release b3
+wait 200
 wait 6000
 expect led b3 rgb 8 0 0          # nothing plugged in: dim red, taking turns
 # a computer: found once the port's turn as a device comes round

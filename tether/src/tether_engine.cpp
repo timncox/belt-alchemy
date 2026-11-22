@@ -7,17 +7,56 @@
 namespace tether
 {
 
+float EnvSeconds(float x)
+{
+    if (x < 0.0f) x = 0.0f;
+    if (x > 1.0f) x = 1.0f;
+    return 0.001f * powf(4000.0f, x);   /* 1 ms .. 4 s */
+}
+static float env_knob(float s) { return logf(s / 0.001f) / logf(4000.0f); }
+
+static const char* const kLayoutNames[kNumLayouts + 1] = {"BAND", "CLOCK", "CUSTOM"};
+const char* LayoutName(int l) { return l >= 0 && l < kNumLayouts ? kLayoutNames[l] : kLayoutNames[kNumLayouts]; }
+
+/*                                      J3          J4         J5            J6
+ *                                      J7          J8         J9            J10 */
+static const uint8_t kLayouts[kNumLayouts][kJacks] = {
+    /* BAND: bass gate, lead gate, HATS, 16ths clock out; KICK, SNARE on
+     * the fast DACs; bass and lead pitch on the 24-bit codec outputs. */
+    {kFnGateA, kFnGateB, kFnTrig1 + 2, kFnClk16, kFnTrig1, kFnTrig1 + 1, kFnPitchA, kFnPitchB},
+    /* CLOCK (0.1 / 0.2): gates A and B, 16ths, reset, KICK, SNARE, pitch A and B. */
+    {kFnGateA, kFnGateB, kFnClk16, kFnReset, kFnTrig1, kFnTrig1 + 1, kFnPitchA, kFnPitchB},
+};
+
+void SetLayout(uint8_t jack[kJacks], int l)
+{
+    if (l < 0 || l >= kNumLayouts) return;
+    memcpy(jack, kLayouts[l], kJacks);
+}
+
+int LayoutOf(const uint8_t jack[kJacks])
+{
+    for (int l = 0; l < kNumLayouts; l++)
+        if (!memcmp(jack, kLayouts[l], kJacks)) return l;
+    return -1;
+}
+
 void Defaults(MasterParams& m, VoiceParams v[kVoices])
 {
-    /* J3 J4 gates, J5 clock (16ths), J6 reset, J7 J8 KICK and SNARE. */
-    const uint8_t jacks[kJacks] = {kFnGateA, kFnGateB, kFnClk16, kFnReset, kFnTrig1, kFnTrig1 + 1};
-    memcpy(m.jack, jacks, sizeof jacks);
+    SetLayout(m.jack, kLayoutBand);
     m.trig_ms  = 5.0f;
     m.accent   = 110;     /* PROTECTOR's accented steps */
     m.bend     = 2;
     m.reset_on = kResetStart;
+    m.clk_ppqn = kPpqnDefault;
+    m.j2_mode  = kJ2Reset;
+    /* KICK, SNARE, HATS follow velocity, from 2.5 V (where a fixed-level
+     * trigger input such as a kick module's still fires) to 5 V */
+    m.drum_vel = 0x07;
+    m.drum_trig = 0;   /* held gates: Ultra Perc's patterns follow the gate's length */
+    for (int d = 0; d < kDrums; d++) m.drum_floor[d] = 2.5f;
     for (int i = 0; i < kVoices; i++) { m.cal_off[i] = 0.0f; m.cal_scale[i] = 0.0f; }
-    /* A: PROTECTOR's BASS (channel 5), B: its LEAD (6). */
+    /* A: PROTECTOR's BASS (channel 5), B: its LEAD (6), C: its PAD (7). */
     for (int i = 0; i < kVoices; i++)
     {
         v[i].chan      = (uint8_t)(4 + i);
@@ -27,11 +66,24 @@ void Defaults(MasterParams& m, VoiceParams v[kVoices])
         v[i].octave    = 0;
         v[i].transpose = 0;
     }
+    v[2].note_mode = kLow;   /* a chord on the pad: its lowest note */
+    /* Envelopes: a short bass, a lead that holds, a slow pad. */
+    const float env[kVoices][4] = {{0.001f, 0.25f, 0.4f, 0.08f},
+                                   {0.005f, 0.3f, 0.6f, 0.3f},
+                                   {0.4f, 0.8f, 0.8f, 1.2f}};
+    for (int i = 0; i < kVoices; i++)
+    {
+        v[i].att = env_knob(env[i][0]);
+        v[i].dec = env_knob(env[i][1]);
+        v[i].sus = env[i][2];
+        v[i].rel = env_knob(env[i][3]);
+    }
 }
 
 static const char* const kJackNames[kNumJackFns] = {
-    "GATE A", "GATE B", "CLK 24", "CLK 16", "CLK 8", "CLK 4", "BAR", "RESET", "RUN", "SECTION",
-    "ACC A", "ACC B", "VEL A", "VEL B",
+    "PITCH A", "PITCH B", "PITCH C", "GATE A", "GATE B", "GATE C", "ENV A", "ENV B", "ENV C",
+    "ACC A", "ACC B", "ACC C", "VEL A", "VEL B", "VEL C",
+    "CLK 24", "CLK 16", "CLK 8", "CLK 4", "BAR", "RESET", "RUN", "SECTION",
     "TRIG 1", "TRIG 2", "TRIG 3", "TRIG 4", "TRIG 5", "TRIG 6", "TRIG 7", "TRIG 8"};
 
 const char* JackName(uint8_t fn) { return fn < kNumJackFns ? kJackNames[fn] : "?"; }
@@ -43,32 +95,50 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
 
 static void put16(uint8_t* p, int v) { p[0] = (uint8_t)(v & 0xFF); p[1] = (uint8_t)((v >> 8) & 0xFF); }
 static int  get16(const uint8_t* p) { return (int16_t)(uint16_t)(p[0] | (p[1] << 8)); }
+static uint8_t u8(float x) { return (uint8_t)lroundf(clampf(x, 0.0f, 1.0f) * 255.0f); }
 
+/* Layout 2 (80 bytes):
+ *   0 version   1 voice on the panel   2-9 jobs of J3..J10
+ *   10 trig ms  11 accent  12 bend  13 reset on  14 J1 PPQN  15 J2 mode
+ *   16-21 calibration offsets A B C (0.1 mV)   22-27 scales (10 ppm)
+ *   28-57 voices A B C, ten bytes each: channel, gate, notes, glide, octave+8,
+ *         transpose+16, attack, decay, sustain, release
+ *   58 drums following velocity (bit per TRIG)   59-66 their floors (20 mV)
+ *   67-78 zero   79 check */
 void Pack(const MasterParams& m, const VoiceParams v[kVoices], uint8_t sel, uint8_t* out)
 {
     memset(out, 0, kStateBytes);
     out[0] = kLayoutVersion;
     out[1] = sel;
     for (int j = 0; j < kJacks; j++) out[2 + j] = m.jack[j];
-    out[8]  = (uint8_t)lroundf(m.trig_ms);
-    out[9]  = m.accent;
-    out[10] = m.bend;
-    out[11] = m.reset_on;
+    out[10] = (uint8_t)lroundf(m.trig_ms);
+    out[11] = m.accent;
+    out[12] = m.bend;
+    out[13] = m.reset_on;
+    out[14] = m.clk_ppqn;
+    out[15] = m.j2_mode;
     for (int i = 0; i < kVoices; i++)
     {
-        put16(&out[12 + 2 * i], (int)lroundf(m.cal_off[i] * 10000.0f));     /* 0.1 mV */
-        put16(&out[16 + 2 * i], (int)lroundf(m.cal_scale[i] * 100000.0f));  /* 10 ppm */
+        put16(&out[16 + 2 * i], (int)lroundf(m.cal_off[i] * 10000.0f));     /* 0.1 mV */
+        put16(&out[22 + 2 * i], (int)lroundf(m.cal_scale[i] * 100000.0f));  /* 10 ppm */
     }
     for (int i = 0; i < kVoices; i++)
     {
-        uint8_t* p = &out[20 + 6 * i];
+        uint8_t* p = &out[28 + 10 * i];
         p[0] = v[i].chan;
         p[1] = v[i].gate_mode;
         p[2] = v[i].note_mode;
-        p[3] = (uint8_t)lroundf(clampf(v[i].glide, 0.0f, 1.0f) * 255.0f);
+        p[3] = u8(v[i].glide);
         p[4] = (uint8_t)(v[i].octave + 8);
         p[5] = (uint8_t)(v[i].transpose + 16);
+        p[6] = u8(v[i].att);
+        p[7] = u8(v[i].dec);
+        p[8] = u8(v[i].sus);
+        p[9] = u8(v[i].rel);
     }
+    out[58] = m.drum_vel;
+    for (int d = 0; d < kDrums; d++) out[59 + d] = (uint8_t)lroundf(clampf(m.drum_floor[d], 0.0f, kDrumFloorMax) * 50.0f);
+    out[67] = m.drum_trig;
     uint8_t sum = 0x5A;
     for (int i = 0; i < kStateBytes - 1; i++) sum = (uint8_t)(sum * 31u + out[i]);
     out[kStateBytes - 1] = sum;
@@ -81,25 +151,34 @@ bool Unpack(const uint8_t* in, MasterParams& m, VoiceParams v[kVoices], uint8_t&
     if (in[0] != kLayoutVersion || sum != in[kStateBytes - 1]) return false;
     sel = (uint8_t)(in[1] % kVoices);
     for (int j = 0; j < kJacks; j++) m.jack[j] = (uint8_t)(in[2 + j] % kNumJackFns);
-    m.trig_ms  = clampf((float)in[8], kTrigMsMin, kTrigMsMax);
-    m.accent   = (uint8_t)clampi(in[9], 1, 127);
-    m.bend     = (uint8_t)clampi(in[10], 0, kBendMax);
-    m.reset_on = (uint8_t)(in[11] % kNumResetOn);
+    m.trig_ms  = clampf((float)in[10], kTrigMsMin, kTrigMsMax);
+    m.accent   = (uint8_t)clampi(in[11], 1, 127);
+    m.bend     = (uint8_t)clampi(in[12], 0, kBendMax);
+    m.reset_on = (uint8_t)(in[13] % kNumResetOn);
+    m.clk_ppqn = (uint8_t)(in[14] % kNumPpqn);
+    m.j2_mode  = (uint8_t)(in[15] % kNumJ2Modes);
     for (int i = 0; i < kVoices; i++)
     {
-        m.cal_off[i]   = clampf((float)get16(&in[12 + 2 * i]) / 10000.0f, -kCalOffMax, kCalOffMax);
-        m.cal_scale[i] = clampf((float)get16(&in[16 + 2 * i]) / 100000.0f, -kCalScaleMax, kCalScaleMax);
+        m.cal_off[i]   = clampf((float)get16(&in[16 + 2 * i]) / 10000.0f, -kCalOffMax, kCalOffMax);
+        m.cal_scale[i] = clampf((float)get16(&in[22 + 2 * i]) / 100000.0f, -kCalScaleMax, kCalScaleMax);
     }
     for (int i = 0; i < kVoices; i++)
     {
-        const uint8_t* p = &in[20 + 6 * i];
+        const uint8_t* p = &in[28 + 10 * i];
         v[i].chan      = (uint8_t)(p[0] % kNumChans);
         v[i].gate_mode = (uint8_t)(p[1] % kNumGateModes);
         v[i].note_mode = (uint8_t)(p[2] % kNumNoteModes);
         v[i].glide     = (float)p[3] / 255.0f;
         v[i].octave    = (int8_t)clampi((int)p[4] - 8, kOctMin, kOctMax);
         v[i].transpose = (int8_t)clampi((int)p[5] - 16, kTransMin, kTransMax);
+        v[i].att       = (float)p[6] / 255.0f;
+        v[i].dec       = (float)p[7] / 255.0f;
+        v[i].sus       = (float)p[8] / 255.0f;
+        v[i].rel       = (float)p[9] / 255.0f;
     }
+    m.drum_vel = in[58];
+    m.drum_trig = in[67];
+    for (int d = 0; d < kDrums; d++) m.drum_floor[d] = clampf((float)in[59 + d] / 50.0f, 0.0f, kDrumFloorMax);
     return true;
 }
 
@@ -110,6 +189,7 @@ void Engine::Init(float sample_rate)
     sr_ = sample_rate;
     Defaults(master, voice);
     for (int v = 0; v < kVoices; v++) vs_[v] = Voice{};
+    for (int d = 0; d < kDrums; d++) drum_low_[d] = 1 << 20;
 }
 
 int32_t Engine::trig_samples() const
@@ -219,9 +299,37 @@ void Engine::note_off(int v, int note)
         }
 }
 
+/* SysEx: gathered from its packets; a whole one that starts with TETHER's
+ * ID (tether_sysex.h) is handed to the poll, one at a time. */
+static bool sysex_ours(const uint8_t* p, int n) { return n >= 3 && p[0] == 0x7D && p[1] == 0x54 && p[2] == 0x45; }
+
 void Engine::Packet(uint32_t pkt)
 {
     const uint8_t cin = (uint8_t)(pkt & 0x0F);
+    const int     nb  = cin == 0x4 || cin == 0x7 ? 3 : cin == 0x6 ? 2 : cin == 0x5 ? 1 : 0;
+    if (nb && (cin == 0x4 || sx_n_ >= 0 || (uint8_t)(pkt >> 8) == 0xF0))
+    {
+        for (int i = 0; i < nb; i++)
+        {
+            const uint8_t b = (uint8_t)(pkt >> (8 * (i + 1)));
+            if (b == 0xF0) { sx_n_ = 0; continue; }
+            if (sx_n_ < 0) continue;
+            if (b == 0xF7)
+            {
+                if (sysex_ours(sx_, sx_n_) && sx_done_n_.load(std::memory_order_acquire) == 0)
+                {
+                    memcpy(sx_done_, sx_, (size_t)sx_n_);
+                    sx_done_n_.store(sx_n_, std::memory_order_release);
+                }
+                sx_n_ = -1;
+                continue;
+            }
+            if (b & 0x80) { sx_n_ = -1; continue; }   /* broken off */
+            if (sx_n_ < (int)sizeof sx_) sx_[sx_n_++] = b;
+            else sx_n_ = -1;
+        }
+        return;
+    }
     if (cin < 0x5 && cin != 0x2 && cin != 0x3) return;   /* 0/1 reserved, 4 SysEx */
     if (cin >= 0x5 && cin <= 0x7 && ((pkt >> 8) & 0xFF) < 0xF8) return;   /* SysEx ends */
     Midi((uint8_t)(pkt >> 8), (uint8_t)(pkt >> 16) & 0x7F, (uint8_t)(pkt >> 24) & 0x7F);
@@ -239,19 +347,14 @@ void Engine::Midi(uint8_t st, uint8_t d1, uint8_t d2)
                 if (ticks_seen_ && now_ - last_tick_ < (uint32_t)sr_) tick_len_ = now_ - last_tick_;
                 ticks_seen_ = true;
                 last_tick_  = now_;
+                if (ext_) { ext_ = false; ext_left_ = 0; }   /* MIDI clock wins over J1 */
                 if (!running_ && transport_seen_) break;   /* stopped: the clock jacks rest */
-                const uint32_t t = next_tick_++;
-                fire(&clk_[0], true);
-                if (t % 6u == 0u) fire(&clk_[1], true);
-                if (t % 12u == 0u) fire(&clk_[2], true);
-                if (t % 24u == 0u) fire(&clk_[3], true);
-                if (t % 96u == 0u) fire(&clk_[4], true);
+                tick();
                 break;
             }
             case 0xFA:
-                transport_seen_ = running_ = true;
-                next_tick_ = 0;
-                fire(&reset_, false);
+                transport_seen_ = true;
+                start(now_);
                 break;
             case 0xFB: transport_seen_ = running_ = true; break;
             case 0xFC:
@@ -268,12 +371,31 @@ void Engine::Midi(uint8_t st, uint8_t d1, uint8_t d2)
     midi_flash_ = 1.0f;
     if (type == 0x90 && d2 > 0)
     {
-        if (ch < 8) fire(&drum_[ch], false);
+        if (ch < kDrums)
+        {
+            /* a gate from note on to note off, at least TRIG LENGTH (or,
+             * set to TRIG, just TRIG LENGTH); its height the velocity's
+             * when set. Still up from the last hit: down 3 ms first, so the
+             * module sees a new one. */
+            const int32_t gap = (int32_t)(sr_ * 0.003f);
+            if (drum_[ch] > 0 || drum_held_[ch]) drum_gap_[ch] = gap;
+            /* went down only just now (the last note's off in the same
+             * moment): keep it down the rest of the 3 ms (the I2C jacks J3-J6
+             * need that long to show it), or the jack never
+             * drops and the module hears one long hit */
+            else if (drum_low_[ch] < gap) drum_gap_[ch] = gap - drum_low_[ch];
+            fire(&drum_[ch], false);
+            drum_[ch] += drum_gap_[ch];
+            drum_held_[ch] = !((master.drum_trig >> ch) & 1u);
+            const float fl = clampf(master.drum_floor[ch], 0.0f, kDrumFloorMax);
+            drum_v_[ch] = (master.drum_vel >> ch) & 1u ? fl + (kGateV - fl) * (float)(d2 - 1) / 126.0f : kGateV;
+        }
         for (int v = 0; v < kVoices; v++)
             if (voice[v].chan == ch || voice[v].chan == kChanAll) note_on(v, d1, d2);
     }
     else if (type == 0x80 || type == 0x90)
     {
+        if (ch < kDrums) drum_held_[ch] = false;
         for (int v = 0; v < kVoices; v++)
             if (voice[v].chan == ch || voice[v].chan == kChanAll) note_off(v, d1);
     }
@@ -297,12 +419,160 @@ void Engine::Midi(uint8_t st, uint8_t d1, uint8_t d2)
     }
 }
 
+bool Engine::TakeSysex(uint8_t* buf, int cap, int* len)
+{
+    const int n = sx_done_n_.load(std::memory_order_acquire);
+    if (n <= 0) return false;
+    const int k = n < cap ? n : cap;
+    memcpy(buf, sx_done_, (size_t)k);
+    *len = k;
+    sx_done_n_.store(0, std::memory_order_release);
+    return true;
+}
+
+void Engine::tick()
+{
+    const uint32_t t = next_tick_++;
+    fire(&clk_[0], true);
+    if (t % 6u == 0u) fire(&clk_[1], true);
+    if (t % 12u == 0u) fire(&clk_[2], true);
+    if (t % 24u == 0u) fire(&clk_[3], true);
+    if (t % 96u == 0u) fire(&clk_[4], true);
+}
+
+void Engine::start(uint32_t t)
+{
+    running_   = true;
+    next_tick_ = 0;
+    ext_left_  = 0;
+    fire(&reset_, false);
+    started_  = true;
+    start_at_ = t;
+}
+
+/* ---- J1 / J2 (0.3.0) ------------------------------------------------------------
+ * J1: each pulse is 24 / PPQN MIDI clock steps. The first goes at the pulse;
+ * the rest are spread over the time to the next pulse (as last measured), and
+ * any still to come when the next pulse arrives go at once, so the count never
+ * drifts. With J2 on RESET, a clock arriving starts the transport and the
+ * clock stopping (three of its periods with nothing) stops it; with J2 on
+ * START/STOP, J2 does that and J1 only counts while running. Everything here
+ * waits while USB MIDI clock is coming in. */
+
+void Engine::j1_edge(uint32_t t)
+{
+    const int per = 24 / kPpqnValues[master.clk_ppqn % kNumPpqn];
+    if (!ext_)
+    {
+        ext_        = true;
+        ext_period_ = 0;
+        ext_left_   = 0;
+        if (master.j2_mode == kJ2Reset && !running_) start(t);
+    }
+    else
+    {
+        const uint32_t iv = t - ext_last_;
+        ext_period_ = ext_period_ ? (ext_period_ + iv) / 2u : iv;
+    }
+    ext_last_ = t;
+    while (ext_left_ > 0) { ext_left_--; if (running_) tick(); }   /* the last pulse's, now */
+    if (!running_) return;
+    /* until a period is known: as if at 120 BPM */
+    const uint32_t period = ext_period_ ? ext_period_ : (uint32_t)(sr_ * 0.5f / (float)(24 / per));
+    ext_step_  = period / (uint32_t)per;
+    tick_len_  = ext_step_;
+    edge_tick_ = next_tick_;
+    tick();
+    ext_left_ = per - 1;
+    ext_next_ = t + ext_step_;
+}
+
+void Engine::j2_edge(uint32_t t)
+{
+    const uint32_t near = (uint32_t)(sr_ * 0.002f);   /* 2 ms: the same moment */
+    if (master.j2_mode == kJ2StartStop)
+    {
+        if (running_) { running_ = false; ext_left_ = 0; }
+        else start(t);
+        return;
+    }
+    if (started_ && t - start_at_ < near) return;    /* the start's own reset */
+    if (ext_ && running_ && t - ext_last_ < near)
+    {
+        /* the clock pulse that just came is the downbeat */
+        next_tick_ -= edge_tick_;
+        fire(&reset_, false);
+        started_ = true; start_at_ = t;
+        return;
+    }
+    next_tick_ = 0;
+    ext_left_  = 0;   /* the next J1 pulse is the downbeat */
+    fire(&reset_, false);
+    started_ = true; start_at_ = t;
+}
+
+void Engine::Inputs(const float* j1, const float* j2, uint32_t n)
+{
+    /* Thresholds as Pulse: 1.0 V up, 0.5 V down. */
+    constexpr float kHi = 0.2f, kLo = 0.1f;
+    if (MidiClock())
+    {
+        /* MIDI wins: keep the edge state, act on nothing */
+        if (j1 && n) j1_hi_ = j1[n - 1] > kLo && (j1_hi_ || j1[n - 1] > kHi);
+        if (j2 && n) j2_hi_ = j2[n - 1] > kLo && (j2_hi_ || j2[n - 1] > kHi);
+        return;
+    }
+    for (uint32_t i = 0; i < n; i++)
+    {
+        bool e2 = false, e1 = false;
+        if (j2)
+        {
+            const float v = j2[i];
+            if (!j2_hi_ && v > kHi) { j2_hi_ = true; e2 = true; }
+            else if (j2_hi_ && v < kLo) j2_hi_ = false;
+        }
+        if (j1)
+        {
+            const float v = j1[i];
+            if (!j1_hi_ && v > kHi) { j1_hi_ = true; e1 = true; }
+            else if (j1_hi_ && v < kLo) j1_hi_ = false;
+        }
+        if (e2) j2_edge(now_ + i);   /* a reset with a pulse: reset first, the pulse is beat one */
+        if (e1) j1_edge(now_ + i);
+    }
+}
+
 void Engine::Process(uint32_t n)
 {
+    /* J1: the rest of the last pulse's steps; the clock gone quiet */
+    if (ext_)
+    {
+        while (ext_left_ > 0 && (int32_t)(now_ - ext_next_) >= 0)
+        {
+            ext_left_--;
+            ext_next_ += ext_step_;
+            if (running_) tick();
+        }
+        float lim = ext_period_ ? 3.0f * (float)ext_period_ / sr_ : 2.0f;
+        if (lim < 0.25f) lim = 0.25f;
+        if (lim > 4.0f) lim = 4.0f;
+        if ((int32_t)(now_ - ext_last_) > (int32_t)(lim * sr_))   /* the pulse may be later in this block */
+        {
+            ext_      = false;
+            ext_left_ = 0;
+            if (master.j2_mode == kJ2Reset) running_ = false;
+        }
+    }
     const int32_t dn = (int32_t)n;
     for (int i = 0; i < 5; i++) clk_[i] = clk_[i] > dn ? clk_[i] - dn : 0;
     reset_ = reset_ > dn ? reset_ - dn : 0;
-    for (int i = 0; i < 8; i++) drum_[i] = drum_[i] > dn ? drum_[i] - dn : 0;
+    for (int i = 0; i < kDrums; i++)
+    {
+        drum_[i]     = drum_[i] > dn ? drum_[i] - dn : 0;
+        drum_gap_[i] = drum_gap_[i] > dn ? drum_gap_[i] - dn : 0;
+        if (drum_gap_[i] > 0 || (drum_[i] == 0 && !drum_held_[i])) drum_low_[i] = drum_low_[i] + (int32_t)dn < (1 << 20) ? drum_low_[i] + (int32_t)dn : 1 << 20;
+        else drum_low_[i] = 0;
+    }
     const float decay = (float)n / (0.25f * sr_);
     for (int v = 0; v < kVoices; v++)
     {
@@ -328,6 +598,27 @@ void Engine::Process(uint32_t n)
         else
             V.pitch = V.target;
         V.act = V.act > decay ? V.act - decay : 0.0f;
+
+        /* the envelope: attack on the gate going up (a new note after a
+         * gap, or RETRIG's), decay to sustain, release when it goes down */
+        const VoiceParams& P  = voice[v];
+        const float        dt = (float)n / sr_;
+        if (V.gate && !V.env_gate) V.env_stage = 1;
+        if (!V.gate && V.env_gate) V.env_stage = 0;
+        V.env_gate = V.gate;
+        if (V.env_stage == 1)
+        {
+            V.env += dt / EnvSeconds(P.att);
+            if (V.env >= 1.0f) { V.env = 1.0f; V.env_stage = 2; }
+        }
+        else
+        {
+            /* most of the way (98 %) in the knob's time */
+            const float tgt = V.env_stage == 2 ? clampf(P.sus, 0.0f, 1.0f) : 0.0f;
+            const float tau = 0.25f * EnvSeconds(V.env_stage == 2 ? P.dec : P.rel);
+            V.env += (tgt - V.env) * (1.0f - expf(-dt / tau));
+            if (V.env < 1e-4f && V.env_stage == 0) V.env = 0.0f;
+        }
     }
     midi_flash_ = midi_flash_ > decay * 4.0f ? midi_flash_ - decay * 4.0f : 0.0f;
     now_ += n;
@@ -344,7 +635,9 @@ float Engine::PitchVolts(int v) const
 
 float Engine::FnVolts(uint8_t fn) const
 {
-    if (fn == kFnGateA || fn == kFnGateB)
+    if (fn <= kFnPitchC) return PitchVolts(fn - kFnPitchA);
+    if (fn >= kFnEnvA && fn <= kFnEnvC) return ref_ ? kGateV : EnvVolts(fn - kFnEnvA);
+    if (fn >= kFnGateA && fn <= kFnGateC)
     {
         const int    v = fn - kFnGateA;
         const Voice& V = vs_[v];
@@ -352,8 +645,8 @@ float Engine::FnVolts(uint8_t fn) const
         switch (voice[v].gate_mode)
         {
             case kTrig: return V.trig_left > 0 ? kGateV : 0.0f;
-            case kAccGate: return V.gate ? (V.vel >= master.accent ? kAccentV : kGateV) : 0.0f;
-            case kVelGate: return V.gate ? 1.0f + 7.0f * (float)V.vel / 127.0f : 0.0f;
+            case kAccGate: return V.gate ? (V.vel >= master.accent ? kAccentV : kPlainAccV) : 0.0f;
+            case kVelGate: return V.gate ? 1.0f + 4.0f * (float)V.vel / 127.0f : 0.0f;
             default: return V.gate ? kGateV : 0.0f;
         }
     }
@@ -365,15 +658,21 @@ float Engine::FnVolts(uint8_t fn) const
         case kFnSection: return (float)section_;
         case kFnAccA:
         case kFnAccB:
+        case kFnAccC:
         {
             const Voice& V = vs_[fn - kFnAccA];
             return V.gate && V.vel >= master.accent ? kGateV : 0.0f;
         }
         case kFnVelA:
-        case kFnVelB: return 8.0f * (float)vs_[fn - kFnVelA].vel / 127.0f;
+        case kFnVelB:
+        case kFnVelC: return kGateV * (float)vs_[fn - kFnVelA].vel / 127.0f;
         default: break;
     }
-    if (fn >= kFnTrig1 && fn < kNumJackFns) return drum_[fn - kFnTrig1] > 0 ? kGateV : 0.0f;
+    if (fn >= kFnTrig1 && fn < kNumJackFns)
+    {
+        const int d = fn - kFnTrig1;
+        return drum_gap_[d] == 0 && (drum_[d] > 0 || drum_held_[d]) ? drum_v_[d] : 0.0f;
+    }
     return 0.0f;
 }
 
@@ -389,7 +688,7 @@ void Engine::Panic()
         vs_[v].trig_left = 0;
     }
     for (int i = 0; i < 5; i++) clk_[i] = 0;
-    for (int i = 0; i < 8; i++) drum_[i] = 0;
+    for (int i = 0; i < kDrums; i++) { drum_[i] = drum_gap_[i] = 0; drum_low_[i] = 1 << 20; drum_held_[i] = false; }
     reset_ = 0;
 }
 

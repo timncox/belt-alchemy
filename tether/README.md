@@ -27,33 +27,70 @@ power needs a powered hub between them, which also charges it.
 Hold **B1** while powering up for Mac mode (the port is the Mac tools' device,
 for HostLink; B3 shows blue). Mac mode is not remembered.
 
-## Jacks (first boot)
+## Jacks (layout BAND, the default from 0.3.0)
 
 | Jack | Job |
 | --- | --- |
+| J1 | in: a clock when no MIDI clock comes (MORE P5: 1 to 48 PPQN, 4 at first) |
+| J2 | in: RESET or START/STOP (MORE P6) |
 | J3 | GATE A (voice A = channel 5, BASS) |
 | J4 | GATE B (voice B = channel 6, LEAD) |
-| J5 | CLK 16 (a trig every sixteenth) |
-| J6 | RESET (a trig on start) |
+| J5 | TRIG 3 (HATS) |
+| J6 | CLK 16 (a pulse every sixteenth) |
 | J7 | TRIG 1 (KICK) |
 | J8 | TRIG 2 (SNARE) |
-| J9 | PITCH A, 1 V/oct, 0 V = middle C |
-| J10 | PITCH B, 1 V/oct, 0 V = middle C |
+| J9 | PITCH A, 1 V/oct, 0 V = middle C (24-bit) |
+| J10 | PITCH B, 1 V/oct, 0 V = middle C (24-bit) |
 
-J3 to J8 can each be given another job (JACKS, below): GATE A/B, CLK 24, CLK
-16, CLK 8, CLK 4, BAR, RESET, RUN, SECTION (0 to 3 V for A to D), ACC A/B,
-VEL A/B, TRIG 1 to 8.
+Layout **CLOCK** is 0.1 and 0.2's: J3 GATE A, J4 GATE B, J5 CLK 16, J6 RESET,
+J7 KICK, J8 SNARE, J9 and J10 pitch A and B. Change any jack and the layout
+reads CUSTOM.
+
+J1 and J2 are the codec's inputs and can't be outputs. MIDI clock wins: while
+USB MIDI clock is coming (a tick in the last half second), J1 and J2 are
+ignored. J1 clocks on rising edges above about 1 V. In RESET mode the first
+J1 pulse starts the transport, and three of J1's periods without a pulse stop it.
+
+Every output tops out at about 5 V (the SDK: all outputs are ±5 V at the
+panel), so none reaches the 8 to 10 V some drum modules want for their loudest.
+
+Jobs for J3 to J10: PITCH A/B/C, GATE A/B/C, ENV A/B/C (the voice's ADSR, 0
+to 5 V), ACC A/B/C, VEL A/B/C, CLK 24, CLK 16, CLK 8, CLK 4, BAR, RESET, RUN,
+SECTION (0 to 3 V for A to D), TRIG 1 to 8.
+
+**Drums (TRIG 1 to 8, MIDI channels 1 to 8).** Each drum has a MODE:
+
+- **GATE** or **GATE + VEL** (the default, with VEL on for KICK, SNARE, HATS):
+  up from note on to note off, at least TRIG LENGTH, so a module whose sound
+  follows the gate's length hears it.
+- **TRIG** or **TRIG + VEL**: TRIG LENGTH, whatever the note's length.
+- With **VEL**, the height follows velocity, from FLOOR (velocity 1; 2.5 V at
+  first, which still fires a 2.5 V trigger input) to 5 V (velocity 127).
+  Without it, 5 V.
+
+A hit that lands while the last is still up, or the moment it ends, drops the
+jack for 3 ms first so the module hears two hits. J3 to J6 update about every
+millisecond, J7 and J8 within one; so a drum on J3 to J6 can be up to about
+1 ms later than one on J7 or J8, and a hit that starts as the last one ends
+up to about 3 ms later still.
 
 ## Controls
 
-**VOICE** (no button held), for the voice B1 picks (B1 lit amber = A, cyan = B):
+**VOICE** (no button held), for the voice B1 picks (B1 amber = A, cyan = B,
+purple = C):
 
 - P1 **PART**: channel 1 to 16, or ALL
-- P2 **GATE**: GATE, TRIG, ACC GATE (8 V on an accent), VEL GATE (height = velocity)
+- P2 **GATE**: GATE, TRIG, ACC GATE (5 V on an accent, 3.5 V otherwise), VEL GATE (1 to 5 V)
 - P3 **GLIDE**: 0 to 1 s
 - P4 **OCTAVE**: -4 to +4
 - P5 **TRANSPOSE**: -12 to +12 semitones
 - P6 **NOTES**: LEGATO (slides keep the gate up), RETRIG, LOW, HIGH
+
+Voices A, B and C follow channels 5, 6 and 7 (BASS, LEAD, PAD) at first.
+
+**MORE** (hold B1), for the same voice: P1 **ATTACK**, P2 **DECAY**, P3
+**SUSTAIN**, P4 **RELEASE** (1 ms to 4 s), P5 **J1 CLOCK** (1, 2, 4, 8, 12,
+24 or 48 pulses a beat), P6 **J2** (RESET or START/STOP).
 
 **MASTER** (hold B2):
 
@@ -61,11 +98,14 @@ VEL A/B, TRIG 1 to 8.
 - P3 **TRIG LENGTH** 1 to 50 ms, P4 **ACCENT** (velocity from 64 to 127)
 - P5 **BEND** range, P6 **RESET ON** (start, or start and section)
 
-**JACKS** (hold B3): P1 to P6 set the jobs of J3 to J8.
+**JACKS** (hold B3): P1 to P6 set J3 to J8. Tap B1 while B3 is held for page
+2: P1 J9, P2 J10, P3 **LAYOUT** (BAND, CLOCK, CUSTOM), P4 **DRUM** (which of
+TRIG 1 to 8 the next two set), P5 **MODE** (GATE, GATE + VEL, TRIG, TRIG +
+VEL), P6 **FLOOR** (0 to 5 V).
 
 Buttons:
 
-- B1 tap: the other voice
+- B1 tap: the next voice
 - B2 tap: all notes off
 - B3 tap: a 300 ms test note on the voice
 - B2 + B1: calibration. Each tap of B1 while B2 is held goes 1 V, 3 V, off on
@@ -76,6 +116,16 @@ Buttons:
 Lights: B2 flashes on the clock's beat (dim amber, no clock). B3 shows USB:
 dim red nothing plugged in, amber connecting, red failed, green a keyboard,
 cyan a computer, iPhone or iPad, a white flash on each message.
+
+## Settings from Loadout (SysEx)
+
+With the Lab plugged into an iPhone, iPad or Mac as the TETHER USB-MIDI
+device, an app can read and set every setting with SysEx (`src/tether_sysex.h`):
+`F0 7D 54 45 01 F7` asks for them, `02` + the 80-byte state as 160 nibbles sets
+them all, `03 n` picks layout n (0 BAND, 1 CLOCK). TETHER answers `10` + its
+version + the state, or `11` + why not.
+
+Settings saved by 0.1 or 0.2 don't carry over: 0.3.0 starts from its defaults.
 
 Pot moves are saved after 5 s, as Pulse does.
 

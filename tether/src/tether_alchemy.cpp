@@ -1,22 +1,30 @@
 /*
  * TETHER on the Hermetic Modular Alchemy Lab V2 -- MIDI to CV. A USB-MIDI
- * device on the front USB-C (the Lab is the host): two voices with pitch
- * and gate, MIDI clock, reset, run, accents, velocities and drum triggers.
+ * device on the front USB-C (the Lab is the host), or the Lab as a USB-MIDI
+ * device for a computer, iPhone or iPad: three voices with pitch, gate and
+ * envelope, MIDI clock, reset, run, accents, velocities and drum triggers;
+ * a clock and a reset in on J1 and J2 when no MIDI clock comes in.
  * Made for PROTECTOR's PARTS setting (each part on its own channel: 1 KICK
  * 2 SNARE 3 HATS 4 PERC 5 BASS 6 LEAD 7 PAD 8 FX, section changes as CC 85
  * on channel 16), and fine with any USB-MIDI keyboard.
  *
  * The MIDI side lives in tether_engine (no SDK, natively tested); this file
- * is the panel: six pots on three layers, three buttons, the jacks,
- * presets and the SD firmware picker.
+ * is the panel: six pots on four layers, three buttons, the jacks,
+ * presets, the SD firmware picker, and settings over SysEx (Loadout).
  *
- *   VOICE   PART · GATE · GLIDE · OCTAVE · TRANSPOSE · NOTES    (voice A or B)
+ *   VOICE   PART · GATE · GLIDE · OCTAVE · TRANSPOSE · NOTES    (voice A, B or C)
+ *   MORE    ATTACK · DECAY · SUSTAIN · RELEASE · J1 CLOCK · J2   (hold B1)
  *   JACKS   J3 · J4 · J5 · J6 · J7 · J8                           (hold B3)
+ *           J9 · J10 · LAYOUT · DRUM · MODE · FLOOR   (hold B3, tap B1: page 2)
  *   MASTER  CAL OFFSET · CAL SCALE · TRIG LENGTH · ACCENT · BEND · RESET ON  (hold B2)
- *   B1      tap: voice A / B; with B2 held: the calibration reference (off, 1 V, 3 V)
+ *   B1      tap: voice A / B / C; hold: MORE; with B2 held: the calibration
+ *           reference (off, 1 V, 3 V); with B3 held: the other JACKS page
  *   B2      tap: all notes off; hold: MASTER
  *   B3      tap: a test note on the voice; hold: JACKS
- *   J9 J10  pitch A, pitch B (1 V/oct, 24-bit)   J3-J8  as set on JACKS
+ *   J3-J10  as set on JACKS. BAND (from 0.3.0): bass gate, lead gate,
+ *           HATS, 16ths clock out, KICK, SNARE, bass pitch, lead pitch. CLOCK
+ *           (0.2.0's): gates A B, 16ths, reset, KICK, SNARE, pitch A B.
+ *   J1 J2   clock in, reset (or start/stop) in; USB MIDI clock wins.
  *   Hold B1 while powering up: Mac mode (USB device, HostLink) instead of host.
  *   Settings (B2+B3 2 s): brightness, presets; page 1 = the SD firmware picker
  */
@@ -39,6 +47,7 @@
 #include "midi_host.h"
 #include "picker.h"
 #include "tether_engine.h"
+#include "tether_sysex.h"
 
 #ifndef TETHER_VERSION
 #define TETHER_VERSION "0.0.0"
@@ -60,7 +69,7 @@ static constexpr uint32_t kBlockSize = 24u;
 static constexpr uint8_t kHomeSlot = 10u;
 
 enum : uint8_t { kSettingsMain = 0, kSettingsFirmware = 1 };
-enum Layer : uint8_t { kLayerVoice = 0, kLayerJacks, kLayerMaster };
+enum Layer : uint8_t { kLayerVoice = 0, kLayerJacks, kLayerMaster, kLayerMore };
 
 static constexpr uint32_t kTapMs      = 300u;
 static constexpr uint32_t kAutosaveMs = 5000u;
@@ -87,7 +96,7 @@ static uint8_t  g_stage    = 0;
 
 using Rgb = LedPanel::Rgb;
 
-static constexpr Rgb kVoiceCol[tether::kVoices] = {{0xFF, 0x80, 0x10}, {0x20, 0xD0, 0xFF}};
+static constexpr Rgb kVoiceCol[tether::kVoices] = {{0xFF, 0x80, 0x10}, {0x20, 0xD0, 0xFF}, {0xA0, 0x40, 0xFF}};
 static constexpr Rgb kMasterCol = {0xFF, 0xB0, 0x40};
 static constexpr Rgb kCalCol    = {0xFF, 0xFF, 0xFF};
 static constexpr Rgb kCatchCol  = {0x30, 0x30, 0x30};
@@ -112,8 +121,7 @@ static Rgb scale(const Rgb& c, float k)
 static Rgb fn_col(uint8_t fn)
 {
     using namespace tether;
-    if (fn == kFnGateA || fn == kFnAccA || fn == kFnVelA) return kVoiceCol[0];
-    if (fn == kFnGateB || fn == kFnAccB || fn == kFnVelB) return kVoiceCol[1];
+    if (fn <= kFnVelC) return kVoiceCol[fn % 3];   /* pitch, gate, env, acc, vel: A B C */
     if (fn >= kFnClk24 && fn <= kFnBar) return {0xFF, 0xFF, 0xC0};
     if (fn == kFnReset) return {0xFF, 0x10, 0x10};
     if (fn == kFnRun) return {0x10, 0xFF, 0x10};
@@ -149,31 +157,32 @@ struct TetherState : public Serializable
 
 /* ---- surfaces ------------------------------------------------------------ */
 
-static Jack jk_j1 ("J1",  "Not used",          JackSig::Trig);
-static Jack jk_j2 ("J2",  "Not used",          JackSig::Trig);
-static Jack jk_j3 ("J3",  "Gate A (JACKS P1)", JackSig::CvBi);
-static Jack jk_j4 ("J4",  "Gate B (JACKS P2)", JackSig::CvBi);
-static Jack jk_j5 ("J5",  "Clock (JACKS P3)",  JackSig::CvBi);
-static Jack jk_j6 ("J6",  "Reset (JACKS P4)",  JackSig::CvBi);
-static Jack jk_j7 ("J7",  "Trig 1 (JACKS P5)", JackSig::CvBi);
-static Jack jk_j8 ("J8",  "Trig 2 (JACKS P6)", JackSig::CvBi);
-static Jack jk_j9 ("J9",  "Pitch A, 1 V/oct",  JackSig::CvBi);
-static Jack jk_j10("J10", "Pitch B, 1 V/oct",  JackSig::CvBi);
+/* As BAND lays them out; JACKS changes them. */
+static Jack jk_j1 ("J1",  "Clock in (MORE P5)",              JackSig::Trig);
+static Jack jk_j2 ("J2",  "Reset or start/stop in (MORE P6)", JackSig::Trig);
+static Jack jk_j3 ("J3",  "Gate A, bass (JACKS P1)",         JackSig::CvBi);
+static Jack jk_j4 ("J4",  "Gate B, lead (JACKS P2)",         JackSig::CvBi);
+static Jack jk_j5 ("J5",  "Trig 3, HATS (JACKS P3)",         JackSig::CvBi);
+static Jack jk_j6 ("J6",  "Clock out, 16ths (JACKS P4)",     JackSig::CvBi);
+static Jack jk_j7 ("J7",  "Trig 1, KICK (JACKS P5)",         JackSig::CvBi);
+static Jack jk_j8 ("J8",  "Trig 2, SNARE (JACKS P6)",        JackSig::CvBi);
+static Jack jk_j9 ("J9",  "Pitch A, bass (JACKS page 2 P1)", JackSig::CvBi);
+static Jack jk_j10("J10", "Pitch B, lead (JACKS page 2 P2)", JackSig::CvBi);
 
 static Manual manual = Manual()
     .Tagline("MIDI to CV from a USB-MIDI device")
     .Preamble(
-        "**TETHER** turns a USB-MIDI device on the front USB-C into CV. Voice A "
-        "and voice B each follow a MIDI channel: pitch at 1 V/oct on J9 and J10, "
-        "gates on J3 and J4. J5 puts out a 16th-note clock, J6 a reset trig on "
-        "start, J7 and J8 a trigger for channels 1 and 2. Hold B3 to give J3-J8 "
-        "any job: gates, clock at 24 PPQN, 16ths, 8ths or quarters, bars, reset, "
-        "run, PROTECTOR's section as a voltage, accents, velocities, or a "
-        "trigger for channel 1-8. Tap B1 for voice A or B; its pots set the "
-        "channel, gate, accent or velocity gate, glide, octave, transpose and "
-        "note priority. Hold B2 for calibration, trigger length, the accent "
-        "velocity, bend range and when RESET fires. A powered USB hub between "
-        "the Lab and the keyboard gives it power; the Lab's port gives none.");
+        "**TETHER** turns a USB-MIDI device on the front USB-C into CV, or makes "
+        "the Lab a USB-MIDI device for a computer, iPhone or iPad. Three voices, "
+        "A B C, each follow a MIDI channel (PROTECTOR's BASS, LEAD and PAD at "
+        "first). Out of the box (layout BAND): J3 bass gate, J4 lead gate, "
+        "J5 HATS, J6 16ths clock out, J7 KICK, J8 SNARE, J9 bass pitch and J10 lead "
+        "pitch, 1 V/oct. Hold B3 to give any jack another job (tap B1 for J9, "
+        "J10 and LAYOUT; CLOCK is 0.2.0's gates, clock and reset). J1 takes a "
+        "clock and J2 a reset or start/stop when no MIDI clock comes in. Tap B1 "
+        "for voice A, B or C; hold B1 for its envelope and J1 / J2; hold B2 for "
+        "calibration, trigger length, accent, bend and reset. Loadout can set "
+        "it all from an iPhone.");
 
 static ControlLoop loop(hw);
 static Presets     presets(hw.seed.qspi);
@@ -212,7 +221,19 @@ static int zone_of(float norm, int n, int cur)
     return z;
 }
 
-static Layer g_layer = kLayerVoice;
+static Layer   g_layer     = kLayerVoice;
+static uint8_t g_jack_page = 0;   /* JACKS: 0 = J3..J8, 1 = J9, J10, LAYOUT */
+
+/* JACKS: the jack (0..7 = J3..J10) under a pot, -1 none; LAYOUT is pot 3 of page 2. */
+static int jack_of(uint8_t pot)
+{
+    if (g_jack_page == 0) return pot;
+    return pot < 2 ? 6 + pot : -1;
+}
+static constexpr uint8_t kLayoutPot = 2;
+/* JACKS page 2, P4-P6: a drum (TRIG 1-8), whether its height follows
+ * velocity, and its floor. */
+static uint8_t g_drum = 0;
 
 static PotView view(Layer layer, uint8_t pot)
 {
@@ -238,10 +259,48 @@ static PotView view(Layer layer, uint8_t pot)
             }
             break;
         case kLayerJacks:
-            v.kind  = Kind::Selector;
-            v.zones = kNumJackFns;
-            v.norm  = zone_norm(M.jack[pot], v.zones);
-            v.col   = fn_col(M.jack[pot]);
+        {
+            const int j = jack_of(pot);
+            if (j >= 0)
+            {
+                v.kind  = Kind::Selector;
+                v.zones = kNumJackFns;
+                v.norm  = zone_norm(M.jack[j], v.zones);
+                v.col   = fn_col(M.jack[j]);
+            }
+            else if (g_jack_page == 1 && pot >= 3)
+            {
+                v.col = kPartCol[g_drum];
+                if (pot == 3) { v.kind = Kind::Selector; v.zones = kDrums; v.norm = zone_norm(g_drum, v.zones); }
+                /* MODE: GATE, GATE + VEL, TRIG, TRIG + VEL */
+                if (pot == 4) { v.kind = Kind::Selector; v.zones = 4; v.norm = zone_norm(((M.drum_vel >> g_drum) & 1u) | ((M.drum_trig >> g_drum) & 1u) << 1, 4); }
+                if (pot == 5) { v.kind = Kind::Level; v.norm = M.drum_floor[g_drum] / kDrumFloorMax; }
+            }
+            else if (g_jack_page == 1 && pot == kLayoutPot)
+            {
+                /* BAND, CLOCK, or CUSTOM once a jack has been changed by hand */
+                const int l = LayoutOf(M.jack);
+                v.kind   = Kind::Selector;
+                v.zones  = kNumLayouts + 1;
+                v.norm   = zone_norm(l < 0 ? kNumLayouts : l, v.zones);
+                v.col    = l < 0 ? kDimWhite : kMasterCol;
+                v.marker = kLayoutBand;
+            }
+            break;
+        }
+        case kLayerMore:
+            v.col = kVoiceCol[g_sel];
+            switch (pot)
+            {
+                case 0: v.kind = Kind::Level; v.norm = P.att; break;
+                case 1: v.kind = Kind::Level; v.norm = P.dec; break;
+                case 2: v.kind = Kind::Level; v.norm = P.sus; break;
+                case 3: v.kind = Kind::Level; v.norm = P.rel; break;
+                case 4: v.kind = Kind::Selector; v.zones = kNumPpqn; v.norm = zone_norm(M.clk_ppqn, v.zones);
+                        v.marker = kPpqnDefault; v.col = {0xFF, 0xFF, 0xC0}; break;
+                case 5: v.kind = Kind::Selector; v.zones = kNumJ2Modes; v.norm = zone_norm(M.j2_mode, v.zones);
+                        v.col = {0xFF, 0x10, 0x10}; break;
+            }
             break;
         case kLayerMaster:
             v.col = kMasterCol;
@@ -282,7 +341,27 @@ static bool apply(Layer layer, uint8_t pot, float x)
                 if (pot == 4) P.transpose = (int8_t)(z + kTransMin);
                 if (pot == 5) P.note_mode = (uint8_t)z;
                 break;
-            case kLayerJacks: M.jack[pot] = (uint8_t)z; break;
+            case kLayerJacks:
+            {
+                const int j = jack_of(pot);
+                if (j >= 0) M.jack[j] = (uint8_t)z;
+                else if (pot == 3) { g_drum = (uint8_t)z; g_rearm = true; }
+                else if (pot == 4)
+                {
+                    M.drum_vel  = (uint8_t)((M.drum_vel & ~(1u << g_drum)) | ((unsigned)(z & 1) << g_drum));
+                    M.drum_trig = (uint8_t)((M.drum_trig & ~(1u << g_drum)) | ((unsigned)(z >> 1) << g_drum));
+                }
+                else if (z < kNumLayouts)
+                {
+                    SetLayout(M.jack, z);
+                    g_rearm = true;   /* J9 and J10's pots now show other jobs */
+                }
+                break;
+            }
+            case kLayerMore:
+                if (pot == 4) M.clk_ppqn = (uint8_t)z;
+                if (pot == 5) M.j2_mode = (uint8_t)z;
+                break;
             case kLayerMaster:
                 if (pot == 4) M.bend = (uint8_t)z;
                 if (pot == 5) M.reset_on = (uint8_t)z;
@@ -294,6 +373,15 @@ static bool apply(Layer layer, uint8_t pot, float x)
     {
         case kLayerVoice:
             if (pot == 2) P.glide = x;
+            break;
+        case kLayerJacks:
+            if (pot == 5) M.drum_floor[g_drum] = roundf(x * kDrumFloorMax * 50.0f) / 50.0f;
+            break;
+        case kLayerMore:
+            if (pot == 0) P.att = x;
+            if (pot == 1) P.dec = x;
+            if (pot == 2) P.sus = x;
+            if (pot == 3) P.rel = x;
             break;
         case kLayerMaster:
             if (pot == 0) M.cal_off[g_sel] = (x - 0.5f) * 2.0f * kCalOffMax;
@@ -339,13 +427,53 @@ struct Btn
 static Btn      g_b1, g_b2, g_b3;
 static bool     g_chord   = false;
 static bool     g_b2_used = false;   /* B1 tapped (reference) while B2 was held */
-static bool     g_b3_used = false;   /* a pot moved while B3 was held */
+static bool     g_b3_used = false;   /* a pot moved (or B1 tapped) while B3 was held */
+static bool     g_b1_used = false;   /* a pot moved while B1 was held */
 static uint32_t g_test_until = 0;
 static int      g_test_voice = -1;
 
 static bool     g_dirty       = false;
 static uint32_t g_dirty_since = 0;
 static void mark_dirty(uint32_t now) { g_dirty = true; g_dirty_since = now; }
+
+/* Loadout: settings asked for or sent over SysEx (tether_sysex.h), answered
+ * with the settings as they are now. */
+static void sysex_poll(uint32_t now)
+{
+    namespace sx = tether::sysex;
+    uint8_t req[200];
+    int     n;
+    if (!engine.TakeSysex(req, sizeof req, &n)) return;
+    sx::Request r;
+    if (!sx::Parse(req, n, &r)) return;
+    static uint8_t msg[sx::kStateMsgBytes];
+    int            len = 0;
+    if (!r.why && r.cmd == sx::kSet)
+    {
+        tether::MasterParams m;
+        tether::VoiceParams  v[tether::kVoices];
+        uint8_t              sel;
+        if (!tether::Unpack(r.state, m, v, sel)) r.why = sx::kWhyCheck;
+        else
+        {
+            engine.master = m;
+            for (int i = 0; i < tether::kVoices; i++) engine.voice[i] = v[i];
+            g_sel = sel;
+            g_cmd.Push(kCmdPanic);   /* channels may have moved: nothing left hanging */
+        }
+    }
+    if (!r.why && r.cmd == sx::kLayout) tether::SetLayout(engine.master.jack, r.layout);
+    if (r.why) len = sx::Refused(r.why, msg);
+    else
+    {
+        if (r.cmd != sx::kGet) { g_rearm = true; mark_dirty(now); }
+        uint8_t st[tether::kStateBytes];
+        tether::Pack(engine.master, engine.voice, g_sel, st);
+        len = sx::State(st, TETHER_VERSION, msg);
+    }
+    static uint8_t pk[(sx::kStateMsgBytes + 2) / 3][4];
+    midihost::Send(pk, sx::Packets(msg, len, pk, (int)(sizeof pk / sizeof pk[0])));
+}
 
 static void OnPoll(uint32_t now)
 {
@@ -384,6 +512,8 @@ static void OnPoll(uint32_t now)
         }
     }
 
+    sysex_poll(now);
+
     if (g_test_voice >= 0 && (int32_t)(now - g_test_until) >= 0)
     {
         g_cmd.Push(kCmdTestOff | (uint32_t)g_test_voice << 8);
@@ -416,13 +546,20 @@ static void OnPoll(uint32_t now)
     }
     if (b2 && b3) g_chord = true;
 
-    /* B1: tap = the other voice; with B2 held = the calibration reference. */
-    if (b1 && !g_b1.down) { g_b1.down = true; g_b1.since = now; }
+    /* B1: tap = the next voice; with B2 held = the calibration reference;
+     * with B3 held = the other JACKS page; hold = MORE. */
+    if (b1 && !g_b1.down) { g_b1.down = true; g_b1.since = now; g_b1_used = false; }
     if (!b1 && g_b1.down)
     {
-        if (now - g_b1.since < kTapMs && !g_chord)
+        if (now - g_b1.since < kTapMs && !g_chord && !g_b1_used)
         {
-            if (g_b2.down)
+            if (g_b3.down)
+            {
+                g_jack_page = (uint8_t)(g_jack_page ^ 1u);
+                g_b3_used   = true;
+                g_rearm     = true;
+            }
+            else if (g_b2.down)
             {
                 engine.SetRef((engine.Ref() + 1) % 3);
                 g_b2_used = true;
@@ -456,7 +593,8 @@ static void OnPoll(uint32_t now)
             g_test_until = now + kTestMs;
             g_cmd.Push(kCmdTestOn | (uint32_t)g_sel << 8);
         }
-        g_b3.down = false;
+        g_b3.down   = false;
+        g_jack_page = 0;
     }
 
     if (!b1 && !b2 && !b3) g_chord = false;
@@ -466,6 +604,7 @@ static void OnPoll(uint32_t now)
     {
         if (b3 && (now - g_b3.since >= kTapMs || g_b3_used)) want = kLayerJacks;
         else if (b2 && (now - g_b2.since >= kTapMs || g_b2_used)) want = kLayerMaster;
+        else if (b1 && !b2 && !b3 && (now - g_b1.since >= kTapMs || g_b1_used)) want = kLayerMore;
     }
     if (want != g_layer)
     {
@@ -509,6 +648,7 @@ static void OnFrame(void)
         {
             mark_dirty(now);
             if (g_layer == kLayerJacks) g_b3_used = true;
+            if (g_layer == kLayerMore) g_b1_used = true;
         }
     }
 
@@ -588,7 +728,7 @@ static void OnRender(uint32_t t_ms)
     /* JACKS: each ring lights its last LED while its jack is high. */
     if (g_layer == kLayerJacks)
         for (uint8_t p = 0; p < kNumPots; p++)
-            if (engine.JackVolts(p) > 2.5f) ring_led(p, hw.Arc().arc_leds - 1, kCalCol);
+            if (jack_of(p) >= 0 && engine.JackVolts(jack_of(p)) > 2.5f) ring_led(p, hw.Arc().arc_leds - 1, kCalCol);
 
     /* B1: the voice's colour, bright while its gate is up; white blinks
      * while a calibration reference is out. */
@@ -624,7 +764,7 @@ static void OnRender(uint32_t t_ms)
 
 /* ---- audio ----------------------------------------------------------------- */
 
-static void AudioCallback(daisy::AudioHandle::InputBuffer, daisy::AudioHandle::OutputBuffer out, size_t n)
+static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle::OutputBuffer out, size_t n)
 {
     uint32_t c;
     while (g_cmd.Pop(&c))
@@ -639,14 +779,12 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer, daisy::AudioHandle::O
     }
     uint32_t pkt;
     while (midihost::Pop(&pkt)) engine.Packet(pkt);
+    engine.Inputs(in[0], in[1], (uint32_t)n);                            /* J1 clock, J2 reset */
     engine.Process((uint32_t)n);
 
     for (size_t i = 0; i < n; i++) out[0][i] = out[1][i] = 0.0f;
     for (int j = 0; j < 4; j++) g_mcp_volts[j] = engine.JackVolts(j);   /* J3-J6 */
-    hw.cv_jacks[4].SetVolts(engine.JackVolts(4));                        /* J7 */
-    hw.cv_jacks[5].SetVolts(engine.JackVolts(5));                        /* J8 */
-    hw.cv_jacks[6].SetVolts(engine.PitchVolts(0));                       /* J9: pitch A */
-    hw.cv_jacks[7].SetVolts(engine.PitchVolts(1));                       /* J10: pitch B */
+    for (int j = 4; j < 8; j++) hw.cv_jacks[j].SetVolts(engine.JackVolts(j));   /* J7-J10 */
 }
 
 /* ---- main ------------------------------------------------------------------ */

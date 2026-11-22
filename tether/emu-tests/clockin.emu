@@ -1,0 +1,49 @@
+# TETHER 0.3.0: a clock on J1 and a reset on J2 when no MIDI clock comes in.
+# CLOCK layout (J5 16ths, J6 reset). J1 at 4 PPQN (the default): one pulse a
+# sixteenth. USB MIDI clock, when it comes, wins.
+midi plug
+wait 3000
+expect booted
+press b3
+wait 400
+tap b1
+wait 100
+pot 3 0.17                     # catch LAYOUT at BAND
+wait 100
+pot 3 0.5                      # CLOCK
+wait 100
+release b3
+wait 200
+mark
+clock 1 125                    # J1: a pulse every 125 ms (120 BPM sixteenths)
+wait 2010
+expect edges 5 > 15            # sixteenths from J1
+expect edges 5 < 18
+expect edges 6 = 1             # the clock arriving started it: one RESET
+# J2: a reset; the next pulse is the top of the bar
+mark
+pulse 2
+wait 300
+expect edges 6 = 1
+# the clock stops: three of its periods later the transport stops
+clock 1 0
+wait 600
+mark
+wait 500
+expect edges 5 = 0
+# MIDI clock wins: J1 running at another tempo, MIDI's sixteenths come out
+clock 1 50
+wait 300
+mark
+midi start
+midi clock 96 120              # 2 s of MIDI clock at 120 BPM
+expect edges 5 > 14
+expect edges 5 < 18            # MIDI's 16, not J1's 40
+mark
+pulse 2
+wait 50
+expect edges 6 = 0             # J2 ignored under MIDI clock
+midi stop
+clock 1 0
+expect finite
+expect alive

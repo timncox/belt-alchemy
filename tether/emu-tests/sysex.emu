@@ -1,0 +1,36 @@
+# TETHER 0.3.0: settings over SysEx, as Loadout on an iPhone sends them, with
+# the Lab plugged into the computer/phone as the "TETHER" USB-MIDI device.
+midi plug computer
+wait 4500
+expect booted
+expect led b3 cyan                 # found as a MIDI device
+midi sysex F0 7D 54 45 01 F7           # GET
+wait 200
+expect sysexout F07D544510      # STATE (the emulator build names its version "emu")
+# LAYOUT 1 (CLOCK): J5 becomes 16ths
+midi sysex F0 7D 54 45 03 01 F7
+wait 200
+expect sysexout F07D544510
+mark
+midi start
+midi clock 48 120
+expect edges 5 > 6
+midi stop
+# back to BAND: J5 is the hats again, no clock on it
+midi sysex F0 7D 54 45 03 00 F7
+wait 200
+mark
+midi start
+midi clock 48 120
+expect edges 5 = 0
+midi stop
+# a command it doesn't know: REFUSED, why 3
+midi sysex F0 7D 54 45 09 F7
+wait 200
+expect sysexout F07D54451103F7
+# SET with too few bytes: REFUSED, why 1
+midi sysex F0 7D 54 45 02 00 01 F7
+wait 200
+expect sysexout F07D54451101F7
+expect finite
+expect alive
