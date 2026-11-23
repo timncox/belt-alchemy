@@ -57,19 +57,31 @@ enum JackFn : uint8_t
      * GLITCH, PUMP, RUMBLE, DRIVE, COMB, PHASER, FLANGER, CRUSH, SCENE,
      * MORPH; cv_in.h). */
     kFnCvIn1 = kFnTrig1 + 8,
-    kNumJackFns = kFnCvIn1 + 14
+    /* 0.5.0: the FM-1's sound over USB, left or right (J9, J10 only: the
+     * codec's outputs). Numbered last, so settings saved before load as they
+     * were (and these load in 0.4.0 as PITCH A / B). */
+    kFnAudioL = kFnCvIn1 + 14,
+    kFnAudioR,
+    kNumJackFns
 };
-constexpr int kNumCvFns = kNumJackFns - kFnCvIn1;
+constexpr int kNumCvFns = kFnAudioL - kFnCvIn1;
 constexpr int kNumInJacks = 6;                      /* J3..J8 can be inputs; J9, J10 can't */
-inline bool IsCvIn(uint8_t fn) { return fn >= kFnCvIn1 && fn < kNumJackFns; }
+inline bool IsCvIn(uint8_t fn) { return fn >= kFnCvIn1 && fn < kFnAudioL; }
 inline int  CvTarget(uint8_t fn) { return IsCvIn(fn) ? fn - kFnCvIn1 : -1; }
+inline bool IsAudio(uint8_t fn) { return fn == kFnAudioL || fn == kFnAudioR; }
+/* The jobs a jack can take, in the JACKS pot's order: J3..J8 every job but
+ * the two AUDIOs (45); J9, J10 the outputs (no inputs) and the two AUDIOs (33). */
+int     JackZones(int j);
+uint8_t JackFnOfZone(int j, int zone);
+int     JackZoneOfFn(int j, uint8_t fn);
 
 /* Whole layouts of J3..J10. CV IN (0.4.0): BAND's bass and lead, KICK and
- * SNARE, with FILTER and DELAY in on J5 and J6. */
-enum Layout : uint8_t { kLayoutBand, kLayoutClock, kLayoutCvIn, kNumLayouts };
+ * SNARE, with FILTER and DELAY in on J5 and J6. AUDIO (0.5.0): CV IN with
+ * the FM-1's sound on J9 and J10 in place of the pitches. */
+enum Layout : uint8_t { kLayoutBand, kLayoutClock, kLayoutCvIn, kLayoutAudio, kNumLayouts };
 void        SetLayout(uint8_t jack[kJacks], int layout);
 int         LayoutOf(const uint8_t jack[kJacks]);   /* -1: changed by hand */
-const char* LayoutName(int layout);                 /* "BAND", "CLOCK", "CV IN", "CUSTOM" */
+const char* LayoutName(int layout);                 /* "BAND", "CLOCK", "CV IN", "AUDIO", "CUSTOM" */
 
 constexpr int   kOctMin = -4, kOctMax = 4;
 constexpr int   kTransMin = -12, kTransMax = 12;

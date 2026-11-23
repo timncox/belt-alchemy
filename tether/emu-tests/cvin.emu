@@ -4,14 +4,14 @@
 # here a computer). J3, J4, J7-J10 keep BAND's bass, lead, KICK and SNARE.
 wait 3000
 expect booted
-# hold B3, tap B1 for page 2, LAYOUT (P3) from BAND to CV IN (zone 3 of 4)
+# hold B3, tap B1 for page 2, LAYOUT (P3) from BAND to CV IN (zone 3 of 5)
 press b3
 wait 400
 tap b1
 wait 100
-pot 3 0.125                    # catch at BAND
+pot 3 0.1                      # catch at BAND
 wait 100
-pot 3 0.625                    # CV IN
+pot 3 0.5                      # CV IN
 wait 100
 release b3
 wait 200
@@ -84,9 +84,9 @@ press b3
 wait 400
 tap b1
 wait 100
-pot 3 0.625                    # catch at CV IN
+pot 3 0.5                      # catch at CV IN
 wait 100
-pot 3 0.125                    # BAND
+pot 3 0.1                      # BAND
 wait 100
 release b3
 wait 200

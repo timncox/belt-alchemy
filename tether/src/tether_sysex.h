@@ -10,7 +10,8 @@
  *   to TETHER    01                      ask for the settings
  *                02 <160>                set them all (a whole Pack, check
  *                                        included); answered with 10
- *                03 <layout>             BAND 0, CLOCK 1, CV IN 2 (0.4.0): J3-J10 at once;
+ *                03 <layout>             BAND 0, CLOCK 1, CV IN 2 (0.4.0), AUDIO 3
+                                        (0.5.0): J3-J10 at once;
  *                                        answered with 10
  *   from TETHER  10 <ver 8> <160>        the settings now: the firmware's
  *                                        version in 8 ASCII bytes (zero padded),

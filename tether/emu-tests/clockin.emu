@@ -8,9 +8,9 @@ press b3
 wait 400
 tap b1
 wait 100
-pot 3 0.125                    # catch LAYOUT at BAND
+pot 3 0.1                      # catch LAYOUT at BAND
 wait 100
-pot 3 0.375                     # CLOCK (zone 2 of 4: BAND, CLOCK, CV IN, CUSTOM)
+pot 3 0.3                      # CLOCK (zone 2 of 5: BAND, CLOCK, CV IN, AUDIO, CUSTOM)
 wait 100
 release b3
 wait 200

@@ -2,7 +2,9 @@
 
 A second firmware for the Alchemy Lab V2: it turns USB MIDI from a keyboard
 plugged into the Lab's USB port, or from a computer, iPhone or iPad the Lab
-is plugged into, into pitch CV, gates and triggers. Made for
+is plugged into, into pitch CV, gates and triggers. From 0.5.0 the Lab is a
+USB audio device too: the FM-1 (or a computer) can play audio out of J9 and
+J10 and hear J1 and J2. Made for
 PROTECTOR's PARTS setting, which sends each part on its own channel
 (1 KICK, 2 SNARE, 3 HATS, 4 PERC, 5 BASS, 6 LEAD, 7 PAD, 8 FX) plus clock,
 start/stop and the section (CC 85 on channel 16).
@@ -58,8 +60,43 @@ Layout **CLOCK** is 0.1 and 0.2's: J3 GATE A, J4 GATE B, J5 CLK 16, J6 RESET,
 J7 KICK, J8 SNARE, J9 and J10 pitch A and B.
 
 Layout **CV IN** (0.4.0) keeps BAND's gates, drums and pitches and turns two
-jacks into inputs: J5 **IN FILTER** and J6 **IN DELAY**. Change any jack and the
-layout reads CUSTOM.
+jacks into inputs: J5 **IN FILTER** and J6 **IN DELAY**.
+
+Layout **AUDIO** (0.5.0) is CV IN with J9 **AUDIO L** and J10 **AUDIO R**: the
+USB audio from the FM-1 or a computer, left and right (below).
+
+Change any jack and the layout reads CUSTOM.
+
+## USB audio (0.5.0): the FM-1's sound on J9 and J10, J1 and J2 back
+
+While the Lab is a USB device (a computer, an iPhone, or the FM-1 running
+the link; B3 cyan), it is a class-compliant USB audio interface as well as
+the TETHER MIDI device, in one configuration (USB audio class 1.0, no IAD):
+
+- **USB to the Lab** (interface 1, iso OUT 0x02, adaptive): stereo, 16 bit,
+  44.1 kHz. A jack set to **AUDIO L** or **AUDIO R** (J9 and J10 only; pink on
+  the ring) plays it at ±5 V for full scale. Nothing streamed: silence.
+- **The Lab to USB** (interface 2, iso IN 0x83, asynchronous): J1 left, J2
+  right, the same format, whenever the host listens. J1 and J2 keep their
+  clock and reset jobs at the same time.
+- **MIDI** is interface 3 (it was 1), otherwise as before: CC out from the CV
+  inputs, SysEx (Loadout), clock and notes in.
+
+The Lab runs at 48 kHz, USB at 44.1 kHz. Coming in, a cubic resampler reads
+the incoming stream a little faster or slower to keep its buffer about 3 ms
+full, so it follows the sender's clock (the FM-1 sends at its I2S rate,
+about 44,117.6 Hz: +400 ppm, tested to ±2000 ppm). Going out, the Lab sends
+44 or 45 frames a millisecond, 44.1 on average by its own clock, one more or
+one fewer as its buffer drifts, and the host follows it (asynchronous: no
+feedback endpoint). A stream starts and stops with a 5 ms fade, so there's no
+click; a gap holds the last sample and fades.
+
+For the curious: the device is now class 0 (each interface says what it is;
+libDaisy's MIDI mode said CDC), release 5.00, same vendor, product and name.
+The configuration is 249 bytes. The OTG FIFO RAM is laid out again for the
+192-byte packets (RX 2 KB, EP0 256 B, MIDI in 512 B, audio in 512 B, of 4 KB).
+TETHER serves this with its own USB class (`src/tether_usbd.cpp`) on
+libDaisy's device core; Mac mode's HostLink is untouched.
 
 ## CV in (0.4.0): the Lab's jacks steer PROTECTOR's effects
 
@@ -77,7 +114,7 @@ needs no change.
   nothing in it leaves PROTECTOR's knob alone.
 - Setting a jack back to an output sends CC 116 0, which hands every effect
   back to its knob (the phone's pad too).
-- J9 and J10 are outputs only.
+- J9 and J10 are outputs only (or USB audio, 0.5.0).
 
 J1 and J2 are the codec's inputs and can't be outputs. MIDI clock wins: while
 USB MIDI clock is coming (a tick in the last half second), J1 and J2 are
@@ -89,8 +126,9 @@ panel), so none reaches the 8 to 10 V some drum modules want for their loudest.
 
 Jobs for J3 to J10: PITCH A/B/C, GATE A/B/C, ENV A/B/C (the voice's ADSR, 0
 to 5 V), ACC A/B/C, VEL A/B/C, CLK 24, CLK 16, CLK 8, CLK 4, BAR, RESET, RUN,
-SECTION (0 to 3 V for A to D), TRIG 1 to 8, and for J3 to J8 only the 14
-CV inputs (IN FILTER to IN MORPH, above).
+SECTION (0 to 3 V for A to D), TRIG 1 to 8, for J3 to J8 only the 14
+CV inputs (IN FILTER to IN MORPH, above), and for J9 and J10 only AUDIO L and
+AUDIO R (USB audio).
 
 **Drums (TRIG 1 to 8, MIDI channels 1 to 8).** Each drum has a MODE:
 
@@ -141,7 +179,7 @@ Voices A, B and C follow channels 5, 6 and 7 (BASS, LEAD, PAD) at first.
 - P5 **BEND** range, P6 **RESET ON** (start, or start and section)
 
 **JACKS** (hold B3): P1 to P6 set J3 to J8. Tap B1 while B3 is held for page
-2: P1 J9, P2 J10, P3 **LAYOUT** (BAND, CLOCK, CV IN, CUSTOM), P4 **DRUM** (which of
+2: P1 J9, P2 J10, P3 **LAYOUT** (BAND, CLOCK, CV IN, AUDIO, CUSTOM), P4 **DRUM** (which of
 TRIG 1 to 8 the next two set), P5 **MODE** (GATE, GATE + VEL, TRIG, TRIG +
 VEL), P6 **FLOOR** (0 to 5 V).
 
@@ -189,7 +227,9 @@ It keeps trying while red, and goes green as soon as one works.
 With the Lab plugged into an iPhone, iPad or Mac as the TETHER USB-MIDI
 device, an app can read and set every setting with SysEx (`src/tether_sysex.h`):
 `F0 7D 54 45 01 F7` asks for them, `02` + the 80-byte state as 160 nibbles sets
-them all, `03 n` picks layout n (0 BAND, 1 CLOCK, 2 CV IN). TETHER answers `10` + its
+them all, `03 n` picks layout n (0 BAND, 1 CLOCK, 2 CV IN, 3 AUDIO).
+Settings saved by 0.3.3 and 0.4.0 load unchanged in 0.5.0 (the state's layout
+version is still 2); 0.4.0 would read AUDIO L / R as PITCH A / B. TETHER answers `10` + its
 version + the state, or `11` + why not.
 
 Settings saved by 0.1 or 0.2 don't carry over: 0.3.0 starts from its defaults.
@@ -209,4 +249,10 @@ In the Lab emulator (alchemy-lab repo, `emu/`):
 make test-custom FW_DIR=<path to>/tether
 ```
 
-runs `emu-tests/*.emu`, which feed it MIDI with the emulator's `midi` command.
+runs `emu-tests/*.emu`, which feed it MIDI with the emulator's `midi` command
+and (0.5.0, `usbaudio.emu`) USB audio with its `usbaudio` command: the
+emulator's far end streams a sine at 44.1 kHz by its own clock and listens to
+J1 / J2, through the same rings and resamplers as the module. The module's USB
+stack itself (descriptors on the wire, iso timing) is not emulated;
+`test/test_usb_audio.cpp` checks the descriptors byte by byte and the
+resamplers and packet sizer against drifting clocks.

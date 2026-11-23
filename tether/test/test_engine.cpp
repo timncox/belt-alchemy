@@ -691,7 +691,7 @@ static void test_cv_in_layout()
     CHECK(j[0] == kFnGateA && j[1] == kFnGateB && j[4] == kFnTrig1 && j[5] == kFnTrig1 + 1 && j[6] == kFnPitchA &&
               j[7] == kFnPitchB, "bass and lead, KICK and SNARE as BAND");
     CHECK(CvTarget(j[2]) == 0 && CvTarget(j[3]) == 2, "J5 IN FILTER, J6 IN DELAY");
-    CHECK(!strcmp(JackName(j[2]), "IN FILTER") && !strcmp(JackName(kNumJackFns - 1), "IN MORPH"), "names");
+    CHECK(!strcmp(JackName(j[2]), "IN FILTER") && !strcmp(JackName(kFnAudioL - 1), "IN MORPH"), "names");
     CHECK(kNumCvFns == 14 && CvTarget(kFnTrig1 + 7) == -1, "14 inputs, the drums aren't");
     Engine e;
     e.Init(kSr);
@@ -713,6 +713,62 @@ static void test_cv_in_layout()
     const uint8_t req[] = {0x7D, 0x54, 0x45, 0x03, 0x02};   /* as TakeSysex hands it over */
     sysex::Request r;
     CHECK(sysex::Parse(req, sizeof req, &r) && !r.why && r.layout == kLayoutCvIn, "Loadout can pick CV IN");
+}
+
+/* 0.5.0: the AUDIO layout and the AUDIO L / R jobs (J9, J10 only). */
+static void test_audio_layout()
+{
+    uint8_t j[kJacks];
+    SetLayout(j, kLayoutAudio);
+    CHECK(LayoutOf(j) == kLayoutAudio && !strcmp(LayoutName(kLayoutAudio), "AUDIO") && !strcmp(LayoutName(-1), "CUSTOM"),
+          "AUDIO");
+    CHECK(j[0] == kFnGateA && j[1] == kFnGateB && CvTarget(j[2]) == 0 && CvTarget(j[3]) == 2 && j[4] == kFnTrig1 &&
+              j[5] == kFnTrig1 + 1 && j[6] == kFnAudioL && j[7] == kFnAudioR,
+          "J3 GATE A, J4 GATE B, J5 IN FILTER, J6 IN DELAY, J7 KICK, J8 SNARE, J9 AUDIO L, J10 AUDIO R");
+    CHECK(!strcmp(JackName(kFnAudioL), "AUDIO L") && !strcmp(JackName(kFnAudioR), "AUDIO R") && kNumJackFns == 47, "names");
+    CHECK(IsAudio(kFnAudioL) && IsAudio(kFnAudioR) && !IsCvIn(kFnAudioL) && CvTarget(kFnAudioR) == -1 && kNumCvFns == 14,
+          "audio isn't a CV input");
+    /* the JACKS pots: J3..J8 as before (45, no AUDIO), J9 / J10 the outputs then AUDIO L, R (33) */
+    CHECK(JackZones(0) == 45 && JackZones(5) == 45 && JackZones(6) == 33 && JackZones(7) == 33, "zone counts");
+    bool same = true;
+    for (int z = 0; z < 45; z++) same = same && JackFnOfZone(2, z) == z && JackZoneOfFn(2, (uint8_t)z) == z;
+    CHECK(same, "J3..J8: zone = job, as 0.4.0");
+    CHECK(JackFnOfZone(6, 21) == kFnRun && JackFnOfZone(6, 31) == kFnAudioL && JackFnOfZone(7, 32) == kFnAudioR &&
+              JackFnOfZone(7, 40) == kFnAudioR,
+          "J9 / J10: outputs, then AUDIO L, R");
+    CHECK(JackZoneOfFn(6, kFnAudioL) == 31 && JackZoneOfFn(7, kFnAudioR) == 32 && JackZoneOfFn(7, kFnPitchB) == 1, "and back");
+    bool round = true;
+    for (int z = 0; z < 33; z++) round = round && JackZoneOfFn(6, JackFnOfZone(6, z)) == z && !IsCvIn(JackFnOfZone(6, z));
+    CHECK(round, "J9: every zone round trips, none an input");
+    /* engine: an AUDIO jack puts out no CV (the firmware writes the sound) */
+    Engine e;
+    e.Init(kSr);
+    SetLayout(e.master.jack, kLayoutAudio);
+    on(e, 5, 60, 100);
+    run(e, 2);
+    CHECK(e.JackVolts(6) == 0.0f && e.JackVolts(7) == 0.0f && e.JackVolts(0) > 4.0f, "no CV on AUDIO, the gate still plays");
+    /* saved and loaded; AUDIO on J3..J8 (only Loadout could) loads as BAND's job there */
+    uint8_t st[kStateBytes];
+    Pack(e.master, e.voice, 0, st);
+    MasterParams m;
+    VoiceParams  v[kVoices];
+    uint8_t      sel;
+    CHECK(Unpack(st, m, v, sel) && LayoutOf(m.jack) == kLayoutAudio, "AUDIO saves and loads (layout version %u)", kLayoutVersion);
+    CHECK(st[0] == 2 && st[8] == 45 && st[9] == 46, "version 2 still; 0.4.0 reads 45, 46 as PITCH A, B (45 %% 45, 46 %% 45)");
+    e.master.jack[1] = kFnAudioR;
+    Pack(e.master, e.voice, 0, st);
+    CHECK(Unpack(st, m, v, sel) && m.jack[1] == kFnGateB, "AUDIO R on J4 loads as GATE B");
+    /* a 0.4.0 state loads unchanged */
+    SetLayout(e.master.jack, kLayoutCvIn);
+    e.master.jack[3] = kFnCvIn1 + 13;   /* IN MORPH, the last 0.4.0 job */
+    Pack(e.master, e.voice, 0, st);
+    CHECK(Unpack(st, m, v, sel) && m.jack[3] == kFnCvIn1 + 13 && m.jack[6] == kFnPitchA, "0.4.0's jobs load as they were");
+    /* LAYOUT 3 over SysEx; 4 is not a layout */
+    const uint8_t req[] = {0x7D, 0x54, 0x45, 0x03, 0x03};
+    sysex::Request r;
+    CHECK(sysex::Parse(req, sizeof req, &r) && !r.why && r.layout == kLayoutAudio, "Loadout can pick AUDIO");
+    const uint8_t bad[] = {0x7D, 0x54, 0x45, 0x03, 0x04};
+    CHECK(sysex::Parse(bad, sizeof bad, &r) && r.why == sysex::kWhyCommand, "4 isn't a layout");
 }
 
 static void test_jack_names()
@@ -740,6 +796,7 @@ int main()
     test_pack();
     test_packets_ring();
     test_cv_in_layout();
+    test_audio_layout();
     test_jack_names();
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

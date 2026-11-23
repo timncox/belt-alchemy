@@ -12,6 +12,11 @@
 #pragma once
 #include <stdint.h>
 
+namespace usbaudio
+{
+struct Link;
+}
+
 namespace midihost
 {
 void     Init();                 /* start the host (Belt waits ~2 s after boot first) */
@@ -35,4 +40,10 @@ uint32_t RxCount();              /* packets received */
 bool     Send(const uint8_t (*pk)[4], int n);
 uint32_t Dropped();              /* packets the queue had no room for */
 int      Report(char* buf, int cap);   /* a few lines for the HostLink log */
+/* (0.5.0) USB audio while a computer, an iPhone or the FM-1 has the port as
+ * a device: the rings both ways (usb_audio.h), filled and emptied by the
+ * port; the audio callback reads and writes them. AudioTick(frames) once a
+ * block: on the module nothing; on the emulator the far end's turn. */
+usbaudio::Link& Audio();
+void     AudioTick(uint32_t frames);
 } // namespace midihost

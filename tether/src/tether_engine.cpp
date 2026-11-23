@@ -15,7 +15,7 @@ float EnvSeconds(float x)
 }
 static float env_knob(float s) { return logf(s / 0.001f) / logf(4000.0f); }
 
-static const char* const kLayoutNames[kNumLayouts + 1] = {"BAND", "CLOCK", "CV IN", "CUSTOM"};
+static const char* const kLayoutNames[kNumLayouts + 1] = {"BAND", "CLOCK", "CV IN", "AUDIO", "CUSTOM"};
 const char* LayoutName(int l) { return l >= 0 && l < kNumLayouts ? kLayoutNames[l] : kLayoutNames[kNumLayouts]; }
 
 /*                                      J3          J4         J5            J6
@@ -29,7 +29,26 @@ static const uint8_t kLayouts[kNumLayouts][kJacks] = {
     /* CV IN (0.4.0): BAND with FILTER and DELAY coming in on J5 and J6 in
      * place of HATS and the 16ths. */
     {kFnGateA, kFnGateB, kFnCvIn1, kFnCvIn1 + 2, kFnTrig1, kFnTrig1 + 1, kFnPitchA, kFnPitchB},
+    /* AUDIO (0.5.0): CV IN's jacks, with the FM-1's sound (USB audio) on J9
+     * and J10 in place of the pitches. */
+    {kFnGateA, kFnGateB, kFnCvIn1, kFnCvIn1 + 2, kFnTrig1, kFnTrig1 + 1, kFnAudioL, kFnAudioR},
 };
+
+int JackZones(int j) { return j < kNumInJacks ? kFnAudioL : kFnCvIn1 + 2; }
+
+uint8_t JackFnOfZone(int j, int z)
+{
+    if (z < 0) z = 0;
+    if (z >= JackZones(j)) z = JackZones(j) - 1;
+    if (j < kNumInJacks || z < kFnCvIn1) return (uint8_t)z;
+    return (uint8_t)(kFnAudioL + (z - kFnCvIn1));
+}
+
+int JackZoneOfFn(int j, uint8_t fn)
+{
+    if (j >= kNumInJacks && IsAudio(fn)) return kFnCvIn1 + (fn - kFnAudioL);
+    return fn < JackZones(j) ? fn : 0;
+}
 
 void SetLayout(uint8_t jack[kJacks], int l)
 {
@@ -89,7 +108,7 @@ static const char* const kJackNames[kNumJackFns] = {
     "CLK 24", "CLK 16", "CLK 8", "CLK 4", "BAR", "RESET", "RUN", "SECTION",
     "TRIG 1", "TRIG 2", "TRIG 3", "TRIG 4", "TRIG 5", "TRIG 6", "TRIG 7", "TRIG 8",
     "IN FILTER", "IN REVERB", "IN DELAY", "IN ECHO", "IN GLITCH", "IN PUMP", "IN RUMBLE", "IN DRIVE",
-    "IN COMB", "IN PHASER", "IN FLANGER", "IN CRUSH", "IN SCENE", "IN MORPH"};
+    "IN COMB", "IN PHASER", "IN FLANGER", "IN CRUSH", "IN SCENE", "IN MORPH", "AUDIO L", "AUDIO R"};
 
 const char* JackName(uint8_t fn) { return fn < kNumJackFns ? kJackNames[fn] : "?"; }
 
@@ -159,6 +178,7 @@ bool Unpack(const uint8_t* in, MasterParams& m, VoiceParams v[kVoices], uint8_t&
     {
         m.jack[j] = (uint8_t)(in[2 + j] % kNumJackFns);
         if (j >= kNumInJacks && IsCvIn(m.jack[j])) m.jack[j] = j == 6 ? kFnPitchA : kFnPitchB;   /* J9, J10: outputs only */
+        if (j < kNumInJacks && IsAudio(m.jack[j])) m.jack[j] = kLayouts[kLayoutBand][j];        /* AUDIO: J9, J10 only */
     }
     m.trig_ms  = clampf((float)in[10], kTrigMsMin, kTrigMsMax);
     m.accent   = (uint8_t)clampi(in[11], 1, 127);

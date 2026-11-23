@@ -21,6 +21,7 @@
 #include "usbh_hub_midi.h"
 
 #include "tether_engine.h"
+#include "tether_usbd.h"
 #include "usbh_direct.h"
 #include "usb_role.h"
 
@@ -29,11 +30,8 @@
 #endif
 
 extern "C" USBH_HandleTypeDef hUsbHostHS; /* libDaisy's host handle */
-extern "C" USBD_HandleTypeDef hUsbDeviceHS; /* libDaisy's device handle (hid/usb.cpp) */
 extern "C" HCD_HandleTypeDef  hhcd_USB_OTG_HS;
 extern "C" PCD_HandleTypeDef  hpcd_USB_OTG_HS;
-extern "C" uint8_t usbd_mode;              /* libDaisy's patched CDC class: which descriptors it serves */
-static constexpr uint8_t kUsbdModeMidi = 1; /* (its USBD_MODE_MIDI) */
 
 namespace
 {
@@ -42,7 +40,6 @@ bool                 g_direct = false;   /* MIDI class active straight on the po
 usbdirect::Watch     g_watch;          /* 0.3.1: patience with a device straight on the port */
 usbdirect::Log       g_log;            /* 0.3.3: its log, kept across role turns */
 usbrole::Role        g_role;
-daisy::UsbHandle     g_usbd;           /* the port as a device */
 bool                 g_dev_up = false;
 uint32_t             g_switches = 0;
 uint32_t             g_rx = 0;
@@ -138,19 +135,17 @@ void snapshot(uint32_t now, bool was_red)
 /* 0.1.1's place_midi_interface (the FM-1's MIDI is interface 3) is now
  * usbdirect::place_midi, called from Watch::After. */
 
-/* ---- the port as a USB-MIDI device (0.2.0) ---- */
+/* ---- the port as a USB-MIDI device (0.2.0), with USB audio (0.5.0):
+ * tether_usbd.cpp, TETHER's own class in place of libDaisy's CDC class in
+ * MIDI mode ---- */
 uint8_t* product_name(USBD_SpeedTypeDef, uint16_t* len)
 {
     static uint8_t buf[32];
     USBD_GetString((uint8_t*)"TETHER", buf, len);
     return buf;
 }
-void dev_rx(uint8_t* buf, uint32_t* len) { take(buf, *len); }
-bool dev_seen()
-{
-    return g_dev_up
-           && (hUsbDeviceHS.dev_state == USBD_STATE_ADDRESSED || hUsbDeviceHS.dev_state == USBD_STATE_CONFIGURED);
-}
+void dev_rx(uint8_t* buf, uint32_t len) { take(buf, len); }
+bool dev_seen() { return g_dev_up && tusbd::Addressed(); }
 
 void host_start()
 {
@@ -177,16 +172,14 @@ void host_stop()
 }
 void dev_start()
 {
-    usbd_mode                       = kUsbdModeMidi;   /* libDaisy's device: MIDI descriptors, not CDC */
     HS_Desc.GetProductStrDescriptor = product_name;
-    g_usbd.Init(daisy::UsbHandle::FS_EXTERNAL);
-    g_usbd.SetReceiveCallback(dev_rx, daisy::UsbHandle::FS_EXTERNAL);
+    tusbd::Start(dev_rx);
     g_dev_up = true;
 }
 void dev_stop()
 {
     g_dev_up = false;
-    g_usbd.DeInit(daisy::UsbHandle::FS_EXTERNAL);
+    tusbd::Stop();
     hpcd_USB_OTG_HS.Instance = nullptr;   /* and the host alone */
 }
 } // namespace
@@ -213,8 +206,11 @@ static void tx_poll()
     if (g_tx_at >= g_tx_n) return;
     if (g_role.mode != usbrole::kDevice || !dev_seen()) { g_tx_at = g_tx_n = 0; return; }
     const int len = g_tx_n - g_tx_at < 64 ? g_tx_n - g_tx_at : 64;
-    if (g_usbd.TransmitExternal(g_tx + g_tx_at, (size_t)len) == daisy::UsbHandle::Result::OK) g_tx_at += len;
+    if (tusbd::MidiSend(g_tx + g_tx_at, len)) g_tx_at += len;
 }
+
+usbaudio::Link& Audio() { return tusbd::Link(); }
+void AudioTick(uint32_t) {}   /* the module's host is real */
 
 void Init()
 {
@@ -255,7 +251,7 @@ bool Pop(uint32_t* pkt) { return g_q.Pop(pkt); }
 uint8_t Stage()
 {
     if (g_role.mode == usbrole::kDevice)
-        return g_dev_up && hUsbDeviceHS.dev_state == USBD_STATE_CONFIGURED ? 4 : 0;
+        return g_dev_up && tusbd::Configured() ? 4 : 0;
     if (g_direct && g_usbh.IsActiveClass(USBH_MIDI_CLASS)) return 3;
     if (via_hub())
     {
@@ -287,6 +283,7 @@ int Report(char* b, int cap)
         hUsbHostHS.device.DevDesc.idProduct, hUsbHostHS.device.CfgDesc.wTotalLength,
         (int)(hUsbHostHS.device.CfgDesc.wTotalLength <= USBH_MAX_SIZE_CONFIGURATION),
         (unsigned)hUsbHostHS.gState);
+    if (g_role.mode == usbrole::kDevice && n < cap) n += tusbd::Report(b + n, cap - n);
 #undef OUT
     return n < cap ? n : cap;
 }

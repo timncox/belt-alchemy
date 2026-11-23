@@ -24,7 +24,11 @@
  *   J3-J10  as set on JACKS. BAND (from 0.3.0): bass gate, lead gate,
  *           HATS, 16ths clock out, KICK, SNARE, bass pitch, lead pitch. CLOCK
  *           (0.2.0's): gates A B, 16ths, reset, KICK, SNARE, pitch A B.
- *   J1 J2   clock in, reset (or start/stop) in; USB MIDI clock wins.
+ *           CV IN (0.4.0): J5 J6 steer PROTECTOR's effects. AUDIO (0.5.0):
+ *           J9 J10 play the USB audio from the FM-1 (or a computer), left
+ *           and right; J3-J8 as CV IN.
+ *   J1 J2   clock in, reset (or start/stop) in; USB MIDI clock wins. Also
+ *           (0.5.0) back over USB audio whenever the host listens.
  *   Hold B1 while powering up: Mac mode (USB device, HostLink) instead of host.
  *   Settings (B2+B3 2 s): brightness, presets; page 1 = the SD firmware picker
  */
@@ -50,6 +54,7 @@
 #include "mcp_edges.h"
 #include "tether_sysex.h"
 #include "cv_in.h"
+#include "usb_audio.h"
 
 #ifndef TETHER_VERSION
 #define TETHER_VERSION "0.0.0"
@@ -134,6 +139,7 @@ static Rgb fn_col(uint8_t fn)
     if (fn == kFnSection) return {0xB0, 0x40, 0xFF};
     if (fn >= kFnTrig1 && fn < kFnTrig1 + kDrums) return kPartCol[fn - kFnTrig1];
     if (IsCvIn(fn)) return {0x10, 0x80, 0x60};      /* 0.4.0: an input, teal */
+    if (IsAudio(fn)) return {0xFF, 0x50, 0xA0};     /* 0.5.0: USB audio, pink */
     return kDimWhite;
 }
 
@@ -173,8 +179,8 @@ static Jack jk_j5 ("J5",  "Trig 3, HATS (JACKS P3)",         JackSig::CvBi);
 static Jack jk_j6 ("J6",  "Clock out, 16ths (JACKS P4)",     JackSig::CvBi);
 static Jack jk_j7 ("J7",  "Trig 1, KICK (JACKS P5)",         JackSig::CvBi);
 static Jack jk_j8 ("J8",  "Trig 2, SNARE (JACKS P6)",        JackSig::CvBi);
-static Jack jk_j9 ("J9",  "Pitch A, bass (JACKS page 2 P1)", JackSig::CvBi);
-static Jack jk_j10("J10", "Pitch B, lead (JACKS page 2 P2)", JackSig::CvBi);
+static Jack jk_j9 ("J9",  "Pitch A, bass; or USB audio L (JACKS page 2 P1)", JackSig::CvBi);
+static Jack jk_j10("J10", "Pitch B, lead; or USB audio R (JACKS page 2 P2)", JackSig::CvBi);
 
 static Manual manual = Manual()
     .Tagline("MIDI to CV from a USB-MIDI device")
@@ -185,8 +191,10 @@ static Manual manual = Manual()
         "first). Out of the box (layout BAND): J3 bass gate, J4 lead gate, "
         "J5 HATS, J6 16ths clock out, J7 KICK, J8 SNARE, J9 bass pitch and J10 lead "
         "pitch, 1 V/oct. Hold B3 to give any jack another job (tap B1 for J9, "
-        "J10 and LAYOUT; CLOCK is 0.2.0's gates, clock and reset). J1 takes a "
-        "clock and J2 a reset or start/stop when no MIDI clock comes in. Tap B1 "
+        "J10 and LAYOUT; CLOCK is 0.2.0's gates, clock and reset, CV IN reads "
+        "J5 and J6, AUDIO plays USB audio on J9 and J10). J1 takes a "
+        "clock and J2 a reset or start/stop when no MIDI clock comes in; they "
+        "also go back to the computer or FM-1 as USB audio. Tap B1 "
         "for voice A, B or C; hold B1 for its envelope and J1 / J2; hold B2 for "
         "calibration, trigger length, accent, bend and reset. Loadout can set "
         "it all from an iPhone.");
@@ -271,8 +279,8 @@ static PotView view(Layer layer, uint8_t pot)
             if (j >= 0)
             {
                 v.kind  = Kind::Selector;
-                v.zones = j < kNumInJacks ? kNumJackFns : kFnCvIn1;   /* J9, J10 can't be inputs */
-                v.norm  = zone_norm(M.jack[j], v.zones);
+                v.zones = JackZones(j);   /* J9, J10: the outputs and AUDIO L, R, no inputs */
+                v.norm  = zone_norm(JackZoneOfFn(j, M.jack[j]), v.zones);
                 v.col   = fn_col(M.jack[j]);
             }
             else if (g_jack_page == 1 && pot >= 3)
@@ -285,7 +293,7 @@ static PotView view(Layer layer, uint8_t pot)
             }
             else if (g_jack_page == 1 && pot == kLayoutPot)
             {
-                /* BAND, CLOCK, or CUSTOM once a jack has been changed by hand */
+                /* BAND, CLOCK, CV IN, AUDIO, or CUSTOM once a jack has been changed by hand */
                 const int l = LayoutOf(M.jack);
                 v.kind   = Kind::Selector;
                 v.zones  = kNumLayouts + 1;
@@ -351,7 +359,7 @@ static bool apply(Layer layer, uint8_t pot, float x)
             case kLayerJacks:
             {
                 const int j = jack_of(pot);
-                if (j >= 0) M.jack[j] = (uint8_t)z;
+                if (j >= 0) M.jack[j] = JackFnOfZone(j, z);
                 else if (pot == 3) { g_drum = (uint8_t)z; g_rearm = true; }
                 else if (pot == 4)
                 {
@@ -493,6 +501,10 @@ static int16_t    g_cv_pend[tether::kNumInJacks] = {-1, -1, -1, -1, -1, -1};
 static bool       g_cv_release = false;
 static uint32_t   g_cv_sent    = 0;   /* CCs out, for the HostLink log */
 
+/* 0.5.0: J9 / J10 on AUDIO L / R are the codec's own: no CV staged over what
+ * the audio callback writes. */
+static bool g_is_audio[2] = {false, false};
+
 static void jack_dirs(void)
 {
     for (int j = 0; j < tether::kNumInJacks; j++)
@@ -506,6 +518,19 @@ static void jack_dirs(void)
             hw.cv_jacks[j].EnableCvOutput();
         }
         g_is_in[j] = in;
+    }
+    for (int k = 0; k < 2; k++)
+    {
+        const int  j     = tether::kNumInJacks + k;
+        const bool audio = tether::IsAudio(engine.master.jack[j]);
+        if (audio == g_is_audio[k]) continue;
+        if (audio) hw.cv_jacks[j].DisableCvOutput();
+        else
+        {
+            hw.cv_jacks[j].SetVolts(0.0f);
+            hw.cv_jacks[j].EnableCvOutput();
+        }
+        g_is_audio[k] = audio;
     }
 }
 
@@ -899,6 +924,12 @@ static void OnRender(uint32_t t_ms)
 
 /* ---- audio ----------------------------------------------------------------- */
 
+/* 0.5.0: USB audio, 44.1 kHz on the wire, 48 kHz here (usb_audio.h): from
+ * the host to J9 / J10 when they're on AUDIO L / R; J1 / J2 back to it. */
+static usbaudio::OutStream g_uout;
+static usbaudio::InStream  g_uin;
+static float               g_ul[kBlockSize], g_ur[kBlockSize];
+
 static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle::OutputBuffer out, size_t n)
 {
     uint32_t c;
@@ -917,7 +948,25 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle
     engine.Inputs(in[0], in[1], (uint32_t)n);                            /* J1 clock, J2 reset */
     engine.Process((uint32_t)n);
 
+    /* USB audio both ways: J1 / J2 to the host as they are, the host's to
+     * J9 / J10 where a jack plays it (the others get CV, staged below) */
+    midihost::AudioTick((uint32_t)n);
+    usbaudio::Link& L      = midihost::Audio();
+    const uint32_t  now_us = System::GetUs();
     for (size_t i = 0; i < n; i++) out[0][i] = out[1][i] = 0.0f;
+    for (size_t at = 0; at < n; at += kBlockSize)
+    {
+        const int k = (int)(n - at < kBlockSize ? n - at : kBlockSize);
+        g_uin.Process(L, in[0] + at, in[1] + at, k, now_us);
+        g_uout.Process(L, g_ul, g_ur, k, now_us);
+        for (int c = 0; c < 2; c++)
+        {
+            const uint8_t fn = engine.master.jack[tether::kNumInJacks + c];
+            if (!tether::IsAudio(fn)) continue;
+            const float* src = fn == tether::kFnAudioL ? g_ul : g_ur;
+            for (int i = 0; i < k; i++) out[c][at + (size_t)i] = src[i];
+        }
+    }
     for (int j = 0; j < 4; j++) mcpedge::Note(g_mcp[j], engine.JackVolts(j));   /* J3-J6 */
     g_mcp_seq = g_mcp_seq + 1;
     for (int j = 4; j < 8; j++) hw.cv_jacks[j].SetVolts(engine.JackVolts(j));   /* J7-J10 */

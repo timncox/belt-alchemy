@@ -26,6 +26,7 @@ CPP_SOURCES = \
     src/tether_alchemy.cpp \
     src/tether_engine.cpp \
     src/tether_usbh.cpp \
+    src/tether_usbd.cpp \
     ../src/picker.cpp
 
 C_SOURCES = \
@@ -54,6 +55,11 @@ APP_TYPE     = BOOT_SRAM
 LDSCRIPT     = ../src/belt_alchemy.lds
 CPP_STANDARD = -std=gnu++17
 OPT          = -O2
+
+# 0.5.0: TETHER's USB device class (src/tether_usbd.cpp) answers requests to
+# interfaces 2 and 3, which libDaisy's device core (built for one interface)
+# would refuse: the link sends the core's interface requests through it.
+LDFLAGS = -Wl,--wrap=USBD_StdItfReq
 
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile

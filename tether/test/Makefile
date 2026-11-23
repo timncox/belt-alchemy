@@ -7,13 +7,14 @@ BUILD    = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_engine $(BUILD)/test_cv_in $(BUILD)/test_midi_pick $(BUILD)/test_usb_role $(BUILD)/test_edges $(BUILD)/test_direct
+test: $(BUILD)/test_engine $(BUILD)/test_cv_in $(BUILD)/test_midi_pick $(BUILD)/test_usb_role $(BUILD)/test_edges $(BUILD)/test_direct $(BUILD)/test_usb_audio
 	./$(BUILD)/test_engine
 	./$(BUILD)/test_cv_in
 	./$(BUILD)/test_midi_pick
 	./$(BUILD)/test_usb_role
 	./$(BUILD)/test_edges
 	./$(BUILD)/test_direct
+	./$(BUILD)/test_usb_audio
 
 $(BUILD)/test_cv_in: test_cv_in.cpp ../src/cv_in.h
 	@mkdir -p $(BUILD)
@@ -22,6 +23,10 @@ $(BUILD)/test_cv_in: test_cv_in.cpp ../src/cv_in.h
 $(BUILD)/test_edges: test_edges.cpp ../src/mcp_edges.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) test_edges.cpp -o $@
+
+$(BUILD)/test_usb_audio: test_usb_audio.cpp ../src/usb_audio.h ../src/usb_audio_desc.h ../src/midi_itf_pick.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) test_usb_audio.cpp -o $@ -lm
 
 $(BUILD)/test_usb_role: test_usb_role.cpp ../src/usb_role.h
 	@mkdir -p $(BUILD)

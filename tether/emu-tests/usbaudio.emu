@@ -1,0 +1,78 @@
+# TETHER 0.5.0: USB audio. On the AUDIO layout J9 and J10 play what the
+# computer (or the FM-1) streams to the Lab over USB, left and right, and
+# J1 / J2 go back to it whenever it listens; MIDI keeps working beside it.
+# The far end sends 44.1 kHz in 1 ms packets by its own clock; the Lab
+# resamples to 48 kHz (usb_audio.h).
+wait 3000
+expect booted
+# hold B3, tap B1 for page 2, LAYOUT (P3) from BAND to AUDIO (zone 4 of 5)
+press b3
+wait 400
+tap b1
+wait 100
+pot 3 0.1                      # catch at BAND
+wait 100
+pot 3 0.7                      # AUDIO
+wait 100
+release b3
+wait 200
+midi plug computer
+wait 4500
+expect led b3 cyan
+# nothing streamed yet: J9 / J10 silent
+mark
+wait 400
+expect rms < 0.001
+# the computer plays 1 kHz, left only: J9 (out L), not J10
+usbaudio out 1000 left 0.5
+wait 800
+expect tone 1000 > 0.2
+expect pan left
+expect finite
+expect unclipped
+# both sides at the FM-1's clock (+399 ppm on 44.1 kHz), 440 Hz
+usbaudio out 440 both 0.5 399
+wait 3000
+expect tone 440 > 0.4
+expect tone 1000 < 0.01
+expect pan centre
+# MIDI beside it: bass gate on J3
+midi on 5 48 100
+wait 40
+expect cv 3 > 4.5
+midi off 5 48
+# J1 / J2 back to the computer: a sung 220 Hz
+usbaudio in on
+sing 220
+wait 800
+expect usbin 220 > 0.08
+print usbin 220
+silence
+wait 800
+expect usbin 220 < 0.005
+usbaudio in off
+# the stream stops: J9 / J10 fall silent
+usbaudio out off
+wait 600
+mark
+wait 400
+expect rms < 0.001
+expect tone 440 < 0.01
+# back to BAND: J9 is the bass pitch again
+press b3
+wait 400
+tap b1
+wait 100
+pot 3 0.7                      # catch at AUDIO
+wait 100
+pot 3 0.1                      # BAND
+wait 100
+release b3
+wait 200
+midi on 5 48 100
+wait 40
+expect cv 9 > -1.01
+expect cv 9 < -0.99            # -1 V, C3 on voice A
+midi off 5 48
+wait 100
+expect alive
