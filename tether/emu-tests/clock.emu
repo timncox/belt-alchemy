@@ -9,9 +9,9 @@ press b3
 wait 400
 tap b1
 wait 100
-pot 3 0.17                     # catch at BAND
+pot 3 0.125                    # catch at BAND
 wait 100
-pot 3 0.5                      # CLOCK
+pot 3 0.375                     # CLOCK (zone 2 of 4: BAND, CLOCK, CV IN, CUSTOM)
 wait 100
 release b3
 wait 200
@@ -38,14 +38,14 @@ expect edges 8 = 1             # SNARE trig
 midi off 1 36
 midi off 2 38
 # 24 PPQN at 300 BPM still comes out as separate pulses (J5 = CLK 24: hold
-# B3, J5's pot P3 to zone 16 of 31)
+# B3, J5's pot P3 to zone 16 of 45)
 press b3
 wait 400
-pot 3 0.44                     # catch (CLK 16 sits at zone 17)
+pot 3 0.33                     # catch (CLK 16 sits at zone 17 of 45: 0.367)
 wait 100
-pot 3 0.532                    # zone 17 = CLK 16: caught
+pot 3 0.37                     # past it: caught
 wait 100
-pot 3 0.5                      # zone 16: CLK 24
+pot 3 0.344                    # zone 16: CLK 24
 wait 100
 release b3
 wait 100

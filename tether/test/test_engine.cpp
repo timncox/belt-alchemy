@@ -682,6 +682,39 @@ static void test_packets_ring()
     CHECK(n == 8, "eight out");
 }
 
+/* 0.4.0: the CV IN layout and the input jobs. */
+static void test_cv_in_layout()
+{
+    uint8_t j[kJacks];
+    SetLayout(j, kLayoutCvIn);
+    CHECK(LayoutOf(j) == kLayoutCvIn && !strcmp(LayoutName(kLayoutCvIn), "CV IN"), "CV IN");
+    CHECK(j[0] == kFnGateA && j[1] == kFnGateB && j[4] == kFnTrig1 && j[5] == kFnTrig1 + 1 && j[6] == kFnPitchA &&
+              j[7] == kFnPitchB, "bass and lead, KICK and SNARE as BAND");
+    CHECK(CvTarget(j[2]) == 0 && CvTarget(j[3]) == 2, "J5 IN FILTER, J6 IN DELAY");
+    CHECK(!strcmp(JackName(j[2]), "IN FILTER") && !strcmp(JackName(kNumJackFns - 1), "IN MORPH"), "names");
+    CHECK(kNumCvFns == 14 && CvTarget(kFnTrig1 + 7) == -1, "14 inputs, the drums aren't");
+    Engine e;
+    e.Init(kSr);
+    SetLayout(e.master.jack, kLayoutCvIn);
+    on(e, 3, 60, 127);   /* HATS (channel 3): nothing on J5 now */
+    e.Process(kBlock);
+    CHECK(e.JackVolts(2) == 0.0f && e.JackVolts(3) == 0.0f, "an input puts nothing out");
+    /* an input job saved on J9 / J10 (only Loadout could) loads as a pitch */
+    uint8_t st[kStateBytes];
+    e.master.jack[6] = kFnCvIn1;
+    e.master.jack[7] = kFnCvIn1 + 3;
+    Pack(e.master, e.voice, 0, st);
+    MasterParams m;
+    VoiceParams  v[kVoices];
+    uint8_t      sel;
+    CHECK(Unpack(st, m, v, sel), "unpacks");
+    CHECK(m.jack[6] == kFnPitchA && m.jack[7] == kFnPitchB && CvTarget(m.jack[2]) == 0, "J9, J10 stay outputs");
+    /* LAYOUT 2 over SysEx */
+    const uint8_t req[] = {0x7D, 0x54, 0x45, 0x03, 0x02};   /* as TakeSysex hands it over */
+    sysex::Request r;
+    CHECK(sysex::Parse(req, sizeof req, &r) && !r.why && r.layout == kLayoutCvIn, "Loadout can pick CV IN");
+}
+
 static void test_jack_names()
 {
     for (int f = 0; f < kNumJackFns; f++) CHECK(JackName((uint8_t)f)[0] != '?', "name %d", f);
@@ -706,6 +739,7 @@ int main()
     test_sysex();
     test_pack();
     test_packets_ring();
+    test_cv_in_layout();
     test_jack_names();
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

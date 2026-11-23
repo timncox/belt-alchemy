@@ -61,11 +61,11 @@ expect led b1 amber
 # then rings out to 0 V on an ENV A jack (J5 set to ENV A on JACKS)
 press b3
 wait 400
-pot 3 0.70                     # catch at TRIG 3 (zone 26 of 31)
+pot 3 0.50                     # below TRIG 3 (zone 26 of 45: 0.567)
 wait 100
-pot 3 0.85                     # caught
+pot 3 0.60                     # past it: caught
 wait 100
-pot 3 0.21                     # ENV A, zone 7 of 31
+pot 3 0.144                    # ENV A, zone 7 of 45
 wait 100
 release b3
 wait 100

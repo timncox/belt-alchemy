@@ -15,7 +15,7 @@ float EnvSeconds(float x)
 }
 static float env_knob(float s) { return logf(s / 0.001f) / logf(4000.0f); }
 
-static const char* const kLayoutNames[kNumLayouts + 1] = {"BAND", "CLOCK", "CUSTOM"};
+static const char* const kLayoutNames[kNumLayouts + 1] = {"BAND", "CLOCK", "CV IN", "CUSTOM"};
 const char* LayoutName(int l) { return l >= 0 && l < kNumLayouts ? kLayoutNames[l] : kLayoutNames[kNumLayouts]; }
 
 /*                                      J3          J4         J5            J6
@@ -26,6 +26,9 @@ static const uint8_t kLayouts[kNumLayouts][kJacks] = {
     {kFnGateA, kFnGateB, kFnTrig1 + 2, kFnClk16, kFnTrig1, kFnTrig1 + 1, kFnPitchA, kFnPitchB},
     /* CLOCK (0.1 / 0.2): gates A and B, 16ths, reset, KICK, SNARE, pitch A and B. */
     {kFnGateA, kFnGateB, kFnClk16, kFnReset, kFnTrig1, kFnTrig1 + 1, kFnPitchA, kFnPitchB},
+    /* CV IN (0.4.0): BAND with FILTER and DELAY coming in on J5 and J6 in
+     * place of HATS and the 16ths. */
+    {kFnGateA, kFnGateB, kFnCvIn1, kFnCvIn1 + 2, kFnTrig1, kFnTrig1 + 1, kFnPitchA, kFnPitchB},
 };
 
 void SetLayout(uint8_t jack[kJacks], int l)
@@ -84,7 +87,9 @@ static const char* const kJackNames[kNumJackFns] = {
     "PITCH A", "PITCH B", "PITCH C", "GATE A", "GATE B", "GATE C", "ENV A", "ENV B", "ENV C",
     "ACC A", "ACC B", "ACC C", "VEL A", "VEL B", "VEL C",
     "CLK 24", "CLK 16", "CLK 8", "CLK 4", "BAR", "RESET", "RUN", "SECTION",
-    "TRIG 1", "TRIG 2", "TRIG 3", "TRIG 4", "TRIG 5", "TRIG 6", "TRIG 7", "TRIG 8"};
+    "TRIG 1", "TRIG 2", "TRIG 3", "TRIG 4", "TRIG 5", "TRIG 6", "TRIG 7", "TRIG 8",
+    "IN FILTER", "IN REVERB", "IN DELAY", "IN ECHO", "IN GLITCH", "IN PUMP", "IN RUMBLE", "IN DRIVE",
+    "IN COMB", "IN PHASER", "IN FLANGER", "IN CRUSH", "IN SCENE", "IN MORPH"};
 
 const char* JackName(uint8_t fn) { return fn < kNumJackFns ? kJackNames[fn] : "?"; }
 
@@ -150,7 +155,11 @@ bool Unpack(const uint8_t* in, MasterParams& m, VoiceParams v[kVoices], uint8_t&
     for (int i = 0; i < kStateBytes - 1; i++) sum = (uint8_t)(sum * 31u + in[i]);
     if (in[0] != kLayoutVersion || sum != in[kStateBytes - 1]) return false;
     sel = (uint8_t)(in[1] % kVoices);
-    for (int j = 0; j < kJacks; j++) m.jack[j] = (uint8_t)(in[2 + j] % kNumJackFns);
+    for (int j = 0; j < kJacks; j++)
+    {
+        m.jack[j] = (uint8_t)(in[2 + j] % kNumJackFns);
+        if (j >= kNumInJacks && IsCvIn(m.jack[j])) m.jack[j] = j == 6 ? kFnPitchA : kFnPitchB;   /* J9, J10: outputs only */
+    }
     m.trig_ms  = clampf((float)in[10], kTrigMsMin, kTrigMsMax);
     m.accent   = (uint8_t)clampi(in[11], 1, 127);
     m.bend     = (uint8_t)clampi(in[12], 0, kBendMax);
@@ -668,7 +677,7 @@ float Engine::FnVolts(uint8_t fn) const
         case kFnVelC: return kGateV * (float)vs_[fn - kFnVelA].vel / 127.0f;
         default: break;
     }
-    if (fn >= kFnTrig1 && fn < kNumJackFns)
+    if (fn >= kFnTrig1 && fn < kFnTrig1 + kDrums)
     {
         const int d = fn - kFnTrig1;
         return drum_gap_[d] == 0 && (drum_[d] > 0 || drum_held_[d]) ? drum_v_[d] : 0.0f;

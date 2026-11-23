@@ -9,9 +9,9 @@ press b3
 wait 400
 tap b1
 wait 100
-pot 3 0.17                     # catch at BAND
+pot 3 0.125                    # catch at BAND
 wait 100
-pot 3 0.5                      # CLOCK
+pot 3 0.375                     # CLOCK (zone 2 of 4: BAND, CLOCK, CV IN, CUSTOM)
 wait 100
 release b3
 wait 200
@@ -113,12 +113,12 @@ release b2
 wait 250
 expect cv 9 > 1.62               # the reference ends with B2: back to the last note (+0.05 offset)
 expect cv 9 < 1.65
-# hold B3: JACKS. J4's pot (P2) to RUN (zone 22 of 31)
+# hold B3: JACKS. J4's pot (P2) to RUN (zone 22 of 45)
 press b3
 wait 400
-pot 2 0.145                    # catch at GATE B
+pot 2 0.10                     # catch at GATE B (zone 4 of 45)
 wait 100
-pot 2 0.694
+pot 2 0.478                    # RUN (zone 21 counting from 0)
 wait 100
 release b3
 wait 100

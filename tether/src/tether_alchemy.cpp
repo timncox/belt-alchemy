@@ -49,6 +49,7 @@
 #include "tether_engine.h"
 #include "mcp_edges.h"
 #include "tether_sysex.h"
+#include "cv_in.h"
 
 #ifndef TETHER_VERSION
 #define TETHER_VERSION "0.0.0"
@@ -131,7 +132,8 @@ static Rgb fn_col(uint8_t fn)
     if (fn == kFnReset) return {0xFF, 0x10, 0x10};
     if (fn == kFnRun) return {0x10, 0xFF, 0x10};
     if (fn == kFnSection) return {0xB0, 0x40, 0xFF};
-    if (fn >= kFnTrig1 && fn < kNumJackFns) return kPartCol[fn - kFnTrig1];
+    if (fn >= kFnTrig1 && fn < kFnTrig1 + kDrums) return kPartCol[fn - kFnTrig1];
+    if (IsCvIn(fn)) return {0x10, 0x80, 0x60};      /* 0.4.0: an input, teal */
     return kDimWhite;
 }
 
@@ -269,7 +271,7 @@ static PotView view(Layer layer, uint8_t pot)
             if (j >= 0)
             {
                 v.kind  = Kind::Selector;
-                v.zones = kNumJackFns;
+                v.zones = j < kNumInJacks ? kNumJackFns : kFnCvIn1;   /* J9, J10 can't be inputs */
                 v.norm  = zone_norm(M.jack[j], v.zones);
                 v.col   = fn_col(M.jack[j]);
             }
@@ -442,7 +444,10 @@ static uint32_t g_dirty_since = 0;
 static void mark_dirty(uint32_t now) { g_dirty = true; g_dirty_since = now; }
 
 /* Loadout: settings asked for or sent over SysEx (tether_sysex.h), answered
- * with the settings as they are now. */
+ * with the settings as they are now. 0.4.0: the answer waits in g_sx_pk until
+ * the port takes it (out_poll), so the CVs going out can't crowd it out. */
+static uint8_t g_sx_pk[(tether::sysex::kStateMsgBytes + 2) / 3][4];
+static int     g_sx_n = 0;
 static void sysex_poll(uint32_t now)
 {
     namespace sx = tether::sysex;
@@ -476,8 +481,74 @@ static void sysex_poll(uint32_t now)
         tether::Pack(engine.master, engine.voice, g_sel, st);
         len = sx::State(st, TETHER_VERSION, msg);
     }
-    static uint8_t pk[(sx::kStateMsgBytes + 2) / 3][4];
-    midihost::Send(pk, sx::Packets(msg, len, pk, (int)(sizeof pk / sizeof pk[0])));
+    g_sx_n = sx::Packets(msg, len, g_sx_pk, (int)(sizeof g_sx_pk / sizeof g_sx_pk[0]));
+}
+
+/* 0.4.0: J3..J8 set to an IN job are inputs: their voltage steers
+ * PROTECTOR's effects (cv_in.h) over the front USB-C, while something has
+ * the Lab as a USB-MIDI device (the FM-1 running the link, or a computer). */
+static bool       g_is_in[tether::kNumInJacks];
+static cvin::Jack g_cvj[tether::kNumInJacks];
+static int16_t    g_cv_pend[tether::kNumInJacks] = {-1, -1, -1, -1, -1, -1};
+static bool       g_cv_release = false;
+static uint32_t   g_cv_sent    = 0;   /* CCs out, for the HostLink log */
+
+static void jack_dirs(void)
+{
+    for (int j = 0; j < tether::kNumInJacks; j++)
+    {
+        const bool in = tether::IsCvIn(engine.master.jack[j]);
+        if (in == g_is_in[j]) continue;
+        if (in) hw.cv_jacks[j].DisableCvOutput();
+        else
+        {
+            hw.cv_jacks[j].SetVolts(0.0f);
+            hw.cv_jacks[j].EnableCvOutput();
+        }
+        g_is_in[j] = in;
+    }
+}
+
+static void cv_poll(uint32_t now)
+{
+    const bool linked = midihost::Stage() == 4;
+    for (int j = 0; j < tether::kNumInJacks; j++)
+    {
+        bool      rel = false;
+        const int t   = tether::CvTarget(engine.master.jack[j]);
+        const int v   = cvin::Step(g_cvj[j], t, g_is_in[j] ? hw.cv_jacks[j].Volts() : 0.0f, now, &rel);
+        if (rel) g_cv_release = true;
+        if (!linked)
+        {
+            cvin::Resend(g_cvj[j]);   /* everything again once it's back */
+            g_cv_pend[j] = -1;
+            continue;
+        }
+        if (v >= 0) g_cv_pend[j] = (int16_t)v;
+    }
+    if (!linked) g_cv_release = false;
+}
+
+/* What goes out of the port: a SysEx answer first, then the CVs. */
+static void out_poll(void)
+{
+    if (g_sx_n > 0)
+    {
+        if (midihost::Send(g_sx_pk, g_sx_n) || midihost::Stage() != 4) g_sx_n = 0;
+        return;
+    }
+    uint8_t pk[tether::kNumInJacks + 1][4];
+    int     n = 0;
+    if (g_cv_release) cvin::Packet(pk[n++], cvin::kCcTouch, 0);
+    for (int j = 0; j < tether::kNumInJacks; j++)
+    {
+        const int t = tether::CvTarget(engine.master.jack[j]);
+        if (g_cv_pend[j] >= 0 && t >= 0) cvin::Packet(pk[n++], cvin::Cc(t), (uint8_t)g_cv_pend[j]);
+    }
+    if (!n || !midihost::Send(pk, n)) return;
+    g_cv_release = false;
+    for (int j = 0; j < tether::kNumInJacks; j++) g_cv_pend[j] = -1;
+    g_cv_sent += (uint32_t)n;
 }
 
 /* 0.3.2: the direct path's log on the card, /alchemy/tether_usb.txt, after
@@ -565,6 +636,9 @@ static void OnPoll(uint32_t now)
     }
 
     sysex_poll(now);
+    jack_dirs();
+    cv_poll(now);
+    out_poll();
 
     if (g_test_voice >= 0 && (int32_t)(now - g_test_until) >= 0)
     {

@@ -7,12 +7,17 @@ BUILD    = ../build/test
 
 .PHONY: test clean
 
-test: $(BUILD)/test_engine $(BUILD)/test_midi_pick $(BUILD)/test_usb_role $(BUILD)/test_edges $(BUILD)/test_direct
+test: $(BUILD)/test_engine $(BUILD)/test_cv_in $(BUILD)/test_midi_pick $(BUILD)/test_usb_role $(BUILD)/test_edges $(BUILD)/test_direct
 	./$(BUILD)/test_engine
+	./$(BUILD)/test_cv_in
 	./$(BUILD)/test_midi_pick
 	./$(BUILD)/test_usb_role
 	./$(BUILD)/test_edges
 	./$(BUILD)/test_direct
+
+$(BUILD)/test_cv_in: test_cv_in.cpp ../src/cv_in.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) test_cv_in.cpp -o $@ -lm
 
 $(BUILD)/test_edges: test_edges.cpp ../src/mcp_edges.h
 	@mkdir -p $(BUILD)

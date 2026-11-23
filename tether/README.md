@@ -55,8 +55,29 @@ for HostLink; B3 shows blue). Mac mode is not remembered.
 | J10 | PITCH B, 1 V/oct, 0 V = middle C (24-bit) |
 
 Layout **CLOCK** is 0.1 and 0.2's: J3 GATE A, J4 GATE B, J5 CLK 16, J6 RESET,
-J7 KICK, J8 SNARE, J9 and J10 pitch A and B. Change any jack and the layout
-reads CUSTOM.
+J7 KICK, J8 SNARE, J9 and J10 pitch A and B.
+
+Layout **CV IN** (0.4.0) keeps BAND's gates, drums and pitches and turns two
+jacks into inputs: J5 **IN FILTER** and J6 **IN DELAY**. Change any jack and the
+layout reads CUSTOM.
+
+## CV in (0.4.0): the Lab's jacks steer PROTECTOR's effects
+
+J3 to J8 can each be set to an input job, IN FILTER, IN REVERB, IN DELAY, IN
+ECHO, IN GLITCH, IN PUMP, IN RUMBLE, IN DRIVE, IN COMB, IN PHASER, IN FLANGER,
+IN CRUSH, IN SCENE or IN MORPH (teal on the ring). The jack then reads a
+voltage and sends it out of the front USB-C as the CC PROTECTOR's effects pad
+already plays (CC 102 to 115, channel 16), to whatever has the Lab as its
+USB-MIDI device: the FM-1 with CLOCK OUT on **LAB**, or a computer. PROTECTOR
+needs no change.
+
+- IN FILTER: 0 V is the middle (filter off), -5 V closes it, +5 V opens it.
+- Every other one: 0 V is none, +5 V is all the way.
+- A jack sends nothing until it first reads more than 0.2 V, so a CV jack with
+  nothing in it leaves PROTECTOR's knob alone.
+- Setting a jack back to an output sends CC 116 0, which hands every effect
+  back to its knob (the phone's pad too).
+- J9 and J10 are outputs only.
 
 J1 and J2 are the codec's inputs and can't be outputs. MIDI clock wins: while
 USB MIDI clock is coming (a tick in the last half second), J1 and J2 are
@@ -68,7 +89,8 @@ panel), so none reaches the 8 to 10 V some drum modules want for their loudest.
 
 Jobs for J3 to J10: PITCH A/B/C, GATE A/B/C, ENV A/B/C (the voice's ADSR, 0
 to 5 V), ACC A/B/C, VEL A/B/C, CLK 24, CLK 16, CLK 8, CLK 4, BAR, RESET, RUN,
-SECTION (0 to 3 V for A to D), TRIG 1 to 8.
+SECTION (0 to 3 V for A to D), TRIG 1 to 8, and for J3 to J8 only the 14
+CV inputs (IN FILTER to IN MORPH, above).
 
 **Drums (TRIG 1 to 8, MIDI channels 1 to 8).** Each drum has a MODE:
 
@@ -119,7 +141,7 @@ Voices A, B and C follow channels 5, 6 and 7 (BASS, LEAD, PAD) at first.
 - P5 **BEND** range, P6 **RESET ON** (start, or start and section)
 
 **JACKS** (hold B3): P1 to P6 set J3 to J8. Tap B1 while B3 is held for page
-2: P1 J9, P2 J10, P3 **LAYOUT** (BAND, CLOCK, CUSTOM), P4 **DRUM** (which of
+2: P1 J9, P2 J10, P3 **LAYOUT** (BAND, CLOCK, CV IN, CUSTOM), P4 **DRUM** (which of
 TRIG 1 to 8 the next two set), P5 **MODE** (GATE, GATE + VEL, TRIG, TRIG +
 VEL), P6 **FLOOR** (0 to 5 V).
 
@@ -167,7 +189,7 @@ It keeps trying while red, and goes green as soon as one works.
 With the Lab plugged into an iPhone, iPad or Mac as the TETHER USB-MIDI
 device, an app can read and set every setting with SysEx (`src/tether_sysex.h`):
 `F0 7D 54 45 01 F7` asks for them, `02` + the 80-byte state as 160 nibbles sets
-them all, `03 n` picks layout n (0 BAND, 1 CLOCK). TETHER answers `10` + its
+them all, `03 n` picks layout n (0 BAND, 1 CLOCK, 2 CV IN). TETHER answers `10` + its
 version + the state, or `11` + why not.
 
 Settings saved by 0.1 or 0.2 don't carry over: 0.3.0 starts from its defaults.

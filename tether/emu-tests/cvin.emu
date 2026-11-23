@@ -1,0 +1,102 @@
+# TETHER 0.4.0: CV in. On the CV IN layout J5 and J6 are inputs: their
+# voltage steers PROTECTOR's FILTER (CC 102) and DELAY (CC 104) over the
+# front USB-C, to what has the Lab as a USB-MIDI device (the FM-1 on LAB, or
+# here a computer). J3, J4, J7-J10 keep BAND's bass, lead, KICK and SNARE.
+wait 3000
+expect booted
+# hold B3, tap B1 for page 2, LAYOUT (P3) from BAND to CV IN (zone 3 of 4)
+press b3
+wait 400
+tap b1
+wait 100
+pot 3 0.125                    # catch at BAND
+wait 100
+pot 3 0.625                    # CV IN
+wait 100
+release b3
+wait 200
+midi plug computer
+wait 4500
+expect led b3 cyan
+# nothing patched in yet: PROTECTOR's knobs are left alone
+mark
+wait 500
+expect cccount 102 = 0
+expect cccount 104 = 0
+# J5 at +2.5 V: FILTER three quarters open (0 V is the middle, off)
+cv 5 2.5
+wait 200
+expect ccout 102 > 93
+expect ccout 102 < 97
+expect cccount 104 = 0           # J6 still has nothing in it
+# J6 at +5 V: DELAY all the way
+cv 6 5
+wait 200
+expect ccout 104 = 127
+# -5 V closes the filter right down
+cv 5 -5
+wait 300
+expect ccout 102 = 0
+# a steady voltage sends nothing more
+mark
+wait 1000
+expect cccount 102 = 0
+expect cccount 104 = 0
+# a ramp is followed
+cv 5 -2.5
+wait 50
+cv 5 0
+wait 50
+cv 5 2.5
+wait 200
+expect cccount 102 > 2
+expect ccout 102 > 93
+# the outputs still play: bass gate J3, KICK J7, bass pitch J9
+midi on 5 48 100
+midi on 1 36 120
+wait 40
+expect cv 3 > 4.5
+expect cv 7 > 2.5
+expect cv 9 > -1.01
+expect cv 9 < -0.99
+midi off 5 48
+midi off 1 36
+# HATS has no jack on CV IN: J5 stays an input
+mark
+midi on 3 42 120
+wait 40
+midi off 3 42
+expect edges 5 = 0
+# unplugged, the voltage moves: nothing sent; plugged again, the value again
+midi unplug
+wait 100
+cv 6 2.5
+wait 300
+midi plug computer
+mark
+wait 4500
+expect led b3 cyan
+expect cccount 104 > 0
+expect ccout 104 > 62
+expect ccout 104 < 66
+# back to BAND: J5, J6 outputs again, and the effects back to their knobs
+press b3
+wait 400
+tap b1
+wait 100
+pot 3 0.625                    # catch at CV IN
+wait 100
+pot 3 0.125                    # BAND
+wait 100
+release b3
+wait 200
+expect ccout 116 = 0
+mark
+midi on 3 42 120
+wait 40
+expect cv 5 > 2.4                # HATS on J5 again
+midi off 3 42
+wait 300
+expect cccount 102 = 0           # nothing from J5 now, whatever is patched in
+expect finite
+expect alive

@@ -52,14 +52,24 @@ enum JackFn : uint8_t
     kFnClk24, kFnClk16, kFnClk8, kFnClk4, kFnBar,   /* 24 PPQN, 16ths, 8ths, quarters, bars */
     kFnReset, kFnRun, kFnSection,
     kFnTrig1,                                       /* + channel 0..7: KICK..FX in PROTECTOR */
-    kNumJackFns = kFnTrig1 + 8
+    /* 0.4.0: inputs (J3..J8 only). The jack's voltage steers one of
+     * PROTECTOR's effects over USB: CC 102 + n (FILTER, REVERB, DELAY, ECHO,
+     * GLITCH, PUMP, RUMBLE, DRIVE, COMB, PHASER, FLANGER, CRUSH, SCENE,
+     * MORPH; cv_in.h). */
+    kFnCvIn1 = kFnTrig1 + 8,
+    kNumJackFns = kFnCvIn1 + 14
 };
+constexpr int kNumCvFns = kNumJackFns - kFnCvIn1;
+constexpr int kNumInJacks = 6;                      /* J3..J8 can be inputs; J9, J10 can't */
+inline bool IsCvIn(uint8_t fn) { return fn >= kFnCvIn1 && fn < kNumJackFns; }
+inline int  CvTarget(uint8_t fn) { return IsCvIn(fn) ? fn - kFnCvIn1 : -1; }
 
-/* Whole layouts of J3..J10. */
-enum Layout : uint8_t { kLayoutBand, kLayoutClock, kNumLayouts };
+/* Whole layouts of J3..J10. CV IN (0.4.0): BAND's bass and lead, KICK and
+ * SNARE, with FILTER and DELAY in on J5 and J6. */
+enum Layout : uint8_t { kLayoutBand, kLayoutClock, kLayoutCvIn, kNumLayouts };
 void        SetLayout(uint8_t jack[kJacks], int layout);
 int         LayoutOf(const uint8_t jack[kJacks]);   /* -1: changed by hand */
-const char* LayoutName(int layout);                 /* "BAND", "CLOCK", "CUSTOM" */
+const char* LayoutName(int layout);                 /* "BAND", "CLOCK", "CV IN", "CUSTOM" */
 
 constexpr int   kOctMin = -4, kOctMax = 4;
 constexpr int   kTransMin = -12, kTransMax = 12;
