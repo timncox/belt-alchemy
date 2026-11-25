@@ -6,6 +6,11 @@
  *
  *   pot 0  FILE   choose among the .bin files in /alchemy on the card.
  *                 The ring shows one dot per file, the chosen one bright.
+ *                 A folder inside /alchemy (one level, say /alchemy/mutable)
+ *                 is one purple dot; the FLASH gesture on it opens it, and
+ *                 inside, the first (white) dot goes back up. The app's
+ *                 firmware list (Remote()) shows every file on both levels
+ *                 by its path, "mutable/clouds_alchemy.bin".
  *   pot 1  FLASH  turn below ~85 % and then past ~95 % to write the chosen
  *                 file into the QSPI app slot, verify it, and reboot into
  *                 it. The dip-then-sweep is the arming gesture: a pot that
