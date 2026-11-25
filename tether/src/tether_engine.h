@@ -12,7 +12,9 @@
  *   once: BAND (drums, bass, lead, clock out; the default from 0.3.0) and CLOCK
  *   (0.2.0's: two voices, clock and reset).
  *   J1 and J2, the inputs, take a clock and a reset (or start/stop) for
- *   when no MIDI clock is coming in (0.3.0).
+ *   when no MIDI clock is coming in (0.3.0). From 0.5.2 each picks a job
+ *   (InJob): CLOCK (J1 only), RESET, START/STOP, NEXT SECTION, LOUDNESS into
+ *   one of PROTECTOR's effects, or OFF.
  *
  * Time is in samples; Process(n) is one block. Packets go in from the audio
  * thread (the firmware drains a Ring the USB poll fills).
@@ -36,6 +38,34 @@ enum NoteMode : uint8_t { kLegato, kRetrig, kLow, kHigh, kNumNoteModes };
 enum ResetOn  : uint8_t { kResetStart, kResetStartSection, kNumResetOn };
 /* J2 (0.3.0): a pulse resets to the top of the bar, or starts and stops. */
 enum J2Mode   : uint8_t { kJ2Reset, kJ2StartStop, kNumJ2Modes };
+
+/* 0.5.2: J1's and J2's jobs. CLOCK is J1's only. RESET and START/STOP as J2
+ * did (0.3.0). NEXT SECTION: a pulse asks PROTECTOR for its next section
+ * (CC 86, kCcNextSect; at the next bar while playing). LOUD: how loud the
+ * jack is steers one of PROTECTOR's effects as an IN job does on J3..J8
+ * (CC 102 + n, cv_in.h). OFF: nothing (the jack still goes over USB audio,
+ * as every job does). CLOCK, RESET and START/STOP wait while USB MIDI clock
+ * comes in, as before; NEXT SECTION and LOUD work either way. CLOCK is 0 so
+ * that settings saved before 0.5.2 load J1 as it was. */
+enum InJob : uint8_t
+{
+    kInClock, kInReset, kInStartStop, kInNextSect, kInOff,
+    kInLoud1,                                   /* + 0..13: FILTER .. MORPH */
+    kNumInJobs = kInLoud1 + 14
+};
+constexpr int     kInputs     = 2;              /* J1, J2 */
+constexpr uint8_t kCcNextSect = 86;             /* PROTECTOR 0.5.1: its next section */
+constexpr float   kLoudFull   = 0.25f;          /* LOUD: an input this loud (1.25 V peak) is 5 V */
+constexpr float   kLoudAttMs  = 3.0f, kLoudRelMs = 150.0f;
+inline bool IsLoud(uint8_t job) { return job >= kInLoud1 && job < kNumInJobs; }
+inline int  LoudTarget(uint8_t job) { return IsLoud(job) ? job - kInLoud1 : -1; }
+/* A pot (or a menu) over an input's jobs: J1 CLOCK at each of its seven
+ * rates, then RESET, START/STOP, NEXT SECTION, the 14 LOUDs, OFF (25); J2 the
+ * same without the clocks (18). */
+int  InZones(int i);
+int  InZoneOf(int i, uint8_t job, uint8_t ppqn);
+void SetInZone(int i, int zone, uint8_t* job, uint8_t* ppqn);
+const char* InJobName(uint8_t job);   /* "CLOCK", "RESET", "START/STOP", "NEXT SECTION", "LOUD FILTER".., "OFF" */
 
 /* J1's clock (0.3.0): pulses per quarter note. */
 constexpr int     kNumPpqn = 7;
@@ -123,14 +153,16 @@ struct MasterParams
     float   drum_floor[kDrums];    /* V at velocity 1 (127 is 5 V), so soft hits still fire */
     uint8_t drum_trig;             /* bit d: TRIG d+1 is a fixed TRIG LENGTH pulse, not held to the note off */
     uint8_t clk_ppqn;              /* J1: index into kPpqnValues */
-    uint8_t j2_mode;               /* J2Mode */
+    uint8_t j2_mode;               /* J2Mode: kept as in_job[1] says, for settings readers before 0.5.2 */
+    uint8_t in_job[kInputs];       /* 0.5.2: InJob of J1, J2 (J2 never kInClock) */
 };
 
 void Defaults(MasterParams& m, VoiceParams v[kVoices]);
 
 /* 2 (0.3.0): three voices, eight jacks, envelopes, J1 / J2. Settings saved
  * by 0.1 / 0.2 (version 1, 48 bytes) don't load: TETHER starts from its
- * defaults. */
+ * defaults. 0.5.2 adds J1's and J2's jobs in bytes 68 and 69, which were 0:
+ * 0 there loads J1 as CLOCK and J2 from byte 15 (J2Mode), as before. */
 constexpr int     kStateBytes   = 80;
 constexpr uint8_t kLayoutVersion = 2;
 void Pack(const MasterParams& m, const VoiceParams v[kVoices], uint8_t sel, uint8_t* out);
@@ -181,6 +213,12 @@ class Engine
      * J2 a reset or start/stop. Ignored while USB MIDI clock is coming in:
      * MIDI wins. Either may be null. */
     void Inputs(const float* j1, const float* j2, uint32_t frames);
+    /* 0.5.2: what the inputs' jobs ask of the firmware. NEXT SECTION pulses
+     * so far (it sends CC 86 for each new one); a LOUD input's level in volts,
+     * 0..5 (5 V at kLoudFull of the input's full scale), for cv_in's Step. */
+    uint32_t NextSectCount() const { return next_sect_n_; }
+    float    InLevel(int i) const { return i >= 0 && i < kInputs ? in_lvl_[i] : 0.0f; }
+    bool     HasInJob(uint8_t job) const { return master.in_job[0] == job || master.in_job[1] == job; }
 
     float PitchVolts(int v) const;     /* voice v's pitch: calibrated, +-5 V */
     float EnvVolts(int v) const { return kGateV * vs_[v].env; }
@@ -238,8 +276,10 @@ class Engine
     void  fire(int32_t* t, bool clock);
     void  tick();                       /* one 24 PPQN clock step */
     void  start(uint32_t t);            /* from the top, with RESET */
-    void  j1_edge(uint32_t t);
-    void  j2_edge(uint32_t t);
+    void  in_edge(int i, uint32_t t);   /* 0.5.2: a rising edge on J1 (0) or J2 (1): its job */
+    void  j1_edge(uint32_t t);          /* CLOCK */
+    void  j2_edge(uint32_t t);          /* RESET */
+    void  startstop_edge(uint32_t t);
     int32_t trig_samples() const;
 
     float    sr_ = 48000.0f;
@@ -265,6 +305,8 @@ class Engine
     uint32_t edge_tick_ = 0;            /* next_tick_ just before the last J1 pulse's own step */
     bool     started_ = false;
     uint32_t start_at_ = 0;
+    uint32_t next_sect_n_ = 0;          /* 0.5.2: NEXT SECTION pulses */
+    float    in_env_[kInputs] = {0.0f, 0.0f}, in_lvl_[kInputs] = {0.0f, 0.0f};   /* LOUD followers */
     /* SysEx being received (audio thread) and one finished request (poll) */
     uint8_t  sx_[200];
     int      sx_n_ = -1;                /* -1: not in a SysEx */

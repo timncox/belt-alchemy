@@ -1,0 +1,86 @@
+# TETHER 0.5.2: J1's and J2's jobs (hold B1, P5 and P6). J1: CLOCK at seven
+# rates, RESET, START/STOP, NEXT SECTION, LOUD x14, OFF (25 zones). J2: the
+# same without CLOCK (18). Here a computer has the Lab as its USB-MIDI device,
+# as the FM-1 does on LAB.
+wait 3000
+expect booted
+midi plug computer
+wait 4500
+expect led b3 cyan
+# hold B1 (MORE): J1 to LOUD DELAY (zone 12 of 25), J2 to NEXT SECTION (zone 2 of 18)
+press b1
+wait 400
+pot 5 0.1                      # catch J1 at CLOCK 4 (zone 2)
+wait 100
+pot 5 0.5                      # LOUD DELAY
+wait 100
+pot 6 0.03                     # catch J2 at RESET (zone 0)
+wait 100
+pot 6 0.14                     # NEXT SECTION
+wait 100
+release b1
+wait 200
+# nothing in yet: nothing sent
+mark
+wait 500
+expect cccount 86 = 0
+expect cccount 104 = 0
+# a pulse on J2: PROTECTOR's next section, CC 86 127 (channel 16), once
+pulse 2
+wait 200
+expect cccount 86 = 1
+expect ccout 86 = 127
+pulse 2
+wait 200
+expect cccount 86 = 2
+# J1 hears a voice: how loud steers DELAY (CC 104)
+mark
+sing 220
+wait 400
+expect cccount 104 > 0
+expect ccout 104 > 20
+# J1 is no clock now: J6 (BAND's 16ths out) stays quiet
+expect edges 6 = 0
+# quiet again: DELAY back down
+silence
+wait 1500
+expect ccout 104 < 8
+# under MIDI clock NEXT SECTION still goes
+mark
+midi start
+pulse 2
+midi clock 24 120
+expect cccount 86 = 1
+midi stop
+# J1 to OFF (its last zone): a clock on it does nothing
+press b1
+wait 400
+pot 5 0.5                      # catch at LOUD DELAY
+wait 100
+pot 5 0.99                     # OFF
+wait 100
+release b1
+wait 200
+expect ccout 116 = 0           # DELAY handed back to its knob
+mark
+clock 1 125
+wait 1000
+expect edges 6 = 0
+clock 1 0
+# J1 back to CLOCK 4: it runs the clock again (J6, 16ths)
+press b1
+wait 400
+pot 5 0.99
+wait 100
+pot 5 0.1
+wait 100
+release b1
+wait 200
+mark
+clock 1 125
+wait 2010
+expect edges 6 > 15
+expect edges 6 < 18
+clock 1 0
+expect finite
+expect alive

@@ -13,7 +13,7 @@
  * presets, the SD firmware picker, and settings over SysEx (Loadout).
  *
  *   VOICE   PART · GATE · GLIDE · OCTAVE · TRANSPOSE · NOTES    (voice A, B or C)
- *   MORE    ATTACK · DECAY · SUSTAIN · RELEASE · J1 CLOCK · J2   (hold B1)
+ *   MORE    ATTACK · DECAY · SUSTAIN · RELEASE · J1 · J2         (hold B1)
  *   JACKS   J3 · J4 · J5 · J6 · J7 · J8                           (hold B3)
  *           J9 · J10 · LAYOUT · DRUM · MODE · FLOOR   (hold B3, tap B1: page 2)
  *   MASTER  CAL OFFSET · CAL SCALE · TRIG LENGTH · ACCENT · BEND · RESET ON  (hold B2)
@@ -27,8 +27,12 @@
  *           CV IN (0.4.0): J5 J6 steer PROTECTOR's effects. AUDIO (0.5.0):
  *           J9 J10 play the USB audio from the FM-1 (or a computer), left
  *           and right; J3-J8 as CV IN.
- *   J1 J2   clock in, reset (or start/stop) in; USB MIDI clock wins. Also
- *           (0.5.0) back over USB audio whenever the host listens.
+ *   J1 J2   inputs, each with a job (0.5.2, MORE P5 / P6): CLOCK (J1 only,
+ *           at 1-48 PPQN), RESET, START/STOP, NEXT SECTION (CC 86 to
+ *           PROTECTOR), LOUD (how loud steers one of PROTECTOR's effects, as
+ *           an IN job), OFF. USB MIDI clock wins over CLOCK, RESET and
+ *           START/STOP. Also (0.5.0) back over USB audio whenever the host
+ *           listens, whatever the job.
  *   Hold B1 while powering up: Mac mode (USB device, HostLink) instead of host.
  *   Settings (B2+B3 2 s): brightness, presets; page 1 = the SD firmware picker
  */
@@ -147,6 +151,18 @@ static Rgb fn_col(uint8_t fn)
     return kDimWhite;
 }
 
+/* 0.5.2: J1's or J2's job, in the colour of the jack job it is most like. */
+static Rgb in_col(uint8_t job)
+{
+    using namespace tether;
+    if (job == kInClock) return {0xFF, 0xFF, 0xC0};
+    if (job == kInReset) return fn_col(kFnReset);
+    if (job == kInStartStop) return fn_col(kFnRun);
+    if (job == kInNextSect) return fn_col(kFnSection);
+    if (IsLoud(job)) return fn_col(kFnCvIn1);
+    return kDimWhite;
+}
+
 /* ---- persistence -------------------------------------------------------- */
 
 static uint8_t g_sel   = 0;      /* voice on the VOICE layer, 0 = A */
@@ -175,8 +191,8 @@ struct TetherState : public Serializable
 /* ---- surfaces ------------------------------------------------------------ */
 
 /* As BAND lays them out; JACKS changes them. */
-static Jack jk_j1 ("J1",  "Clock in (MORE P5)",              JackSig::Trig);
-static Jack jk_j2 ("J2",  "Reset or start/stop in (MORE P6)", JackSig::Trig);
+static Jack jk_j1 ("J1",  "Clock in; or reset, start/stop, next section, loudness, off (MORE P5)", JackSig::Trig);
+static Jack jk_j2 ("J2",  "Reset in; or start/stop, next section, loudness, off (MORE P6)",      JackSig::Trig);
 static Jack jk_j3 ("J3",  "Gate A, bass (JACKS P1)",         JackSig::CvBi);
 static Jack jk_j4 ("J4",  "Gate B, lead (JACKS P2)",         JackSig::CvBi);
 static Jack jk_j5 ("J5",  "Trig 3, HATS (JACKS P3)",         JackSig::CvBi);
@@ -196,8 +212,12 @@ static Manual manual = Manual()
         "J5 HATS, J6 16ths clock out, J7 KICK, J8 SNARE, J9 bass pitch and J10 lead "
         "pitch, 1 V/oct. Hold B3 to give any jack another job (tap B1 for J9, "
         "J10 and LAYOUT; CLOCK is 0.2.0's gates, clock and reset, CV IN reads "
-        "J5 and J6, AUDIO plays USB audio on J9 and J10). J1 takes a "
-        "clock and J2 a reset or start/stop when no MIDI clock comes in; they "
+        "J5 and J6, AUDIO plays USB audio on J9 and J10). J1 and J2 each "
+        "take a job (hold B1, P5 and P6): J1 a clock (CLOCK, 1 to 48 PPQN), "
+        "either one RESET, START/STOP, NEXT SECTION (PROTECTOR goes to its "
+        "next section at the next bar), LOUD (how loud the jack is steers one "
+        "of PROTECTOR's effects, as an IN job), or OFF. CLOCK, RESET and "
+        "START/STOP wait while MIDI clock comes in. Whatever the job, they "
         "also go back to the computer or FM-1 as USB audio. Tap B1 "
         "for voice A, B or C; hold B1 for its envelope and J1 / J2; hold B2 for "
         "calibration, trigger length, accent, bend and reset. Loadout can set "
@@ -327,10 +347,13 @@ static PotView view(Layer layer, uint8_t pot)
                 case 1: v.kind = Kind::Level; v.norm = P.dec; break;
                 case 2: v.kind = Kind::Level; v.norm = P.sus; break;
                 case 3: v.kind = Kind::Level; v.norm = P.rel; break;
-                case 4: v.kind = Kind::Selector; v.zones = kNumPpqn; v.norm = zone_norm(M.clk_ppqn, v.zones);
-                        v.marker = kPpqnDefault; v.col = {0xFF, 0xFF, 0xC0}; break;
-                case 5: v.kind = Kind::Selector; v.zones = kNumJ2Modes; v.norm = zone_norm(M.j2_mode, v.zones);
-                        v.col = {0xFF, 0x10, 0x10}; break;
+                /* 0.5.2: J1's job (CLOCK at its seven rates first) and J2's */
+                case 4: v.kind = Kind::Selector; v.zones = InZones(0);
+                        v.norm = zone_norm(InZoneOf(0, M.in_job[0], M.clk_ppqn), v.zones);
+                        v.marker = kPpqnDefault; v.col = in_col(M.in_job[0]); break;
+                case 5: v.kind = Kind::Selector; v.zones = InZones(1);
+                        v.norm = zone_norm(InZoneOf(1, M.in_job[1], 0), v.zones);
+                        v.marker = 0; v.col = in_col(M.in_job[1]); break;
             }
             break;
         case kLayerMaster:
@@ -390,8 +413,13 @@ static bool apply(Layer layer, uint8_t pot, float x)
                 break;
             }
             case kLayerMore:
-                if (pot == 4) M.clk_ppqn = (uint8_t)z;
-                if (pot == 5) M.j2_mode = (uint8_t)z;
+                if (pot == 4) SetInZone(0, z, &M.in_job[0], &M.clk_ppqn);
+                if (pot == 5)
+                {
+                    uint8_t unused = 0;
+                    SetInZone(1, z, &M.in_job[1], &unused);
+                    M.j2_mode = M.in_job[1] == kInStartStop ? (uint8_t)kJ2StartStop : (uint8_t)kJ2Reset;
+                }
                 break;
             case kLayerMaster:
                 if (pot == 4) M.bend = (uint8_t)z;
@@ -516,6 +544,12 @@ static cvin::Jack g_cvj[tether::kNumInJacks];
 static int16_t    g_cv_pend[tether::kNumInJacks] = {-1, -1, -1, -1, -1, -1};
 static bool       g_cv_release = false;
 static uint32_t   g_cv_sent    = 0;   /* CCs out, for the HostLink log */
+/* 0.5.2: J1 / J2 on LOUD steer an effect the same way; NEXT SECTION sends
+ * CC 86 (channel 16) once for each pulse that comes while linked. */
+static cvin::Jack g_inj[tether::kInputs];
+static int16_t    g_in_pend[tether::kInputs] = {-1, -1};
+static uint32_t   g_ns_seen = 0;
+static uint8_t    g_ns_pend = 0;
 
 /* 0.5.0: J9 / J10 on AUDIO L / R are the codec's own: no CV staged over what
  * the audio callback writes. */
@@ -567,7 +601,24 @@ static void cv_poll(uint32_t now)
         }
         if (v >= 0) g_cv_pend[j] = (int16_t)v;
     }
-    if (!linked) g_cv_release = false;
+    for (int k = 0; k < tether::kInputs; k++)
+    {
+        bool      rel = false;
+        const int t   = tether::LoudTarget(engine.master.in_job[k]);
+        const int v   = cvin::Step(g_inj[k], t, engine.InLevel(k), now, &rel);
+        if (rel) g_cv_release = true;
+        if (!linked)
+        {
+            cvin::Resend(g_inj[k]);
+            g_in_pend[k] = -1;
+            continue;
+        }
+        if (v >= 0) g_in_pend[k] = (int16_t)v;
+    }
+    const uint32_t ns = engine.NextSectCount();
+    if (linked && ns != g_ns_seen) g_ns_pend = (uint8_t)(g_ns_pend + (ns - g_ns_seen > 4u ? 4u : ns - g_ns_seen));
+    g_ns_seen = ns;   /* (not linked: a pulse now asks nothing later) */
+    if (!linked) { g_cv_release = false; g_ns_pend = 0; }
 }
 
 /* What goes out of the port: a SysEx answer first, then the CVs. */
@@ -578,7 +629,7 @@ static void out_poll(void)
         if (midihost::Send(g_sx_pk, g_sx_n) || midihost::Stage() != 4) g_sx_n = 0;
         return;
     }
-    uint8_t pk[tether::kNumInJacks + 1][4];
+    uint8_t pk[tether::kNumInJacks + tether::kInputs + 2][4];
     int     n = 0;
     if (g_cv_release) cvin::Packet(pk[n++], cvin::kCcTouch, 0);
     for (int j = 0; j < tether::kNumInJacks; j++)
@@ -586,9 +637,18 @@ static void out_poll(void)
         const int t = tether::CvTarget(engine.master.jack[j]);
         if (g_cv_pend[j] >= 0 && t >= 0) cvin::Packet(pk[n++], cvin::Cc(t), (uint8_t)g_cv_pend[j]);
     }
+    for (int k = 0; k < tether::kInputs; k++)
+    {
+        const int t = tether::LoudTarget(engine.master.in_job[k]);
+        if (g_in_pend[k] >= 0 && t >= 0) cvin::Packet(pk[n++], cvin::Cc(t), (uint8_t)g_in_pend[k]);
+    }
+    const bool ns = g_ns_pend > 0;
+    if (ns) cvin::Packet(pk[n++], tether::kCcNextSect, 127);
     if (!n || !midihost::Send(pk, n)) return;
     g_cv_release = false;
     for (int j = 0; j < tether::kNumInJacks; j++) g_cv_pend[j] = -1;
+    for (int k = 0; k < tether::kInputs; k++) g_in_pend[k] = -1;
+    if (ns) g_ns_pend--;
     g_cv_sent += (uint32_t)n;
 }
 
@@ -967,7 +1027,7 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle
         engine.Packet(pkt);
         if (!g_mac_mode) phone_link.Feed(pkt);
     }
-    engine.Inputs(in[0], in[1], (uint32_t)n);                            /* J1 clock, J2 reset */
+    engine.Inputs(in[0], in[1], (uint32_t)n);                            /* J1, J2: their jobs (0.5.2) */
     engine.Process((uint32_t)n);
 
     /* USB audio both ways: J1 / J2 to the host as they are, the host's to

@@ -72,6 +72,8 @@ void Defaults(MasterParams& m, VoiceParams v[kVoices])
     m.reset_on = kResetStart;
     m.clk_ppqn = kPpqnDefault;
     m.j2_mode  = kJ2Reset;
+    m.in_job[0] = kInClock;
+    m.in_job[1] = kInReset;
     /* KICK, SNARE, HATS follow velocity, from 2.5 V (where a fixed-level
      * trigger input such as a kick module's still fires) to 5 V */
     m.drum_vel = 0x07;
@@ -111,6 +113,35 @@ static const char* const kJackNames[kNumJackFns] = {
     "IN COMB", "IN PHASER", "IN FLANGER", "IN CRUSH", "IN SCENE", "IN MORPH", "AUDIO L", "AUDIO R"};
 
 const char* JackName(uint8_t fn) { return fn < kNumJackFns ? kJackNames[fn] : "?"; }
+
+static const char* const kInJobNames[kNumInJobs] = {
+    "CLOCK", "RESET", "START/STOP", "NEXT SECTION", "OFF",
+    "LOUD FILTER", "LOUD REVERB", "LOUD DELAY", "LOUD ECHO", "LOUD GLITCH", "LOUD PUMP", "LOUD RUMBLE",
+    "LOUD DRIVE", "LOUD COMB", "LOUD PHASER", "LOUD FLANGER", "LOUD CRUSH", "LOUD SCENE", "LOUD MORPH",
+};
+const char* InJobName(uint8_t job) { return job < kNumInJobs ? kInJobNames[job] : "?"; }
+
+/* The pot's order: (J1) CLOCK x7 rates, RESET, START/STOP, NEXT SECTION, LOUD x14, OFF. */
+int InZones(int i) { return (i == 0 ? kNumPpqn : 0) + 3 + 14 + 1; }
+int InZoneOf(int i, uint8_t job, uint8_t ppqn)
+{
+    const int c = i == 0 ? kNumPpqn : 0;
+    if (job == kInClock) return i == 0 ? (int)(ppqn % kNumPpqn) : 0;
+    if (job == kInReset || job == kInStartStop || job == kInNextSect) return c + (job - kInReset);
+    if (IsLoud(job)) return c + 3 + (job - kInLoud1);
+    return c + 3 + 14;   /* OFF */
+}
+void SetInZone(int i, int zone, uint8_t* job, uint8_t* ppqn)
+{
+    const int c = i == 0 ? kNumPpqn : 0;
+    if (zone < 0) zone = 0;
+    if (zone >= InZones(i)) zone = InZones(i) - 1;
+    if (zone < c) { *job = kInClock; *ppqn = (uint8_t)zone; return; }
+    zone -= c;
+    if (zone < 3) *job = (uint8_t)(kInReset + zone);
+    else if (zone < 3 + 14) *job = (uint8_t)(kInLoud1 + zone - 3);
+    else *job = kInOff;
+}
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -163,6 +194,10 @@ void Pack(const MasterParams& m, const VoiceParams v[kVoices], uint8_t sel, uint
     out[58] = m.drum_vel;
     for (int d = 0; d < kDrums; d++) out[59 + d] = (uint8_t)lroundf(clampf(m.drum_floor[d], 0.0f, kDrumFloorMax) * 50.0f);
     out[67] = m.drum_trig;
+    /* 0.5.2: the inputs' jobs, and J2's in byte 15 as readers before 0.5.2 know it */
+    out[68] = m.in_job[0] < kNumInJobs ? m.in_job[0] : (uint8_t)kInClock;
+    out[69] = m.in_job[1] < kNumInJobs && m.in_job[1] != kInClock ? m.in_job[1] : (uint8_t)kInReset;
+    out[15] = out[69] == kInStartStop ? (uint8_t)kJ2StartStop : (uint8_t)kJ2Reset;
     uint8_t sum = 0x5A;
     for (int i = 0; i < kStateBytes - 1; i++) sum = (uint8_t)(sum * 31u + out[i]);
     out[kStateBytes - 1] = sum;
@@ -207,6 +242,12 @@ bool Unpack(const uint8_t* in, MasterParams& m, VoiceParams v[kVoices], uint8_t&
     }
     m.drum_vel = in[58];
     m.drum_trig = in[67];
+    /* 0.5.2: 0 in byte 68 is CLOCK (as J1 was); 0 (or anything out of range)
+     * in byte 69 is J2 as byte 15 says */
+    m.in_job[0] = in[68] < kNumInJobs ? in[68] : (uint8_t)kInClock;
+    m.in_job[1] = in[69] < kNumInJobs && in[69] != kInClock ? in[69]
+                : m.j2_mode == kJ2StartStop ? (uint8_t)kInStartStop : (uint8_t)kInReset;
+    m.j2_mode   = m.in_job[1] == kInStartStop ? (uint8_t)kJ2StartStop : (uint8_t)kJ2Reset;
     for (int d = 0; d < kDrums; d++) m.drum_floor[d] = clampf((float)in[59 + d] / 50.0f, 0.0f, kDrumFloorMax);
     return true;
 }
@@ -496,7 +537,7 @@ void Engine::j1_edge(uint32_t t)
         ext_        = true;
         ext_period_ = 0;
         ext_left_   = 0;
-        if (master.j2_mode == kJ2Reset && !running_) start(t);
+        if (!HasInJob(kInStartStop) && !running_) start(t);
     }
     else
     {
@@ -516,15 +557,28 @@ void Engine::j1_edge(uint32_t t)
     ext_next_ = t + ext_step_;
 }
 
+void Engine::startstop_edge(uint32_t t)
+{
+    if (running_) { running_ = false; ext_left_ = 0; }
+    else start(t);
+}
+
+/* 0.5.2: an input's rising edge does its job. */
+void Engine::in_edge(int i, uint32_t t)
+{
+    switch (master.in_job[i])
+    {
+        case kInClock: if (i == 0) j1_edge(t); break;
+        case kInReset: j2_edge(t); break;
+        case kInStartStop: startstop_edge(t); break;
+        case kInNextSect: next_sect_n_++; break;
+        default: break;
+    }
+}
+
 void Engine::j2_edge(uint32_t t)
 {
     const uint32_t near = (uint32_t)(sr_ * 0.002f);   /* 2 ms: the same moment */
-    if (master.j2_mode == kJ2StartStop)
-    {
-        if (running_) { running_ = false; ext_left_ = 0; }
-        else start(t);
-        return;
-    }
     if (started_ && t - start_at_ < near) return;    /* the start's own reset */
     if (ext_ && running_ && t - ext_last_ < near)
     {
@@ -544,30 +598,42 @@ void Engine::Inputs(const float* j1, const float* j2, uint32_t n)
 {
     /* Thresholds as Pulse: 1.0 V up, 0.5 V down. */
     constexpr float kHi = 0.2f, kLo = 0.1f;
-    if (MidiClock())
+    const float*    in[kInputs] = {j1, j2};
+    bool*           hi[kInputs] = {&j1_hi_, &j2_hi_};
+    /* 0.5.2: LOUD, a peak follower (attack kLoudAttMs, release kLoudRelMs) */
+    for (int k = 0; k < kInputs; k++)
     {
-        /* MIDI wins: keep the edge state, act on nothing */
-        if (j1 && n) j1_hi_ = j1[n - 1] > kLo && (j1_hi_ || j1[n - 1] > kHi);
-        if (j2 && n) j2_hi_ = j2[n - 1] > kLo && (j2_hi_ || j2[n - 1] > kHi);
-        return;
+        if (!IsLoud(master.in_job[k]) || !in[k]) { in_env_[k] = 0.0f; in_lvl_[k] = 0.0f; continue; }
+        const float ka = 1.0f - expf(-1000.0f / (kLoudAttMs * sr_));
+        const float kr = 1.0f - expf(-1000.0f / (kLoudRelMs * sr_));
+        float       e  = in_env_[k];
+        for (uint32_t i = 0; i < n; i++)
+        {
+            const float a = fabsf(in[k][i]);
+            e += (a - e) * (a > e ? ka : kr);
+        }
+        in_env_[k] = e;
+        const float v = e / kLoudFull * kGateV;
+        in_lvl_[k] = v > kGateV ? kGateV : v;
     }
+    /* MIDI clock coming in: CLOCK, RESET and START/STOP wait (MIDI wins);
+     * NEXT SECTION still goes */
+    const bool midi = MidiClock();
     for (uint32_t i = 0; i < n; i++)
     {
-        bool e2 = false, e1 = false;
-        if (j2)
+        bool e[kInputs] = {false, false};
+        for (int k = 0; k < kInputs; k++)
         {
-            const float v = j2[i];
-            if (!j2_hi_ && v > kHi) { j2_hi_ = true; e2 = true; }
-            else if (j2_hi_ && v < kLo) j2_hi_ = false;
+            if (!in[k]) continue;
+            const float v = in[k][i];
+            if (!*hi[k] && v > kHi) { *hi[k] = true; e[k] = true; }
+            else if (*hi[k] && v < kLo) *hi[k] = false;
         }
-        if (j1)
-        {
-            const float v = j1[i];
-            if (!j1_hi_ && v > kHi) { j1_hi_ = true; e1 = true; }
-            else if (j1_hi_ && v < kLo) j1_hi_ = false;
-        }
-        if (e2) j2_edge(now_ + i);   /* a reset with a pulse: reset first, the pulse is beat one */
-        if (e1) j1_edge(now_ + i);
+        /* a reset (or a start) with a clock pulse: it first, the pulse is beat one */
+        for (int k = 0; k < kInputs; k++)
+            if (e[k] && master.in_job[k] != kInClock && (!midi || master.in_job[k] == kInNextSect)) in_edge(k, now_ + i);
+        for (int k = 0; k < kInputs; k++)
+            if (e[k] && master.in_job[k] == kInClock && !midi) in_edge(k, now_ + i);
     }
 }
 
@@ -589,7 +655,7 @@ void Engine::Process(uint32_t n)
         {
             ext_      = false;
             ext_left_ = 0;
-            if (master.j2_mode == kJ2Reset) running_ = false;
+            if (!HasInJob(kInStartStop)) running_ = false;
         }
     }
     const int32_t dn = (int32_t)n;

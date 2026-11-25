@@ -236,7 +236,7 @@ static void test_j2_reset()
 static void test_j2_start_stop()
 {
     Engine e = fresh();
-    e.master.j2_mode = kJ2StartStop;
+    e.master.in_job[1] = kInStartStop;
     e.master.jack[0] = kFnRun;
     Run r = feed(e, 500, 125.0f);
     CHECK(r.rises[2] == 0 && !e.Running(), "START/STOP: the clock alone doesn't start it");
@@ -630,7 +630,7 @@ static void test_pack()
     e.master.cal_off[2] = 0.02f;
     e.master.jack[7] = kFnEnvC;
     e.master.clk_ppqn = 6;
-    e.master.j2_mode = kJ2StartStop;
+    e.master.in_job[1] = kInStartStop;
     e.master.drum_vel = 0x05;
     e.master.drum_floor[2] = 1.2f;
     e.master.drum_trig = 0x30;
@@ -771,6 +771,147 @@ static void test_audio_layout()
     CHECK(sysex::Parse(bad, sizeof bad, &r) && r.why == sysex::kWhyCommand, "4 isn't a layout");
 }
 
+/* ---- 0.5.2: J1's and J2's jobs ---- */
+
+static void test_in_zones()
+{
+    CHECK(InZones(0) == 25 && InZones(1) == 18, "J1 25 zones, J2 18 (%d %d)", InZones(0), InZones(1));
+    for (int i = 0; i < kInputs; i++)
+        for (int z = 0; z < InZones(i); z++)
+        {
+            uint8_t job = 0xFF, ppqn = 0;
+            SetInZone(i, z, &job, &ppqn);
+            CHECK(job < kNumInJobs && (i == 0 || job != kInClock), "J%d zone %d: a job J%d can take (%d)", i + 1, z, i + 1, job);
+            CHECK(InZoneOf(i, job, ppqn) == z, "J%d zone %d round trip (%d)", i + 1, z, InZoneOf(i, job, ppqn));
+            CHECK(InJobName(job)[0] != '?', "J%d zone %d has a name", i + 1, z);
+        }
+    uint8_t job = 0, ppqn = 0;
+    SetInZone(0, kPpqnDefault, &job, &ppqn);
+    CHECK(job == kInClock && ppqn == kPpqnDefault, "J1: CLOCK 4 where it was");
+    SetInZone(0, InZones(0) - 1, &job, &ppqn);
+    CHECK(job == kInOff, "J1's last zone OFF");
+    SetInZone(1, 0, &job, &ppqn);
+    CHECK(job == kInReset, "J2's first zone RESET");
+    Engine e;
+    e.Init(kSr);
+    CHECK(e.master.in_job[0] == kInClock && e.master.in_job[1] == kInReset, "defaults: CLOCK and RESET, as before");
+}
+
+static void test_in_settings()
+{
+    Engine e = fresh(kLayoutBand);
+    e.master.in_job[0] = kInLoud1 + 3;   /* LOUD ECHO */
+    e.master.in_job[1] = kInNextSect;
+    uint8_t buf[kStateBytes];
+    Pack(e.master, e.voice, 0, buf);
+    MasterParams m;
+    VoiceParams  v[kVoices];
+    uint8_t      sel = 0;
+    CHECK(Unpack(buf, m, v, sel) && m.in_job[0] == kInLoud1 + 3 && m.in_job[1] == kInNextSect && m.j2_mode == kJ2Reset,
+          "jobs saved and loaded (%d %d)", m.in_job[0], m.in_job[1]);
+    CHECK(buf[15] == kJ2Reset, "byte 15 for readers before 0.5.2");
+    /* settings from 0.5.1: bytes 68, 69 zero, J2 START/STOP in byte 15 */
+    e.master.in_job[0] = kInClock;
+    e.master.in_job[1] = kInStartStop;
+    e.master.clk_ppqn = 3;
+    Pack(e.master, e.voice, 0, buf);
+    CHECK(buf[15] == kJ2StartStop && buf[68] == kInClock, "START/STOP in byte 15 too");
+    buf[69] = 0;
+    uint8_t sum = 0x5A;
+    for (int i = 0; i < kStateBytes - 1; i++) sum = (uint8_t)(sum * 31u + buf[i]);
+    buf[kStateBytes - 1] = sum;
+    CHECK(Unpack(buf, m, v, sel) && m.in_job[0] == kInClock && m.clk_ppqn == 3 && m.in_job[1] == kInStartStop,
+          "0.5.1's settings: J1 CLOCK, J2 START/STOP as they were (%d %d)", m.in_job[0], m.in_job[1]);
+    buf[15] = kJ2Reset;
+    sum = 0x5A;
+    for (int i = 0; i < kStateBytes - 1; i++) sum = (uint8_t)(sum * 31u + buf[i]);
+    buf[kStateBytes - 1] = sum;
+    CHECK(Unpack(buf, m, v, sel) && m.in_job[1] == kInReset, "0.5.1's settings: J2 RESET");
+    /* J2 can't be CLOCK: a stray one loads as byte 15 says */
+    e.master.in_job[1] = kInClock;
+    Pack(e.master, e.voice, 0, buf);
+    CHECK(Unpack(buf, m, v, sel) && m.in_job[1] == kInReset, "J2 never CLOCK");
+}
+
+static void test_in_reset_on_j1()
+{
+    /* J1 RESET, J2 START/STOP, no clock in: J2 starts it from the top, J1 resets */
+    Engine e = fresh();
+    e.master.in_job[0] = kInReset;
+    e.master.in_job[1] = kInStartStop;
+    const float go[1] = {10.0f};
+    Run r = feed(e, 100, 0.0f, 0.0f, go, 1);
+    CHECK(e.Running() && r.rises[3] == 1, "J2 START/STOP starts it: RESET (%d)", r.rises[3]);
+    r = feed(e, 100, 1000.0f, 20.0f);   /* one pulse on J1 */
+    CHECK(r.rises[3] == 1 && e.Running() && !e.J1Clock(), "J1 RESET: RESET out, still running, no clock (%d)", r.rises[3]);
+    /* J1 OFF: pulses do nothing */
+    e = fresh();
+    e.master.in_job[0] = kInOff;
+    r = feed(e, 1000, 125.0f);
+    CHECK(!e.Running() && !e.J1Clock() && r.rises[2] == 0 && r.rises[3] == 0, "J1 OFF: a clock on it starts nothing");
+}
+
+static void test_in_next_sect()
+{
+    Engine e = fresh();
+    e.master.in_job[1] = kInNextSect;
+    const float rs[3] = {10.0f, 200.0f, 400.0f};
+    Run r = feed(e, 600, 125.0f, 0.0f, rs, 3);
+    CHECK(e.NextSectCount() == 3, "J2 NEXT SECTION: three pulses, three asks (%u)", e.NextSectCount());
+    CHECK(r.rises[3] == 1, "and no reset of its own: only the clock's start (%d)", r.rises[3]);
+    /* under MIDI clock it still goes */
+    rt(e, 0xFA);
+    const float rs2[1] = {5.0f};
+    for (int t = 0; t < 4; t++) { rt(e, 0xF8); feed(e, 1000.0f / 48.0f, 0.0f, 0.0f, t == 0 ? rs2 : nullptr, t == 0 ? 1 : 0); }
+    CHECK(e.MidiClock() && e.NextSectCount() == 4, "NEXT SECTION under MIDI clock (%u)", e.NextSectCount());
+    /* on J1 too */
+    e = fresh();
+    e.master.in_job[0] = kInNextSect;
+    feed(e, 1000, 250.0f);
+    CHECK(e.NextSectCount() == 4 && !e.Running(), "J1 NEXT SECTION: four pulses, no clock (%u)", e.NextSectCount());
+}
+
+/* LOUD: a sine on J1 of amplitude `a` (1.0 = 5 V) for `ms` */
+static void loud_feed(Engine& e, float ms, float a, float hz = 220.0f)
+{
+    static double ph = 0.0;
+    const int blocks = (int)lroundf(ms * kSr / 1000.0f / kBlock);
+    for (int b = 0; b < blocks; b++)
+    {
+        float j1[kBlock], j2[kBlock];
+        for (int i = 0; i < kBlock; i++)
+        {
+            j1[i] = a * (float)std::sin(ph);
+            j2[i] = 0.5f * a * (float)std::sin(ph);
+            ph += 2.0 * M_PI * hz / kSr;
+        }
+        e.Inputs(j1, j2, kBlock);
+        e.Process(kBlock);
+    }
+}
+
+static void test_in_loud()
+{
+    Engine e = fresh();
+    e.master.in_job[0] = kInLoud1;       /* LOUD FILTER */
+    e.master.in_job[1] = kInLoud1 + 13;  /* LOUD MORPH */
+    CHECK(LoudTarget(e.master.in_job[0]) == 0 && LoudTarget(e.master.in_job[1]) == 13 && LoudTarget(kInReset) == -1, "targets");
+    loud_feed(e, 50, kLoudFull);
+    CHECK(near(e.InLevel(0), 5.0f, 0.3f), "1.25 V peak: 5 V (%.2f)", e.InLevel(0));
+    CHECK(near(e.InLevel(1), 2.5f, 0.3f), "half as loud: 2.5 V (%.2f)", e.InLevel(1));
+    loud_feed(e, 50, 1.0f);
+    CHECK(e.InLevel(0) == 5.0f, "louder still: 5 V at most (%.2f)", e.InLevel(0));
+    loud_feed(e, 1000, 0.0f);
+    CHECK(e.InLevel(0) < 0.05f, "silence: back down (%.3f)", e.InLevel(0));
+    CHECK(!e.Running() && !e.J1Clock(), "audio on a LOUD input starts no clock");
+    loud_feed(e, 20, kLoudFull * 0.4f);
+    CHECK(e.InLevel(0) > 1.0f, "fast up again (%.2f)", e.InLevel(0));
+    /* a LOUD job off again: its level drops at once */
+    e.master.in_job[0] = kInOff;
+    loud_feed(e, 1, kLoudFull);
+    CHECK(e.InLevel(0) == 0.0f, "OFF: no level");
+}
+
 static void test_jack_names()
 {
     for (int f = 0; f < kNumJackFns; f++) CHECK(JackName((uint8_t)f)[0] != '?', "name %d", f);
@@ -797,6 +938,11 @@ int main()
     test_packets_ring();
     test_cv_in_layout();
     test_audio_layout();
+    test_in_zones();
+    test_in_settings();
+    test_in_reset_on_j1();
+    test_in_next_sect();
+    test_in_loud();
     test_jack_names();
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

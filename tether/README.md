@@ -45,8 +45,8 @@ for HostLink; B3 shows blue). Mac mode is not remembered.
 
 | Jack | Job |
 | --- | --- |
-| J1 | in: a clock when no MIDI clock comes (MORE P5: 1 to 48 PPQN, 4 at first) |
-| J2 | in: RESET or START/STOP (MORE P6) |
+| J1 | in: a clock when no MIDI clock comes (MORE P5: 1 to 48 PPQN, 4 at first; or another job, below) |
+| J2 | in: RESET (MORE P6; or another job, below) |
 | J3 | GATE A (voice A = channel 5, BASS) |
 | J4 | GATE B (voice B = channel 6, LEAD) |
 | J5 | TRIG 3 (HATS) |
@@ -66,6 +66,27 @@ Layout **AUDIO** (0.5.0) is CV IN with J9 **AUDIO L** and J10 **AUDIO R**: the
 USB audio from the FM-1 or a computer, left and right (below).
 
 Change any jack and the layout reads CUSTOM.
+
+### J1 and J2's jobs (0.5.2)
+
+J1 and J2 are inputs only (the codec's, AC-coupled: they hear pulses and
+audio, not steady voltages). Each takes one job, on MORE (hold B1): P5 for
+J1, P6 for J2. Turning the pot clockwise:
+
+| Job | J1 | J2 | What a rising edge or a sound does |
+| --- | --- | --- | --- |
+| **CLOCK** 1, 2, 4, 8, 12, 24, 48 | yes (4 at first) | no | the clock, at that many pulses a beat, when no MIDI clock comes |
+| **RESET** | yes | yes (at first) | back to the top of the bar |
+| **START/STOP** | yes | yes | starts and stops the transport (a CLOCK on J1 then only counts while running) |
+| **NEXT SECTION** | yes | yes | PROTECTOR goes to its next section (at the next bar while playing): CC 86 127, channel 16, over the front USB-C. Needs PROTECTOR 0.5.1 |
+| **LOUD** FILTER .. MORPH | yes | yes | how loud the jack is steers that effect of PROTECTOR's, as an IN job does on J3 to J8 (CC 102 to 115): silence leaves the knob alone, about 1.25 V peak is all the way |
+| **OFF** | yes | yes | nothing |
+
+CLOCK, RESET and START/STOP wait while USB MIDI clock comes in (MIDI wins, as
+before), so with the FM-1 on LAB (which sends its clock) they only matter
+with the Lab on its own. NEXT SECTION and LOUD work either way. Whatever the
+job, J1 and J2 still go back to the FM-1 or the computer as USB audio.
+Settings saved before 0.5.2 load J1 as CLOCK and J2 as they were.
 
 ## USB audio (0.5.0): the FM-1's sound on J9 and J10, J1 and J2 back
 
@@ -169,8 +190,9 @@ purple = C):
 Voices A, B and C follow channels 5, 6 and 7 (BASS, LEAD, PAD) at first.
 
 **MORE** (hold B1), for the same voice: P1 **ATTACK**, P2 **DECAY**, P3
-**SUSTAIN**, P4 **RELEASE** (1 ms to 4 s), P5 **J1 CLOCK** (1, 2, 4, 8, 12,
-24 or 48 pulses a beat), P6 **J2** (RESET or START/STOP).
+**SUSTAIN**, P4 **RELEASE** (1 ms to 4 s), P5 **J1**'s job (CLOCK at 1, 2,
+4, 8, 12, 24 or 48 pulses a beat, RESET, START/STOP, NEXT SECTION, LOUD into
+one of 14 effects, OFF), P6 **J2**'s job (the same without CLOCK); above.
 
 **MASTER** (hold B2):
 
