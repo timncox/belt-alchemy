@@ -49,6 +49,10 @@
 #include "alchemy/surface/settings.h"
 
 #include "midi_host.h"
+#include "led_mirror.h"
+#include "phone_ext.h"
+#include "phone_front.h"
+#include "phone_link.h"
 #include "picker.h"
 #include "tether_engine.h"
 #include "mcp_edges.h"
@@ -205,6 +209,18 @@ static Settings    settings(hw, nullptr);
 static SdCard      sd;
 static hostlink::FsExtension fs_ext(sd);
 static hostlink::Host host(presets, "tether_alchemy", "TETHER", TETHER_VERSION, TETHER_GIT_HASH);
+
+/* Phone mode (folder-picker build): the iPhone app sees the panel, presses
+ * B1-B3 and switches firmware, over TETHER's own USB-MIDI device
+ * (phone_link.h). Mac mode (B1 at power-up) is unchanged. */
+static phone::LedMirror<kLedTotal> led_mirror;
+static phone::PhoneExtension       phone_ext;
+static phonefront::Buttons         g_ph;
+static tether::PhoneLink           phone_link;
+static bool OnPhonePress(uint8_t button, uint8_t gesture, void*)
+{
+    return g_ph.Press(button, gesture, System::GetNow());
+}
 static TetherState state;
 
 /* ---- parameters behind the pots ----------------------------------------- */
@@ -664,6 +680,7 @@ static void OnPoll(uint32_t now)
     jack_dirs();
     cv_poll(now);
     out_poll();
+    picker::Service(now);
 
     if (g_test_voice >= 0 && (int32_t)(now - g_test_until) >= 0)
     {
@@ -675,6 +692,7 @@ static void OnPoll(uint32_t now)
     static bool deaf         = false;
     if (settings.IsActive())
     {
+        g_ph.Release();
         g_b1 = g_b2 = g_b3 = Btn{};
         g_chord = false;
         was_settings = true;
@@ -687,9 +705,9 @@ static void OnPoll(uint32_t now)
         deaf         = true;
     }
 
-    const bool b1 = hw.buttons[kButtonB1].Pressed();
-    const bool b2 = hw.buttons[kButtonB2].Pressed();
-    const bool b3 = hw.buttons[kButtonB3].Pressed();
+    const bool b1 = hw.buttons[kButtonB1].Pressed() || g_ph.Down(0, now);
+    const bool b2 = hw.buttons[kButtonB2].Pressed() || g_ph.Down(1, now);
+    const bool b3 = hw.buttons[kButtonB3].Pressed() || g_ph.Down(2, now);
     if (deaf)
     {
         if (b1 || b2 || b3) return;
@@ -944,7 +962,11 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle
         }
     }
     uint32_t pkt;
-    while (midihost::Pop(&pkt)) engine.Packet(pkt);
+    while (midihost::Pop(&pkt))
+    {
+        engine.Packet(pkt);
+        if (!g_mac_mode) phone_link.Feed(pkt);
+    }
     engine.Inputs(in[0], in[1], (uint32_t)n);                            /* J1 clock, J2 reset */
     engine.Process((uint32_t)n);
 
@@ -977,6 +999,8 @@ static void AudioCallback(daisy::AudioHandle::InputBuffer in, daisy::AudioHandle
 int main(void)
 {
     hw.Init(daisy::SaiHandle::Config::SampleRate::SAI_48KHZ, kBlockSize);
+    led_mirror.Wrap(hw.strip);
+    hw.leds.Init(led_mirror, hw.Layout());
     engine.Init(hw.SampleRate());
 
     for (uint8_t j = 0; j < kNumCvJacks; j++)
@@ -994,7 +1018,12 @@ int main(void)
         .BootSlot(kHomeSlot)
         .Jacks(jk_j1, jk_j2, jk_j3, jk_j4, jk_j5, jk_j6, jk_j7, jk_j8, jk_j9, jk_j10)
         .Attach(manual)
-        .Extend(fs_ext);
+        .Extend(fs_ext)
+        .Extend(phone_ext);
+    phone_ext.Screen(led_mirror)
+        .Firmware(picker::Remote())
+        .Press(&OnPhonePress, nullptr)
+        .Unit(phonefront::UnitId());
 
     presets.Manage(state);
     presets.Manage(settings);
@@ -1021,7 +1050,8 @@ int main(void)
     hw.StartAudio(AudioCallback);
 
     loop.Use(settings).OnFrame(OnFrame).OnPoll(OnPoll).OnRender(OnRender);
-    if (g_mac_mode) loop.Use(host);
+    if (!g_mac_mode) host.Transport(phone_link);   /* else the SDK's USB serial */
+    loop.Use(host);
 
     for (;;) loop.Tick();
 }

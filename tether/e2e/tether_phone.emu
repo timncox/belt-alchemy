@@ -1,0 +1,8 @@
+# TETHER Phone mode: an iPhone on the front USB-C (the --hostlink client
+# stands in for it). tether_phone_check.py talks to it while this waits.
+wait 3000
+expect booted
+midi plug computer
+wait 4500
+expect led b3 cyan
+wait 30000

@@ -222,6 +222,21 @@ the log where a turn to device mode wiped it, and could write an empty one;
 
 It keeps trying while red, and goes green as soon as one works.
 
+## The iPhone app and other firmware (0.5.1)
+
+Plug the iPhone (or iPad) into the Lab's front USB-C where the FM-1 goes,
+open the Alchemy Lab app and tap **TETHER** in its device list once (the app
+remembers it). The app then shows the panel's lights live, presses B1, B2
+and B3 for you (hold B3 on the phone for the jack page, as on the panel) and
+switches the Lab to another firmware from the card. Loadout's settings keep
+working on the same cable. The FM-1 and the iPhone share the one port, so
+it's one or the other at a time. Nothing to set: Mac mode (B1 at power-up)
+is unchanged.
+
+The Firmware page's file knob also shows folders inside /alchemy (one
+level): a purple dot opens the folder with the same flash gesture, and
+inside, the first (white) dot goes back up.
+
 ## Settings from Loadout (SysEx)
 
 With the Lab plugged into an iPhone, iPad or Mac as the TETHER USB-MIDI

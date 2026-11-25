@@ -27,7 +27,8 @@ CPP_SOURCES = \
     src/tether_engine.cpp \
     src/tether_usbh.cpp \
     src/tether_usbd.cpp \
-    ../src/picker.cpp
+    ../src/picker.cpp \
+    ../src/phone_ext.cpp
 
 C_SOURCES = \
     ../src/usbh_hub_midi.c

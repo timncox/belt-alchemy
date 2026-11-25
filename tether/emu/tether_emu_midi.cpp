@@ -25,6 +25,15 @@ uint32_t Count();
 void     Out(uint32_t pkt);
 } } // namespace emu::midi
 
+/* The emulator's --hostlink socket (emu_hostlink.cpp): with `midi plug
+ * computer`, the TCP client is that computer's HostLink, the iPhone app in
+ * the Simulator or tools/hostlink_client.py (phone_link.h on TETHER). */
+namespace emu { namespace usbdev {
+void Attach();
+void SetRx(void (*fn)(uint8_t*, uint32_t*));
+bool Transmit(const uint8_t* p, size_t len);
+} } // namespace emu::usbdev
+
 namespace emu {
 uint32_t NowUs();
 namespace usbaudio {
@@ -41,6 +50,21 @@ static bool          g_init = false;
 static usbrole::Role g_role;
 static uint32_t      g_turns = 0;
 
+/* Packets from the --hostlink client, in the order they came (firmware thread
+ * writes in Service, the audio thread reads in Pop). */
+static uint32_t          g_hl_q[1024];
+static volatile uint32_t g_hl_w = 0, g_hl_r = 0;
+static void hl_rx(uint8_t* buf, uint32_t* len)
+{
+    for (uint32_t i = 0; i + 4u <= *len; i += 4u)
+    {
+        if (g_hl_w - g_hl_r >= 1024u) return;
+        g_hl_q[g_hl_w & 1023u] = (uint32_t)buf[i] | (uint32_t)buf[i + 1] << 8 | (uint32_t)buf[i + 2] << 16
+                                 | (uint32_t)buf[i + 3] << 24;
+        g_hl_w = g_hl_w + 1u;
+    }
+}
+
 static bool far_end_seen()
 {
     if (!emu::midi::Plugged()) return false;
@@ -49,6 +73,8 @@ static bool far_end_seen()
 
 void Init()
 {
+    emu::usbdev::SetRx(&hl_rx);
+    emu::usbdev::Attach();
     g_init = true;
     g_role.Start(0);
 }
@@ -62,9 +88,18 @@ void Poll(uint32_t now)
     {
         uint32_t lost;
         while (emu::midi::Pop(&lost)) {}
+        g_hl_r = g_hl_w;
     }
 }
-bool    Pop(uint32_t* pkt) { return g_init && far_end_seen() && emu::midi::Pop(pkt); }
+bool Pop(uint32_t* pkt)
+{
+    if (!g_init || !far_end_seen()) return false;
+    if (emu::midi::Pop(pkt)) return true;
+    if (!emu::midi::Computer() || g_role.mode != usbrole::kDevice || g_hl_r == g_hl_w) return false;
+    *pkt   = g_hl_q[g_hl_r & 1023u];
+    g_hl_r = g_hl_r + 1u;
+    return true;
+}
 uint8_t Stage()
 {
     if (!g_init || !far_end_seen()) return 0;
@@ -77,6 +112,7 @@ uint32_t RxCount() { return emu::midi::Count(); }
 bool     Send(const uint8_t (*pk)[4], int n)
 {
     if (!g_init || !far_end_seen() || g_role.mode != usbrole::kDevice) return false;
+    if (!emu::usbdev::Transmit(&pk[0][0], (size_t)n * 4u)) return false;
     for (int i = 0; i < n; i++)
         emu::midi::Out((uint32_t)pk[i][0] | (uint32_t)pk[i][1] << 8 | (uint32_t)pk[i][2] << 16 | (uint32_t)pk[i][3] << 24);
     return true;
