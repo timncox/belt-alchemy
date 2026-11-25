@@ -15,6 +15,7 @@
  *   node tools/hostlink-fs.mjs put build/smack_alchemy.bin /alchemy/smack_alchemy.bin [--overwrite]
  *   node tools/hostlink-fs.mjs get /alchemy/x.bin x.bin
  *   node tools/hostlink-fs.mjs rm /alchemy/x.bin
+ *   node tools/hostlink-fs.mjs mv /alchemy/x.bin /alchemy/folder/x.bin
  *
  * Uploads are staged by the firmware into <path>.part and renamed onto the
  * final name only after a CRC-verified commit, so an interrupted put never
@@ -212,7 +213,7 @@ function get(link, remote, local) {
 }
 
 function usage() {
-  console.error(`usage: hostlink-fs.mjs [-p port] <info | ls <path> | stat <path> | mkdir <path> | put <local> <remote> [--overwrite] | get <remote> <local> | rm <path>>`);
+  console.error(`usage: hostlink-fs.mjs [-p port] <info | ls <path> | stat <path> | mkdir <path> | put <local> <remote> [--overwrite] | get <remote> <local> | rm <path> | mv <from> <to>>`);
 }
 function main() {
   const argv = process.argv.slice(2);
@@ -236,6 +237,7 @@ function main() {
       case "put": put(link, a, b, overwrite); break;
       case "get": console.error(`got ${get(link, a, b)} bytes`); break;
       case "rm": link.request(CMD.del, str(a), 10000); console.error(`rm ${a}: ok`); break;
+      case "mv": if (!b) { usage(); process.exit(1); } link.request(CMD.rename, Buffer.concat([str(a), str(b)]), 10000); console.error(`mv ${a} -> ${b}: ok`); break;
       default: usage(); process.exit(1);
     }
   } finally { link.close(); }
